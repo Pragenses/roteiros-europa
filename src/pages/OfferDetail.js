@@ -96,7 +96,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'dbl', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -183,7 +183,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   // FOC cost pool: per hotel item, depending on what room type the FOC person occupies there
   const focPoolEUR = paxItems.reduce((sum, it) => {
-    const occ = it.subType === 'hotel' ? (it.focOccupancy || 'dbl') : 'dbl';
+    const occ = it.subType === 'hotel' ? (it.focOccupancy || 'none') : 'dbl';
     if (occ === 'none') return sum;
     if (occ === 'sngl') return sum + toEUR(getEffectiveCostSngl(it), it.currency);
     return sum + toEUR(getEffectiveCostDbl(it), it.currency); // 'dbl' = 50% of DBL room (shared)
@@ -272,10 +272,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                           <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0 }}>= {evalAmount(it.cityTaxSngl).toFixed(2)}</div>
                         )}
                       </div>
-                      <select value={it.focOccupancy || 'dbl'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
+                      <select value={it.focOccupancy || 'none'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
+                        <option value="none">FOC: none (0)</option>
                         <option value="dbl">FOC: 50% DBL</option>
                         <option value="sngl">FOC: SNGL (100%)</option>
-                        <option value="none">FOC: none (0)</option>
                       </select>
                       <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
                         DBL: {getEffectiveCostDbl(it).toFixed(2)} / SNGL: {getEffectiveCostSngl(it).toFixed(2)} per pax
