@@ -206,7 +206,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const uploadFile = async (file) => {
     if (!file) return;
     if (!editingServiceId) { alert('Save the service first, then add documents.'); return; }
-    if (file.size > 900000) {
+    if (file.size > 700000) {
       alert('File is too large (' + Math.round(file.size / 1024) + ' KB). Maximum is about 700 KB per file.');
       return;
     }
