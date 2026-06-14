@@ -162,7 +162,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       if (parsed.nights && f.nights) f.nights.value = parsed.nights;
     } catch (err) {
       console.error(err);
-      alert('Could not parse this text. Please fill in manually.');
+      alert('Could not parse this text: ' + err.message);
     }
     setPasteLoading(false);
   };
