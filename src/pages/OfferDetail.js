@@ -77,7 +77,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', focOccupancy: 'dbl', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -162,6 +162,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
 
+  // FOC cost pool: per hotel item, depending on what room type the FOC person occupies there
+  const focPoolEUR = paxItems.reduce((sum, it) => {
+    const occ = it.subType === 'hotel' ? (it.focOccupancy || 'dbl') : 'dbl';
+    if (occ === 'none') return sum;
+    if (occ === 'sngl') return sum + toEUR(getEffectiveCostSngl(it), it.currency);
+    return sum + toEUR(getEffectiveCostDbl(it), it.currency); // 'dbl' = 50% of DBL room (shared)
+  }, 0);
+
   const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
 
   const rows = paxCounts.map(pax => {
@@ -169,7 +177,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const costDbl = groupPerPax + perPaxDblEUR;
     const marginAmount = costDbl * (margin / 100);
     const sellingBeforeFoc = costDbl + marginAmount;
-    const focShare = (perPaxDblEUR * (focCount || 0)) / pax;
+    const focShare = (focPoolEUR * (focCount || 0)) / pax;
     const finalDbl = sellingBeforeFoc + focShare;
     const finalSngl = finalDbl + snglSupplementEUR;
     return { pax, groupPerPax, costDbl, marginAmount, sellingBeforeFoc, focShare, finalDbl, finalSngl };
@@ -219,7 +227,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               return (
                 <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}` }}>
                   <div style={{ display: 'flex', gap: 2 }}>
@@ -233,6 +241,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       <input type="text" inputMode="decimal" placeholder="Price/night SNGL" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
                       <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
                       <input type="text" inputMode="decimal" placeholder="City tax/pers/night" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <select value={it.focOccupancy || 'dbl'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
+                        <option value="dbl">FOC: 50% DBL</option>
+                        <option value="sngl">FOC: SNGL (100%)</option>
+                        <option value="none">FOC: none (0)</option>
+                      </select>
                       <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
                         DBL: {getEffectiveCostDbl(it).toFixed(2)} / SNGL: {getEffectiveCostSngl(it).toFixed(2)} per pax
                       </div>
@@ -288,7 +301,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem', overflowX: 'auto' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>💰 Selling price per pax (EUR)</div>
         <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
-          Hotels/tickets per pax (DBL): {perPaxDblEUR.toFixed(2)} EUR · (SNGL): {perPaxSnglEUR.toFixed(2)} EUR · SNGL supplement: {snglSupplementEUR.toFixed(2)} EUR · Group costs total: {groupTotalEUR.toFixed(2)} EUR
+          Hotels/tickets per pax (DBL): {perPaxDblEUR.toFixed(2)} EUR · (SNGL): {perPaxSnglEUR.toFixed(2)} EUR · SNGL supplement: {snglSupplementEUR.toFixed(2)} EUR · Group costs total: {groupTotalEUR.toFixed(2)} EUR · FOC cost pool/person: {focPoolEUR.toFixed(2)} EUR
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
