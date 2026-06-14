@@ -12,6 +12,50 @@ const STATUS_OPTS = [
   { value: 'lost', label: 'Lost / declined' },
 ];
 
+const decimalInput = (e) => {
+  const val = e.target.value;
+  const normalized = val.replace(/,/g, '.');
+  if (normalized !== val) e.target.value = normalized;
+};
+
+// Allow city tax / prices to be entered as a plain number OR an Excel-style formula starting with "="
+// e.g. "=106*0.05" -> evaluates to 5.3
+const evalAmount = (value) => {
+  if (value === undefined || value === null || value === '') return 0;
+  const str = String(value).trim();
+  if (str.startsWith('=')) {
+    const expr = str.slice(1);
+    if (!/^[0-9+\-*/.() ]+$/.test(expr)) return 0;
+    try {
+      // eslint-disable-next-line no-new-func
+      const result = new Function('return (' + expr + ')')();
+      return typeof result === 'number' && isFinite(result) ? result : 0;
+    } catch {
+      return 0;
+    }
+  }
+  return parseFloat(str) || 0;
+};
+
+// Reusable input that accepts plain numbers or "=formula" expressions, and converts
+// the formula to its computed result on blur, so the field shows the computed number directly.
+// Defined at module level (not inside OfferDetail) so it keeps a stable identity across
+// re-renders and inputs don't lose focus on every keystroke.
+const FormulaField = ({ value, onChange, placeholder, colors }) => {
+  const style = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
+  return (
+    <input type="text" placeholder={placeholder} value={value} onChange={onChange} onInput={decimalInput}
+      onBlur={e => {
+        const v = e.target.value;
+        if (String(v).trim().startsWith('=')) {
+          const computed = evalAmount(v);
+          onChange({ target: { value: String(Math.round(computed * 100) / 100) } });
+        }
+      }}
+      style={style} />
+  );
+};
+
 export default function OfferDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
@@ -67,47 +111,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     return val * (rates[currency] || 1);
   };
 
-  const decimalInput = (e) => {
-    const val = e.target.value;
-    const normalized = val.replace(/,/g, '.');
-    if (normalized !== val) e.target.value = normalized;
-  };
-
-  // Allow city tax to be entered as a plain number OR an Excel-style formula starting with "="
-  // e.g. "=106*0.05" -> evaluates to 5.3
-  const evalAmount = (value) => {
-    if (value === undefined || value === null || value === '') return 0;
-    const str = String(value).trim();
-    if (str.startsWith('=')) {
-      const expr = str.slice(1);
-      if (!/^[0-9+\-*/.() ]+$/.test(expr)) return 0;
-      try {
-        // eslint-disable-next-line no-new-func
-        const result = new Function('return (' + expr + ')')();
-        return typeof result === 'number' && isFinite(result) ? result : 0;
-      } catch {
-        return 0;
-      }
-    }
-    return parseFloat(str) || 0;
-  };
-
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
-
-  // Reusable input that shows the computed value below it when the entry starts with "="
-  // and converts the formula to its result on blur, so the field shows the computed number directly.
-  const FormulaField = ({ value, onChange, placeholder }) => (
-    <input type="text" placeholder={placeholder} value={value} onChange={onChange} onInput={decimalInput}
-      onBlur={e => {
-        const v = e.target.value;
-        if (String(v).trim().startsWith('=')) {
-          const computed = evalAmount(v);
-          onChange({ target: { value: String(Math.round(computed * 100) / 100) } });
-        }
-      }}
-      style={iStyle} />
-  );
 
   const addItem = (type, subType) => {
     setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
@@ -279,11 +284,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   </div>
                   {isHotel ? (
                     <>
-                      <FormulaField placeholder="Price/night DBL, or =199" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} />
-                      <FormulaField placeholder="Price/night SNGL, or =189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} />
+                      <FormulaField placeholder="Price/night DBL, or =199" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} colors={colors} />
+                      <FormulaField placeholder="Price/night SNGL, or =189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} colors={colors} />
                       <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
-                      <FormulaField placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} />
-                      <FormulaField placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} />
+                      <FormulaField placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} colors={colors} />
+                      <FormulaField placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} colors={colors} />
                       <select value={it.focOccupancy || 'none'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
                         <option value="none">FOC: none (0)</option>
                         <option value="dbl">FOC: 50% DBL</option>
@@ -295,11 +300,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     </>
                   ) : it.type === 'per_pax' ? (
                     <>
-                      <FormulaField placeholder="Cost/pax DBL, or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} />
-                      <FormulaField placeholder="Cost/pax SNGL (if different)" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} />
+                      <FormulaField placeholder="Cost/pax DBL, or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
+                      <FormulaField placeholder="Cost/pax SNGL (if different)" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} colors={colors} />
                     </>
                   ) : (
-                    <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} />
+                    <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
                   )}
                   <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
                     {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
