@@ -113,7 +113,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -201,7 +201,13 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const regularGroupItems = groupItems.filter(it => it.subType !== 'guide_hotel');
   const guideHotelItems = groupItems.filter(it => it.subType === 'guide_hotel');
   const regularGroupTotalEUR = regularGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
-  const groupTotalEUR = regularGroupTotalEUR + guideHotelItems.length * perPaxSnglEUR;
+  const getGuideHotelCost = (it) => {
+    const override = it.guideOverride;
+    if (override !== '' && override !== undefined && override !== null) return evalAmount(override);
+    return perPaxSnglEUR;
+  };
+  const guideHotelTotalEUR = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
+  const groupTotalEUR = regularGroupTotalEUR + guideHotelTotalEUR;
 
   // FOC: the free person's cost is the sum of ALL per-pax items (hotels, meals, tickets, city tax, boats, trains...)
   // on a DBL basis, divided across the paying pax. Group costs (bus, guide, flights) are NOT included.
@@ -265,7 +271,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
               const isGuideHotel = it.type === 'group' && it.subType === 'guide_hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 1fr 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               const rowBg = isGuideHotel ? '#FCE4EC' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : 'transparent';
               return (
@@ -297,9 +303,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   ) : it.type === 'per_pax' ? (
                     <FormulaField placeholder="Cost/pax (per person), or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
                   ) : isGuideHotel ? (
-                    <div style={{ fontSize: 12, color: colors.text, textAlign: 'right' }}>
-                      Auto: {perPaxSnglEUR.toFixed(2)} EUR (= sum of all hotels' SNGL cost)
-                    </div>
+                    <>
+                      <div style={{ fontSize: 11, color: colors.muted }}>
+                        Auto: {perPaxSnglEUR.toFixed(2)} EUR<br />(sum of all hotels' SNGL cost)
+                      </div>
+                      <FormulaField placeholder={`Override, default ${perPaxSnglEUR.toFixed(2)}`} value={it.guideOverride} onChange={e => updateItem(it.id, 'guideOverride', e.target.value)} colors={colors} />
+                    </>
                   ) : (
                     <>
                       <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
