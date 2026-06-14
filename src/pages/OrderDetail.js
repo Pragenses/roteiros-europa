@@ -123,6 +123,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       driverAccom: f.driverAccom?.value || 'none',
       driverRoomPrice: f.driverRoomPrice?.value || '',
       hotelFoc: f.hotelFoc?.value || 'none',
+      hotelFocOccupancy: f.hotelFocOccupancy?.value || 'dbl',
       cancellationDays: f.cancellationDays?.value || '',
       pricePerPax: f.pricePerPax?.value || '',
       totalPrice: f.totalPrice?.value || '',
@@ -369,19 +370,29 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       }
     }
 
-    const total = roomCost + cityTaxCost;
+    let total = roomCost + cityTaxCost;
 
-    // Hotel FOC info (informational - doesn't auto-deduct since room type for FOC varies)
+    // Hotel FOC: 1 free person per X paying, occupying a room of given type
     let focInfo = null;
+    let focDiscount = 0;
     if (s.hotelFoc && s.hotelFoc.startsWith('1 per ')) {
       const per = parseInt(s.hotelFoc.replace('1 per ', ''));
-      if (per > 0) {
-        const freeRooms = Math.floor(totalRooms / per);
-        if (freeRooms > 0) focInfo = freeRooms;
+      const totalPax = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
+      if (per > 0 && totalPax > 0) {
+        const freePersons = Math.floor(totalPax / per);
+        if (freePersons > 0) {
+          const occupancyMap = { sngl: { price: pSngl, share: 1 }, dbl: { price: pDbl, share: 2 }, twn: { price: pTwn, share: 2 }, trpl: { price: pTrpl, share: 3 } };
+          const occ = occupancyMap[s.hotelFocOccupancy || 'dbl'];
+          const perPersonPrice = occ.share > 0 ? occ.price / occ.share : 0;
+          focDiscount = freePersons * perPersonPrice * nights;
+          total -= focDiscount;
+          const pct = occ.share === 1 ? '100%' : occ.share === 2 ? '50%' : '33%';
+          focInfo = { freePersons, pct, occupancy: (s.hotelFocOccupancy || 'dbl').toUpperCase() };
+        }
       }
     }
 
-    return { roomCost, cityTaxCost, total, nights, totalRooms, focInfo, currency: s.currency || 'EUR' };
+    return { roomCost, cityTaxCost, focDiscount, total, nights, totalRooms, focInfo, currency: s.currency || 'EUR' };
   };
 
   const SectionDivider = ({ title, count }) => (
@@ -420,7 +431,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             {s.cancellationDays && s.dateFrom ? (() => {
               const d = new Date(s.dateFrom);
               d.setDate(d.getDate() - parseInt(s.cancellationDays));
-              return ` · Free cancellation until ${d.toLocaleDateString('en-GB')}`;
+              return <span style={{ color: colors.danger, fontWeight: 700 }}> · Free cancellation until {d.toLocaleDateString('en-GB')}</span>;
             })() : ''}
           </div>
         )}
@@ -439,15 +450,16 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                   <span>{calc.cityTaxCost.toFixed(2)} {calc.currency}</span>
                 </div>
               )}
+              {calc.focDiscount > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: colors.muted }}>Hotel FOC discount ({calc.focInfo.freePersons}× {calc.focInfo.pct} of {calc.focInfo.occupancy})</span>
+                  <span>-{calc.focDiscount.toFixed(2)} {calc.currency}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, borderTop: `1px solid ${colors.border}`, marginTop: 4, paddingTop: 4 }}>
                 <span>Total to pay hotel</span>
                 <span>{calc.total.toFixed(2)} {calc.currency}</span>
               </div>
-              {calc.focInfo && (
-                <div style={{ fontSize: 11, color: '#633806', marginTop: 4 }}>
-                  ℹ Hotel FOC policy suggests {calc.focInfo} room(s) may be free — confirm with hotel
-                </div>
-              )}
             </div>
           );
         })()}
@@ -636,11 +648,19 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                   <div>{lbl('Hotel FOC policy')}
                     <select name="hotelFoc" style={iStyle}>
                       <option value="none">No FOC</option>
-                      <option value="1 per 10">1 free per 10 paying</option>
-                      <option value="1 per 15">1 free per 15 paying</option>
-                      <option value="1 per 18">1 free per 18 paying</option>
-                      <option value="1 per 20">1 free per 20 paying</option>
+                      <option value="1 per 10">1 free person per 10 paying</option>
+                      <option value="1 per 15">1 free person per 15 paying</option>
+                      <option value="1 per 18">1 free person per 18 paying</option>
+                      <option value="1 per 20">1 free person per 20 paying</option>
                       <option value="custom">Custom (see notes)</option>
+                    </select>
+                  </div>
+                  <div>{lbl('FOC person occupies')}
+                    <select name="hotelFocOccupancy" style={iStyle}>
+                      <option value="sngl">SNGL room (100% free)</option>
+                      <option value="dbl">DBL room (50% of room free)</option>
+                      <option value="twn">TWN room (50% of room free)</option>
+                      <option value="trpl">TRPL room (33% of room free)</option>
                     </select>
                   </div>
                   <div>{lbl('Free cancellation (days before arrival)')}
