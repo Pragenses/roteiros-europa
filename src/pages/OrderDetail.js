@@ -291,7 +291,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     e.target.value = '';
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     let file = e.dataTransfer.files?.[0];
@@ -304,10 +304,35 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         }
       }
     }
+    if (!file) {
+      // Webmail clients (Gmail, Outlook web) often use a "DownloadURL" / uri-list payload instead of a real File
+      const downloadUrl = e.dataTransfer.getData('DownloadURL') || e.dataTransfer.getData('text/uri-list');
+      if (downloadUrl) {
+        try {
+          const parts = downloadUrl.split(':');
+          let url = downloadUrl;
+          let suggestedName = 'attachment';
+          if (parts.length >= 3 && (downloadUrl.startsWith('application') || downloadUrl.includes(':'))) {
+            // Format is often "mime/type:filename:url"
+            const firstColon = downloadUrl.indexOf(':');
+            const secondColon = downloadUrl.indexOf(':', firstColon + 1);
+            if (secondColon > -1) {
+              suggestedName = downloadUrl.slice(firstColon + 1, secondColon);
+              url = downloadUrl.slice(secondColon + 1);
+            }
+          }
+          const resp = await fetch(url);
+          const blob = await resp.blob();
+          file = new File([blob], suggestedName, { type: blob.type });
+        } catch (err) {
+          console.error('Attachment fetch failed', err);
+        }
+      }
+    }
     if (file) {
       uploadFile(file);
     } else {
-      alert('Could not read this as a file (this often happens when dragging directly from Apple Mail). Workaround: in Mail, use File → Save Attachments (or Print → Save as PDF for the whole email), then drag the saved file here, or use "Browse files" below.');
+      alert('Could not read this as a file directly. Some webmail clients block this for security reasons. Easiest workaround: drag the attachment onto your Desktop first (this always works), then drag that file here, or use "Browse files" below.');
     }
   };
 
