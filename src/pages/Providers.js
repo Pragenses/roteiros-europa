@@ -147,14 +147,15 @@ export default function Providers({ navigate, colors }) {
 
   const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
 
-  // Find bookings (orders) that use this provider by matching service.providerName or service.name to provider.name
+  // Find bookings (orders) that use this provider by exact name match (case-insensitive)
   const getBookingsFor = (provider) => {
     const results = [];
     const pName = (provider.name || '').toLowerCase().trim();
+    if (!pName) return results;
     allOrders.forEach(o => {
       (o.services || []).forEach(s => {
         const sName = (s.providerName || s.name || '').toLowerCase().trim();
-        if (sName && pName && (sName === pName || sName.includes(pName) || pName.includes(sName))) {
+        if (sName && sName === pName) {
           results.push({ order: o, service: s });
         }
       });
