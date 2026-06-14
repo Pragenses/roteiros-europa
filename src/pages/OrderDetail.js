@@ -59,6 +59,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const [showRates, setShowRates] = useState(false);
   const [editingOrder, setEditingOrder] = useState(false);
   const [pasteText, setPasteText] = useState('');
+  const [documents, setDocuments] = useState([]);
+  const [docUploading, setDocUploading] = useState(false);
   const [pasteLoading, setPasteLoading] = useState(false);
   const serviceFormRef = useRef(null);
   const orderFormRef = useRef(null);
@@ -191,14 +193,62 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     setPasteLoading(false);
   };
 
+  const fetchDocuments = async (sid) => {
+    if (!sid) { setDocuments([]); return; }
+    const snap = await getDocs(collection(db, 'orders', orderId, 'services', sid, 'documents'));
+    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    docs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    setDocuments(docs);
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!editingServiceId) { alert('Save the service first, then add documents.'); return; }
+    if (file.size > 900000) {
+      alert('File is too large (' + Math.round(file.size / 1024) + ' KB). Maximum is about 700 KB per file.');
+      e.target.value = '';
+      return;
+    }
+    setDocUploading(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        await addDoc(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents'), {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: reader.result,
+          uploadedAt: new Date().toISOString(),
+        });
+        await fetchDocuments(editingServiceId);
+      } catch (err) {
+        console.error(err);
+        alert('Upload failed: ' + err.message);
+      }
+      setDocUploading(false);
+      e.target.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDeleteDocument = async (docId) => {
+    if (!window.confirm('Delete this document?')) return;
+    await deleteDoc(doc(db, 'orders', orderId, 'services', editingServiceId, 'documents', docId));
+    await fetchDocuments(editingServiceId);
+  };
+
   const openEditService = (s) => {
     setActiveType(s.type);
     setEditingServiceId(s.id);
     setShowServiceForm(true);
+    setPasteText('');
+    fetchDocuments(s.id);
     setTimeout(() => {
       const f = serviceFormRef.current;
       if (!f) return;
       Object.keys(s).forEach(k => { if (f[k]) f[k].value = s[k] || ''; });
+      if (f.svcName) f.svcName.value = s.name || '';
     }, 80);
   };
 
@@ -354,7 +404,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         {SERVICE_TYPES.map(t => (
-          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
+          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setDocuments([]); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
             style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
             {t.icon} + {t.label}
           </button>
@@ -505,6 +555,36 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               </button>
             </div>
           </form>
+
+          {editingServiceId && (
+            <div style={{ marginTop: '1.25rem', borderTop: `1px solid ${colors.border}`, paddingTop: '1rem' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+                📎 Documents ({documents.length})
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ display: 'inline-block', padding: '7px 14px', background: '#f0ede8', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
+                  {docUploading ? 'Uploading...' : '+ Upload contract / invoice'}
+                  <input type="file" onChange={handleFileUpload} disabled={docUploading} style={{ display: 'none' }} />
+                </label>
+                <span style={{ fontSize: 11, color: colors.muted, marginLeft: 10 }}>Max ~700 KB per file (PDF, image)</span>
+              </div>
+              {documents.length === 0 ? (
+                <div style={{ fontSize: 13, color: colors.muted }}>No documents uploaded yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {documents.map(d => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#f7f6f3', borderRadius: 7, fontSize: 13 }}>
+                      <span style={{ fontSize: 16 }}>{d.type?.includes('pdf') ? '📄' : '🖼'}</span>
+                      <a href={d.data} download={d.name} style={{ flex: 1, color: colors.text, textDecoration: 'none', fontWeight: 500 }}>{d.name}</a>
+                      <span style={{ fontSize: 11, color: colors.muted }}>{new Date(d.uploadedAt).toLocaleDateString('en-GB')}</span>
+                      <span style={{ fontSize: 11, color: colors.muted }}>{Math.round((d.size || 0) / 1024)} KB</span>
+                      <button onClick={() => handleDeleteDocument(d.id)} style={{ padding: '3px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.danger }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
