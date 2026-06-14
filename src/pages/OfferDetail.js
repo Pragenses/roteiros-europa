@@ -96,17 +96,21 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   // Reusable input that shows the computed value below it when the entry starts with "="
+  // and converts the formula to its result on blur, so the field shows the computed number directly.
   const FormulaField = ({ value, onChange, placeholder }) => (
-    <div style={{ position: 'relative' }}>
-      <input type="text" placeholder={placeholder} value={value} onChange={onChange} onInput={decimalInput} style={iStyle} />
-      {String(value || '').trim().startsWith('=') && (
-        <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0, whiteSpace: 'nowrap' }}>= {evalAmount(value).toFixed(2)}</div>
-      )}
-    </div>
+    <input type="text" placeholder={placeholder} value={value} onChange={onChange} onInput={decimalInput}
+      onBlur={e => {
+        const v = e.target.value;
+        if (String(v).trim().startsWith('=')) {
+          const computed = evalAmount(v);
+          onChange({ target: { value: String(Math.round(computed * 100) / 100) } });
+        }
+      }}
+      style={iStyle} />
   );
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', dateFrom: '', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -264,7 +268,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} title="Move up" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? colors.border : colors.muted }}>▲</button>
                     <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} title="Move down" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === items.length - 1 ? 'default' : 'pointer', color: idx === items.length - 1 ? colors.border : colors.muted }}>▼</button>
                   </div>
-                  <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                  <div>
+                    <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                    {isHotel && (
+                      <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={{ ...iStyle, marginTop: 4 }} title="Check-in date (used later when converting to an Order)" />
+                    )}
+                  </div>
                   {isHotel ? (
                     <>
                       <FormulaField placeholder="Price/night DBL, or =199" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} />
