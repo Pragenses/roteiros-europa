@@ -192,19 +192,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const groupItems = items.filter(it => it.type === 'group');
   const paxItems = items.filter(it => it.type === 'per_pax');
 
-  const getEffectiveGroupCost = (it) => {
-    if (it.subType === 'guide_hotel') {
-      const price = evalAmount(it.pricePerNightSngl);
-      const nights = parseFloat(it.nights) || 0;
-      return price * nights;
-    }
-    return evalAmount(it.groupCost);
-  };
-
-  const groupTotalEUR = groupItems.reduce((sum, it) => sum + toEUR(getEffectiveGroupCost(it), it.currency), 0);
   const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostDbl(it), it.currency), 0);
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
+
+  // Hotel guide cost = sum of SNGL-room cost across ALL hotels in this offer (the guide travels with
+  // the group, occupying a SNGL room at every hotel) — computed automatically, no manual input.
+  const regularGroupItems = groupItems.filter(it => it.subType !== 'guide_hotel');
+  const guideHotelItems = groupItems.filter(it => it.subType === 'guide_hotel');
+  const regularGroupTotalEUR = regularGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
+  const groupTotalEUR = regularGroupTotalEUR + guideHotelItems.length * perPaxSnglEUR;
 
   // FOC: the free person's cost is the sum of ALL per-pax items (hotels, meals, tickets, city tax, boats, trains...)
   // on a DBL basis, divided across the paying pax. Group costs (bus, guide, flights) are NOT included.
@@ -268,16 +265,17 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
               const isGuideHotel = it.type === 'group' && it.subType === 'guide_hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 80px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
+              const rowBg = isGuideHotel ? '#FCE4EC' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : 'transparent';
               return (
-                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}`, minWidth }}>
+                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth }}>
                   <div style={{ display: 'flex', gap: 2 }}>
                     <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} title="Move up" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? colors.border : colors.muted }}>▲</button>
                     <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} title="Move down" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === items.length - 1 ? 'default' : 'pointer', color: idx === items.length - 1 ? colors.border : colors.muted }}>▼</button>
                   </div>
                   <div>
-                    <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                    <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                         <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={iStyle} title="Date from" />
@@ -298,20 +296,23 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     </>
                   ) : it.type === 'per_pax' ? (
                     <FormulaField placeholder="Cost/pax (per person), or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
-                  ) : it.subType === 'guide_hotel' ? (
-                    <>
-                      <FormulaField placeholder="Price/night SNGL, or =189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} colors={colors} />
-                      <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
-                      <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
-                        Total: {getEffectiveGroupCost(it).toFixed(2)}
-                      </div>
-                    </>
+                  ) : isGuideHotel ? (
+                    <div style={{ fontSize: 12, color: colors.text, textAlign: 'right' }}>
+                      Auto: {perPaxSnglEUR.toFixed(2)} EUR (= sum of all hotels' SNGL cost)
+                    </div>
                   ) : (
-                    <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
+                    <>
+                      <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
+                      <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
+                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </>
                   )}
-                  <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
-                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  {!isGuideHotel && (isHotel || it.type === 'per_pax') && (
+                    <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
+                      {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  )}
                   <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
                 </div>
               );
