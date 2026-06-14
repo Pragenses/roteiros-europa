@@ -192,6 +192,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             const webInfo = await aiFillProviderFree(parsed.name);
             if (webInfo.email && f.providerEmail) f.providerEmail.value = webInfo.email;
             if (webInfo.phone && f.providerPhone) f.providerPhone.value = webInfo.phone;
+            if (webInfo.website && f.providerWebsite) f.providerWebsite.value = webInfo.website;
             if (webInfo.city && f.city && !f.city.value) f.city.value = webInfo.city;
           } catch (webErr) {
             console.error('Web lookup failed:', webErr);
@@ -530,7 +531,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, borderTop: `1px solid ${colors.border}`, marginTop: 4, paddingTop: 4 }}>
                 <span>Total to pay hotel</span>
-                <span>{calc.total.toFixed(2)} {calc.currency}</span>
+                <span style={{ color: '#dc2626' }}>{calc.total.toFixed(2)} {calc.currency}</span>
               </div>
             </div>
           );
@@ -539,11 +540,16 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           <div style={{ fontSize: 12, marginTop: 4, padding: '6px 10px', background: '#f0ede8', borderRadius: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: colors.muted }}>{s.ticketCount || '?'} ticket(s) × {s.pricePerPax} {s.currency}</span>
-              <span style={{ fontWeight: 700 }}>{s.ticketCount ? ((parseFloat(s.pricePerPax) || 0) * (parseInt(s.ticketCount) || 0)).toFixed(2) : '?'} {s.currency}</span>
+              <span style={{ fontWeight: 700, color: '#dc2626' }}>{s.ticketCount ? ((parseFloat(s.pricePerPax) || 0) * (parseInt(s.ticketCount) || 0)).toFixed(2) : '?'} {s.currency}</span>
             </div>
           </div>
         )}
-        {s.totalPrice && s.type !== 'ticket' && <div style={{ fontSize: 11, color: colors.muted }}>Total: {s.totalPrice} {s.currency}</div>}
+        {s.totalPrice && s.type !== 'ticket' && (
+          <div style={{ fontSize: 12, marginTop: 4, padding: '6px 10px', background: '#f0ede8', borderRadius: 6, display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: colors.muted }}>Total price</span>
+            <span style={{ fontWeight: 700, color: '#dc2626' }}>{parseFloat(s.totalPrice).toFixed(2)} {s.currency}</span>
+          </div>
+        )}
         {s.confirmationLink && <div style={{ fontSize: 11 }}><a href={s.confirmationLink} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>🔗 Confirmation</a></div>}
         {s.notes && <div style={{ fontSize: 11, color: colors.muted, fontStyle: 'italic', marginTop: 2 }}>{s.notes}</div>}
       </div>
