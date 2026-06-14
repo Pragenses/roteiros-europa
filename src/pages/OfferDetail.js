@@ -76,8 +76,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
-  const addItem = (type) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, costDbl: '', costSngl: '', groupCost: '', currency: 'EUR' }]);
+  const addItem = (type, subType) => {
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', groupCost: '', currency: 'EUR' }]);
   };
 
   const updateItem = (id, field, value) => {
@@ -127,12 +127,29 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
 
+  const getEffectiveCostDbl = (it) => {
+    if (it.subType === 'hotel') {
+      const price = parseFloat(it.pricePerNightDbl) || 0;
+      const nights = parseFloat(it.nights) || 0;
+      return (price * nights) / 2;
+    }
+    return parseFloat(it.costDbl) || 0;
+  };
+  const getEffectiveCostSngl = (it) => {
+    if (it.subType === 'hotel') {
+      const price = parseFloat(it.pricePerNightSngl) || 0;
+      const nights = parseFloat(it.nights) || 0;
+      return price * nights;
+    }
+    return parseFloat(it.costSngl || it.costDbl) || 0;
+  };
+
   const groupItems = items.filter(it => it.type === 'group');
   const paxItems = items.filter(it => it.type === 'per_pax');
 
   const groupTotalEUR = groupItems.reduce((sum, it) => sum + toEUR(it.groupCost, it.currency), 0);
-  const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEUR(it.costDbl, it.currency), 0);
-  const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(it.costSngl || it.costDbl, it.currency), 0);
+  const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostDbl(it), it.currency), 0);
+  const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
 
   const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
@@ -190,32 +207,48 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
         {items.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-            {items.map(it => (
-              <div key={it.id} style={{ display: 'grid', gridTemplateColumns: it.type === 'per_pax' ? '2fr 1fr 1fr 1fr 90px 32px' : '2fr 1fr 1fr 90px 32px', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}` }}>
-                <input type="text" placeholder="e.g. Hotel Kopthorne Tara (5 nights)" value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
-                {it.type === 'per_pax' ? (
-                  <>
-                    <input type="text" inputMode="decimal" placeholder="Cost/pax DBL" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} onInput={decimalInput} style={iStyle} />
-                    <input type="text" inputMode="decimal" placeholder="Cost/pax SNGL" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
-                  </>
-                ) : (
-                  <input type="text" inputMode="decimal" placeholder="Total group cost" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} onInput={decimalInput} style={iStyle} />
-                )}
-                <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
-                  {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
-              </div>
-            ))}
+            {items.map(it => {
+              const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
+              const cols = isHotel ? '2fr 1fr 1fr 70px 1fr 90px 32px' : it.type === 'per_pax' ? '2fr 1fr 1fr 90px 32px' : '2fr 1fr 90px 32px';
+              return (
+                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}` }}>
+                  <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                  {isHotel ? (
+                    <>
+                      <input type="text" inputMode="decimal" placeholder="Price/night DBL" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <input type="text" inputMode="decimal" placeholder="Price/night SNGL" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
+                      <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
+                        DBL: {getEffectiveCostDbl(it).toFixed(2)} / SNGL: {getEffectiveCostSngl(it).toFixed(2)} per pax
+                      </div>
+                    </>
+                  ) : it.type === 'per_pax' ? (
+                    <>
+                      <input type="text" inputMode="decimal" placeholder="Cost/pax DBL" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <input type="text" inputMode="decimal" placeholder="Cost/pax SNGL (if different)" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                    </>
+                  ) : (
+                    <input type="text" inputMode="decimal" placeholder="Total group cost" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} onInput={decimalInput} style={iStyle} />
+                  )}
+                  <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
+                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => addItem('per_pax')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-            + Per-pax item (hotel, ticket, meal)
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={() => addItem('per_pax', 'hotel')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            + Hotel (price/night × nights)
+          </button>
+          <button onClick={() => addItem('per_pax', 'ticket')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            + Ticket / meal (flat per-pax price)
           </button>
           <button onClick={() => addItem('group')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-            + Group cost item (bus, guide, flight)
+            + Group cost (bus, guide, flight)
           </button>
         </div>
       </div>
