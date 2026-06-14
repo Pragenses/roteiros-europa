@@ -243,12 +243,13 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         </div>
 
         {items.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, overflowX: 'auto' }}>
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
               const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const minWidth = isHotel ? 1100 : undefined;
               return (
-                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}` }}>
+                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}`, minWidth }}>
                   <div style={{ display: 'flex', gap: 2 }}>
                     <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} title="Move up" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? colors.border : colors.muted }}>▲</button>
                     <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} title="Move down" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === items.length - 1 ? 'default' : 'pointer', color: idx === items.length - 1 ? colors.border : colors.muted }}>▼</button>
