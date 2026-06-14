@@ -192,7 +192,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const groupItems = items.filter(it => it.type === 'group');
   const paxItems = items.filter(it => it.type === 'per_pax');
 
-  const groupTotalEUR = groupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
+  const getEffectiveGroupCost = (it) => {
+    if (it.subType === 'guide_hotel') {
+      const price = evalAmount(it.pricePerNightSngl);
+      const nights = parseFloat(it.nights) || 0;
+      return price * nights;
+    }
+    return evalAmount(it.groupCost);
+  };
+
+  const groupTotalEUR = groupItems.reduce((sum, it) => sum + toEUR(getEffectiveGroupCost(it), it.currency), 0);
   const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostDbl(it), it.currency), 0);
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
@@ -251,14 +260,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Cost items</div>
         <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>
-          <b>Per-pax (hotels, tickets, meals)</b>: enter the cost per person for the whole trip, in DBL and SNGL room basis. <b>Group cost (bus, guide, flights)</b>: enter the total cost for the whole group — it gets divided by the number of paying pax.
+          <b>Per-pax (hotels, tickets, meals)</b>: enter the cost per person for the whole trip, in DBL and SNGL room basis. <b>Group cost (bus, flight)</b>: enter the total cost for the whole group — it gets divided by the number of paying pax. <b>Hotel guide</b>: SNGL room price × nights, also divided by pax.
         </div>
 
         {items.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, overflowX: 'auto' }}>
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const isGuideHotel = it.type === 'group' && it.subType === 'guide_hotel';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 80px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               return (
                 <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}`, minWidth }}>
@@ -288,6 +298,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     </>
                   ) : it.type === 'per_pax' ? (
                     <FormulaField placeholder="Cost/pax (per person), or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
+                  ) : it.subType === 'guide_hotel' ? (
+                    <>
+                      <FormulaField placeholder="Price/night SNGL, or =189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} colors={colors} />
+                      <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
+                      <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
+                        Total: {getEffectiveGroupCost(it).toFixed(2)}
+                      </div>
+                    </>
                   ) : (
                     <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
                   )}
@@ -309,7 +327,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             + Ticket / meal (flat per-pax price)
           </button>
           <button onClick={() => addItem('group')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-            + Group cost (bus, guide, flight)
+            + Group cost (bus, flight)
+          </button>
+          <button onClick={() => addItem('group', 'guide_hotel')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            + Hotel guide (SNGL room × nights ÷ pax)
           </button>
         </div>
       </div>
