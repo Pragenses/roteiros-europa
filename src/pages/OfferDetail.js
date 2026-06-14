@@ -69,8 +69,27 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const decimalInput = (e) => {
     const val = e.target.value;
-    const normalized = val.replace(',', '.');
+    const normalized = val.replace(/,/g, '.');
     if (normalized !== val) e.target.value = normalized;
+  };
+
+  // Allow city tax to be entered as a plain number OR an Excel-style formula starting with "="
+  // e.g. "=106*0.05" -> evaluates to 5.3
+  const evalAmount = (value) => {
+    if (value === undefined || value === null || value === '') return 0;
+    const str = String(value).trim();
+    if (str.startsWith('=')) {
+      const expr = str.slice(1);
+      if (!/^[0-9+\-*/.() ]+$/.test(expr)) return 0;
+      try {
+        // eslint-disable-next-line no-new-func
+        const result = new Function('return (' + expr + ')')();
+        return typeof result === 'number' && isFinite(result) ? result : 0;
+      } catch {
+        return 0;
+      }
+    }
+    return parseFloat(str) || 0;
   };
 
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
@@ -139,7 +158,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     if (it.subType === 'hotel') {
       const price = parseFloat(it.pricePerNightDbl) || 0;
       const nights = parseFloat(it.nights) || 0;
-      const cityTax = parseFloat(it.cityTax) || 0;
+      const cityTax = evalAmount(it.cityTax);
       return (price * nights) / 2 + cityTax * nights;
     }
     return parseFloat(it.costDbl) || 0;
@@ -148,7 +167,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     if (it.subType === 'hotel') {
       const price = parseFloat(it.pricePerNightSngl) || 0;
       const nights = parseFloat(it.nights) || 0;
-      const cityTax = parseFloat(it.cityTax) || 0;
+      const cityTax = evalAmount(it.cityTax);
       return price * nights + cityTax * nights;
     }
     return parseFloat(it.costSngl || it.costDbl) || 0;
@@ -240,7 +259,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       <input type="text" inputMode="decimal" placeholder="Price/night DBL" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} onInput={decimalInput} style={iStyle} />
                       <input type="text" inputMode="decimal" placeholder="Price/night SNGL" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
                       <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
-                      <input type="text" inputMode="decimal" placeholder="City tax/pers/night" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <div style={{ position: 'relative' }}>
+                        <input type="text" placeholder="City tax/pers/night, or =106*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} onInput={decimalInput} style={iStyle} />
+                        {String(it.cityTax || '').trim().startsWith('=') && (
+                          <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0 }}>= {evalAmount(it.cityTax).toFixed(2)}</div>
+                        )}
+                      </div>
                       <select value={it.focOccupancy || 'dbl'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
                         <option value="dbl">FOC: 50% DBL</option>
                         <option value="sngl">FOC: SNGL (100%)</option>
