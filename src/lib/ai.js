@@ -6,6 +6,39 @@ async function getApiKey() {
   return snap.exists() ? (snap.data().anthropicKey || '') : '';
 }
 
+// Extract the first complete, valid JSON object from a text blob,
+// even if the model added extra commentary before/after it.
+function extractJSON(text) {
+  const start = text.indexOf('{');
+  if (start === -1) throw new Error('No JSON in response');
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        const candidate = text.slice(start, i + 1);
+        return JSON.parse(candidate);
+      }
+    }
+  }
+  throw new Error('No complete JSON object found in response');
+}
+
 async function callClaude(prompt, useWebSearch = true) {
   const apiKey = await getApiKey();
   if (!apiKey) throw new Error('No Anthropic API key configured. Go to Settings to add one.');
@@ -31,9 +64,7 @@ async function callClaude(prompt, useWebSearch = true) {
   if (data.error) throw new Error(data.error.message || 'API error');
   const textBlocks = data.content?.filter(b => b.type === 'text').map(b => b.text) || [];
   const text = textBlocks.join('\n');
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('No JSON in response');
-  return JSON.parse(jsonMatch[0]);
+  return extractJSON(text);
 }
 
 // Search the web for a provider (hotel, transport, guide, etc.)
@@ -83,9 +114,7 @@ async function callGemini(prompt) {
   const data = await response.json();
   if (data.error) throw new Error(data.error.message || 'Gemini API error');
   const text = data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('No JSON in response');
-  return JSON.parse(jsonMatch[0]);
+  return extractJSON(text);
 }
 
 // Search the web (free, via Gemini) for a provider (hotel, transport, guide, etc.)
@@ -161,9 +190,7 @@ async function callClaudeWithDocument(prompt, base64Data, mediaType) {
   if (data.error) throw new Error(data.error.message || 'API error');
   const textBlocks = data.content?.filter(b => b.type === 'text').map(b => b.text) || [];
   const text = textBlocks.join('\n');
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error('No JSON in response');
-  return JSON.parse(jsonMatch[0]);
+  return extractJSON(text);
 }
 
 // Parse an uploaded PDF contract/confirmation into service fields
