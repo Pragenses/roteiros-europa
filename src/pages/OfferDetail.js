@@ -115,7 +115,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -200,13 +200,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
 
-  // FOC cost pool: per hotel item, depending on what room type the FOC person occupies there
-  const focPoolEUR = paxItems.reduce((sum, it) => {
-    const occ = it.subType === 'hotel' ? (it.focOccupancy || 'none') : 'dbl';
-    if (occ === 'none') return sum;
-    if (occ === 'sngl') return sum + toEUR(getEffectiveCostSngl(it), it.currency);
-    return sum + toEUR(getEffectiveCostDbl(it), it.currency); // 'dbl' = 50% of DBL room (shared)
-  }, 0);
+  // FOC: the free person's cost is the sum of ALL per-pax items (hotels, meals, tickets, city tax, boats, trains...)
+  // on a DBL basis, divided across the paying pax. Group costs (bus, guide, flights) are NOT included.
+  const focPoolEUR = perPaxDblEUR;
 
   const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
 
@@ -265,7 +261,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, overflowX: 'auto' }}>
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               return (
                 <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}`, minWidth }}>
@@ -289,11 +285,6 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
                       <FormulaField placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} colors={colors} />
                       <FormulaField placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} colors={colors} />
-                      <select value={it.focOccupancy || 'none'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
-                        <option value="none">FOC: none (0)</option>
-                        <option value="dbl">FOC: 50% DBL</option>
-                        <option value="sngl">FOC: SNGL (100%)</option>
-                      </select>
                       <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
                         DBL: {getEffectiveCostDbl(it).toFixed(2)} / SNGL: {getEffectiveCostSngl(it).toFixed(2)} per pax
                       </div>
