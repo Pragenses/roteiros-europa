@@ -306,19 +306,22 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         f.providerName.value = match.name;
         if (!f.providerEmail.value) f.providerEmail.value = match.email || '';
         if (!f.providerPhone.value) f.providerPhone.value = match.phone || '';
+        if (!f.providerWebsite.value) f.providerWebsite.value = match.website || '';
         if (!f.city.value && match.city) f.city.value = match.city;
       } else {
-        // Not in our database - try a web search to find contact info
         f.providerName.value = parsed.name;
+      }
+      // If email/phone/website are still missing (no match, or match had empty contact info), web-search for them
+      if (!f.providerEmail.value || !f.providerPhone.value || !f.providerWebsite.value) {
         try {
           const webInfo = await aiFillProviderFree(parsed.name);
-          if (webInfo.email && f.providerEmail) f.providerEmail.value = webInfo.email;
-          if (webInfo.phone && f.providerPhone) f.providerPhone.value = webInfo.phone;
-          if (webInfo.website && f.providerWebsite) f.providerWebsite.value = webInfo.website;
+          if (webInfo.email && f.providerEmail && !f.providerEmail.value) f.providerEmail.value = webInfo.email;
+          if (webInfo.phone && f.providerPhone && !f.providerPhone.value) f.providerPhone.value = webInfo.phone;
+          if (webInfo.website && f.providerWebsite && !f.providerWebsite.value) f.providerWebsite.value = webInfo.website;
           if (webInfo.city && f.city && !f.city.value) f.city.value = webInfo.city;
         } catch (webErr) {
           console.error('Web lookup failed:', webErr);
-          // Non-fatal - just leave email/phone empty, user can fill manually
+          // Non-fatal - just leave email/phone/website empty, user can fill manually
         }
       }
     }
