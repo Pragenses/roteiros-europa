@@ -258,13 +258,26 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     try {
       const chunksSnap = await getDocs(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents', d.id, 'chunks'));
       const chunks = chunksSnap.docs.map(c => c.data()).sort((a, b) => a.index - b.index);
+      if (chunks.length === 0) { alert('No data found for this document.'); return; }
       const dataUrl = chunks.map(c => c.data).join('');
+      const commaIdx = dataUrl.indexOf(',');
+      const meta = dataUrl.slice(0, commaIdx); // e.g. "data:application/pdf;base64"
+      const base64 = dataUrl.slice(commaIdx + 1);
+      const mimeMatch = meta.match(/data:(.*);base64/);
+      const mime = mimeMatch ? mimeMatch[1] : (d.type || 'application/octet-stream');
+      const byteChars = atob(base64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mime });
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = dataUrl;
+      a.href = url;
       a.download = d.name;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
     } catch (err) {
       console.error(err);
       alert('Download failed: ' + err.message);
