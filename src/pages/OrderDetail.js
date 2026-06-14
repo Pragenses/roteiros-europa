@@ -265,6 +265,12 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     if (parsed.dateFrom && f.dateFrom) f.dateFrom.value = parsed.dateFrom;
     if (parsed.dateTo && f.dateTo) f.dateTo.value = parsed.dateTo;
     if (parsed.nights && f.nights) f.nights.value = parsed.nights;
+    if ((!parsed.nights || parsed.nights === '') && parsed.dateFrom && parsed.dateTo && f.nights) {
+      const d1 = new Date(parsed.dateFrom);
+      const d2 = new Date(parsed.dateTo);
+      const diff = Math.round((d2 - d1) / 86400000);
+      if (diff > 0) f.nights.value = diff;
+    }
 
     if (activeType === 'hotel') {
       const numFields = ['dblRooms', 'pricePerDblRoom', 'snglRooms', 'pricePerSnglRoom', 'twnRooms', 'pricePerTwnRoom', 'trplRooms', 'pricePerTrplRoom', 'cityTax', 'dinners', 'dinnerPrice', 'lunches', 'lunchPrice', 'cancellationDays'];
@@ -976,8 +982,24 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 <div>{lbl('Date')}<input name="dateFrom" type="date" style={iStyle} /></div>
               ) : (
                 <>
-                  <div>{lbl('Date from')}<input name="dateFrom" type="date" style={iStyle} /></div>
-                  <div>{lbl('Date to')}<input name="dateTo" type="date" style={iStyle} /></div>
+                  <div>{lbl('Date from')}<input name="dateFrom" type="date" style={iStyle}
+                    onChange={() => {
+                      const f = serviceFormRef.current;
+                      if (!f?.dateFrom?.value || !f?.dateTo?.value || !f.nights) return;
+                      const d1 = new Date(f.dateFrom.value);
+                      const d2 = new Date(f.dateTo.value);
+                      const diff = Math.round((d2 - d1) / 86400000);
+                      if (diff > 0) f.nights.value = diff;
+                    }} /></div>
+                  <div>{lbl('Date to')}<input name="dateTo" type="date" style={iStyle}
+                    onChange={() => {
+                      const f = serviceFormRef.current;
+                      if (!f?.dateFrom?.value || !f?.dateTo?.value || !f.nights) return;
+                      const d1 = new Date(f.dateFrom.value);
+                      const d2 = new Date(f.dateTo.value);
+                      const diff = Math.round((d2 - d1) / 86400000);
+                      if (diff > 0) f.nights.value = diff;
+                    }} /></div>
                 </>
               )}
               {['hotel', 'restaurant'].includes(activeType) && <div>{lbl('Nights')}<input name="nights" type="number" style={iStyle} /></div>}
