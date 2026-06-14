@@ -265,7 +265,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, overflowX: 'auto' }}>
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               return (
                 <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}`, minWidth }}>
@@ -275,7 +275,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   </div>
                   <div>
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
-                    {(isHotel || it.type === 'group') && (
+                    {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                         <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={iStyle} title="Date from" />
                         <input type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} style={iStyle} title="Date to" />
@@ -299,10 +299,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       </div>
                     </>
                   ) : it.type === 'per_pax' ? (
-                    <>
-                      <FormulaField placeholder="Cost/pax DBL, or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
-                      <FormulaField placeholder="Cost/pax SNGL (if different)" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} colors={colors} />
-                    </>
+                    <FormulaField placeholder="Cost/pax (per person), or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
                   ) : (
                     <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
                   )}
