@@ -1,4 +1,4 @@
-const API_KEY = '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';
+const API_KEY = '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';
 
 async function callClaude(prompt, useWebSearch = true) {
   const body = {
@@ -85,4 +85,21 @@ export async function aiFillProviderFree(name) {
 export async function aiFillClientFree(name) {
   const prompt = `Search the web for this tour operator / travel agency company and return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON on its own. Fields: name (string, official company name), country (string), state (string, state/province/federation unit if applicable e.g. for Brazil "Estado" like "SP", "RJ"), billingCompany (full legal company name), billingAddress (street address), billingCity, billingZip, billingCountry, billingVat (VAT/CNPJ/tax number if found), billingIco (company registration number if different from VAT), billingEmail (contact/info email if found), website, notes (brief useful info). Company to search: "${name}". Use empty string "" for fields you cannot find.`;
   return callGemini(prompt);
+}
+
+// Parse pasted text (e.g. from a client email) into service fields for a specific order service type
+export async function parseServiceText(text, serviceType) {
+  const fieldHints = {
+    hotel: 'name (hotel name), city, dateFrom (YYYY-MM-DD, check-in date), dateTo (YYYY-MM-DD, check-out date), nights (number of nights)',
+    restaurant: 'name (restaurant name), city, dateFrom (YYYY-MM-DD)',
+    ticket: 'name (attraction/ticket name), city',
+    train_boat: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+    bus: 'name (transport company), city',
+    guide: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+    extra_cost: 'name, city',
+    other: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+  };
+  const hints = fieldHints[serviceType] || fieldHints.other;
+  const prompt = `Extract booking information from the following text (likely from an email, possibly in Portuguese, about a European tour booking). Return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON. Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the text or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the text. Dates must be in YYYY-MM-DD format.\n\nTEXT:\n${text}`;
+  return callClaude(prompt, false);
 }

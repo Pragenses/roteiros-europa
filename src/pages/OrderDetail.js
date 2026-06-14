@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { parseServiceText } from '../lib/ai';
 
 const SERVICE_TYPES = [
   { value: 'hotel', label: 'Hotel', icon: '🏨' },
@@ -57,6 +58,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [showRates, setShowRates] = useState(false);
   const [editingOrder, setEditingOrder] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteLoading, setPasteLoading] = useState(false);
   const serviceFormRef = useRef(null);
   const orderFormRef = useRef(null);
 
@@ -93,6 +96,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       depositDate: f.depositDate?.value || '',
       depositAmount: f.depositAmount?.value || '',
       depositCurrency: f.depositCurrency?.value || 'EUR',
+      confirmationLink: f.confirmationLink?.value || '',
       notes: f.notes?.value || '',
       dblRooms: f.dblRooms?.value || '',
       snglRooms: f.snglRooms?.value || '',
@@ -142,6 +146,25 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     setShowServiceForm(false);
     setEditingServiceId(null);
     fetchData();
+  };
+
+  const handlePasteText = async () => {
+    if (!pasteText.trim()) { alert('Paste some text first.'); return; }
+    setPasteLoading(true);
+    try {
+      const parsed = await parseServiceText(pasteText, activeType);
+      const f = serviceFormRef.current;
+      if (!f) return;
+      if (parsed.name && f.svcName) f.svcName.value = parsed.name;
+      if (parsed.city && f.city) f.city.value = parsed.city;
+      if (parsed.dateFrom && f.dateFrom) f.dateFrom.value = parsed.dateFrom;
+      if (parsed.dateTo && f.dateTo) f.dateTo.value = parsed.dateTo;
+      if (parsed.nights && f.nights) f.nights.value = parsed.nights;
+    } catch (err) {
+      console.error(err);
+      alert('Could not parse this text. Please fill in manually.');
+    }
+    setPasteLoading(false);
   };
 
   const openEditService = (s) => {
@@ -197,12 +220,12 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   );
 
   const ServiceRow = ({ s }) => (
-    <div style={{ display: 'grid', gridTemplateColumns: '22px 1fr 100px 120px 80px 56px', gap: 8, alignItems: 'start', padding: '10px 0', borderBottom: `1px solid ${colors.border}` }}>
+    <div onClick={() => openEditService(s)} style={{ display: 'grid', gridTemplateColumns: '22px 1fr 100px 120px 80px 28px', gap: 8, alignItems: 'start', padding: '10px 0', borderBottom: `1px solid ${colors.border}`, cursor: 'pointer' }}>
       <div style={{ fontSize: 15, paddingTop: 2 }}>{SERVICE_TYPES.find(t => t.value === s.type)?.icon || '📋'}</div>
       <div>
         <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{s.name}</div>
         {s.providerName && <div style={{ fontSize: 12, color: colors.muted }}>{s.providerName}</div>}
-        {s.providerEmail && <div style={{ fontSize: 11 }}><a href={`mailto:${s.providerEmail}`} style={{ color: '#0C447C', textDecoration: 'none' }}>✉ {s.providerEmail}</a></div>}
+        {s.providerEmail && <div style={{ fontSize: 11 }}><a href={`mailto:${s.providerEmail}`} onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>✉ {s.providerEmail}</a></div>}
         {s.providerPhone && <div style={{ fontSize: 11, color: colors.muted }}>✆ {s.providerPhone}</div>}
         {s.city && <div style={{ fontSize: 11, color: colors.muted }}>{s.city}{s.dateFrom ? ` · ${s.dateFrom}` : ''}{s.nights ? ` · ${s.nights} nights` : ''}</div>}
         {s.type === 'hotel' && (
@@ -218,6 +241,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           <div style={{ fontSize: 11, color: colors.muted }}>{s.pricePerPax} {s.currency}/person × {order?.paxCount || '?'} = {((parseFloat(s.pricePerPax) || 0) * (parseInt(order?.paxCount) || 0)).toFixed(0)} {s.currency}</div>
         )}
         {s.totalPrice && s.type !== 'ticket' && <div style={{ fontSize: 11, color: colors.muted }}>Total: {s.totalPrice} {s.currency}</div>}
+        {s.confirmationLink && <div style={{ fontSize: 11 }}><a href={s.confirmationLink} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>🔗 Confirmation</a></div>}
         {s.notes && <div style={{ fontSize: 11, color: colors.muted, fontStyle: 'italic', marginTop: 2 }}>{s.notes}</div>}
       </div>
       <div style={{ fontSize: 12 }}>
@@ -229,8 +253,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       </div>
       <StatusBadge status={s.status} />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <button onClick={() => openEditService(s)} style={{ padding: '3px 7px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.muted }}>✏</button>
-        <button onClick={() => deleteService(s.id)} style={{ padding: '3px 7px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.danger }}>✕</button>
+        <button onClick={e => { e.stopPropagation(); deleteService(s.id); }} style={{ padding: '3px 7px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.danger }}>✕</button>
       </div>
     </div>
   );
@@ -307,7 +330,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         {SERVICE_TYPES.map(t => (
-          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
+          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
             style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
             {t.icon} + {t.label}
           </button>
@@ -319,6 +342,17 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           <div style={{ fontSize: 14, fontWeight: 600, color: colors.primary, marginBottom: '1rem' }}>
             {editingServiceId ? 'Edit' : 'Add'}: {SERVICE_TYPES.find(t => t.value === activeType)?.icon} {SERVICE_TYPES.find(t => t.value === activeType)?.label}
           </div>
+          <div style={{ background: '#f0ede8', borderRadius: 8, padding: '0.875rem 1rem', marginBottom: '1.25rem' }}>
+            <div style={{ fontSize: 13, color: colors.primary, fontWeight: 500, marginBottom: 6 }}>📋 Paste from email to auto-fill</div>
+            <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} rows={2}
+              placeholder="e.g. Bergen | 25/07 e 28/07 — 3 noites. Hospedagem no elegante Radisson Blu Royal Hotel..."
+              style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 8 }} />
+            <button type="button" onClick={handlePasteText} disabled={pasteLoading}
+              style={{ padding: '7px 16px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', opacity: pasteLoading ? 0.6 : 1 }}>
+              {pasteLoading ? 'Parsing...' : '📋 Parse into fields'}
+            </button>
+          </div>
+
           <form ref={serviceFormRef} onSubmit={handleServiceSubmit}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 10 }}>
               <div>{lbl('Name *')}<input name="svcName" type="text" required style={iStyle} placeholder={activeType === 'hotel' ? 'e.g. Novotel Amsterdam City' : activeType === 'ticket' ? 'e.g. Keukenhof Gardens' : ''} /></div>
@@ -424,6 +458,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               <div>{lbl('Option date')}<input name="optionDate" type="date" style={iStyle} /></div>
               <div>{lbl('Deposit date')}<input name="depositDate" type="date" style={iStyle} /></div>
               <div>{lbl('Deposit amount')}<input name="depositAmount" type="number" style={iStyle} /></div>
+              <div style={{ gridColumn: '1 / -1' }}>{lbl('Confirmation link (hotel/supplier portal)')}<input name="confirmationLink" type="text" placeholder="https://..." style={iStyle} /></div>
             </div>
 
             <div style={{ marginBottom: 12 }}>
