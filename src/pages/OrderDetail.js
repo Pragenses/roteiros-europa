@@ -818,6 +818,12 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
   const iStyle = { width: '100%', padding: '7px 9px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
+  // Allow comma as decimal separator (common in European number entry), normalize to a period
+  const decimalInput = (e) => {
+    const val = e.target.value;
+    const normalized = val.replace(',', '.');
+    if (normalized !== val) e.target.value = normalized;
+  };
 
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!order) return <div style={{ color: colors.muted }}>Order not found.</div>;
@@ -1049,11 +1055,11 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                   <div>{lbl('SNGL rooms')}<input name="snglRooms" type="number" placeholder="2" style={iStyle} /></div>
                   <div>{lbl('TWN rooms')}<input name="twnRooms" type="number" placeholder="0" style={iStyle} /></div>
                   <div>{lbl('TRPL rooms')}<input name="trplRooms" type="number" placeholder="0" style={iStyle} /></div>
-                  <div>{lbl('Price DBL / room / night')}<input name="pricePerDblRoom" type="number" placeholder="150" style={iStyle} /></div>
-                  <div>{lbl('Price SNGL / room / night')}<input name="pricePerSnglRoom" type="number" placeholder="120" style={iStyle} /></div>
-                  <div>{lbl('Price TWN / room / night')}<input name="pricePerTwnRoom" type="number" placeholder="150" style={iStyle} /></div>
-                  <div>{lbl('Price TRPL / room / night')}<input name="pricePerTrplRoom" type="number" placeholder="190" style={iStyle} /></div>
-                  <div>{lbl('City tax amount')}<input name="cityTax" type="number" placeholder="4.20" style={iStyle} /></div>
+                  <div>{lbl('Price DBL / room / night')}<input name="pricePerDblRoom" type="text" inputMode="decimal" onChange={decimalInput} placeholder="150" style={iStyle} /></div>
+                  <div>{lbl('Price SNGL / room / night')}<input name="pricePerSnglRoom" type="text" inputMode="decimal" onChange={decimalInput} placeholder="120" style={iStyle} /></div>
+                  <div>{lbl('Price TWN / room / night')}<input name="pricePerTwnRoom" type="text" inputMode="decimal" onChange={decimalInput} placeholder="150" style={iStyle} /></div>
+                  <div>{lbl('Price TRPL / room / night')}<input name="pricePerTrplRoom" type="text" inputMode="decimal" onChange={decimalInput} placeholder="190" style={iStyle} /></div>
+                  <div>{lbl('City tax amount')}<input name="cityTax" type="text" inputMode="decimal" onChange={decimalInput} placeholder="4.20" style={iStyle} /></div>
                   <div>{lbl('City tax basis')}
                     <select name="cityTaxIncluded" style={iStyle}>
                       <option value="separate">Charged separately</option>
@@ -1123,9 +1129,9 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '12px 0 8px', borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>Meals in hotel</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 10 }}>
                   <div>{lbl('Dinners (nights)')}<input name="dinners" type="number" placeholder="1" style={iStyle} /></div>
-                  <div>{lbl('Dinner price / person')}<input name="dinnerPrice" type="number" placeholder="28" style={iStyle} /></div>
+                  <div>{lbl('Dinner price / person')}<input name="dinnerPrice" type="text" inputMode="decimal" onChange={decimalInput} placeholder="28" style={iStyle} /></div>
                   <div>{lbl('Lunches (days)')}<input name="lunches" type="number" placeholder="0" style={iStyle} /></div>
-                  <div>{lbl('Lunch price / person')}<input name="lunchPrice" type="number" placeholder="22" style={iStyle} /></div>
+                  <div>{lbl('Lunch price / person')}<input name="lunchPrice" type="text" inputMode="decimal" onChange={decimalInput} placeholder="22" style={iStyle} /></div>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '12px 0 8px', borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>Guide & driver accommodation</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 10 }}>
@@ -1136,7 +1142,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                       <option value="dbl">DBL (same hotel)</option>
                     </select>
                   </div>
-                  <div>{lbl('Guide room price / night')}<input name="guideRoomPrice" type="number" placeholder="same as client" style={iStyle} /></div>
+                  <div>{lbl('Guide room price / night')}<input name="guideRoomPrice" type="text" inputMode="decimal" onChange={decimalInput} placeholder="same as client" style={iStyle} /></div>
                   <div>{lbl('Driver accommodation')}
                     <select name="driverAccom" style={iStyle}>
                       <option value="none">Goes home</option>
@@ -1144,7 +1150,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                       <option value="other">Different hotel</option>
                     </select>
                   </div>
-                  <div>{lbl('Driver room price / night')}<input name="driverRoomPrice" type="number" placeholder="0" style={iStyle} /></div>
+                  <div>{lbl('Driver room price / night')}<input name="driverRoomPrice" type="text" inputMode="decimal" onChange={decimalInput} placeholder="0" style={iStyle} /></div>
                   <div>{lbl('Driver nights (if not full stay)')}<input name="driverNights" type="number" placeholder="e.g. 1" style={iStyle} /></div>
                 </div>
                 <div style={{ fontSize: 11, color: colors.muted, marginTop: -4, marginBottom: 8 }}>If driver stays the whole period, leave "Driver nights" empty — it will use the hotel's total nights.</div>
@@ -1153,14 +1159,14 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
             {activeType === 'ticket' && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 10 }}>
-                <div>{lbl('Price / person')}<input name="pricePerPax" type="number" placeholder="26" style={iStyle} /></div>
+                <div>{lbl('Price / person')}<input name="pricePerPax" type="text" inputMode="decimal" onChange={decimalInput} placeholder="26" style={iStyle} /></div>
               </div>
             )}
 
             {!['hotel', 'ticket'].includes(activeType) && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 10 }}>
-                <div>{lbl('Price / person (if applicable)')}<input name="pricePerPax" type="number" style={iStyle} /></div>
-                <div>{lbl('Total price (if flat fee)')}<input name="totalPrice" type="number" style={iStyle} /></div>
+                <div>{lbl('Price / person (if applicable)')}<input name="pricePerPax" type="text" inputMode="decimal" onChange={decimalInput} style={iStyle} /></div>
+                <div>{lbl('Total price (if flat fee)')}<input name="totalPrice" type="text" inputMode="decimal" onChange={decimalInput} style={iStyle} /></div>
               </div>
             )}
 
@@ -1172,7 +1178,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               </div>
               <div>{lbl('Option date')}<input name="optionDate" type="date" style={iStyle} /></div>
               <div>{lbl('Deposit date')}<input name="depositDate" type="date" style={iStyle} /></div>
-              <div>{lbl('Deposit amount')}<input name="depositAmount" type="number" style={iStyle} /></div>
+              <div>{lbl('Deposit amount')}<input name="depositAmount" type="text" inputMode="decimal" onChange={decimalInput} style={iStyle} /></div>
               <div style={{ gridColumn: '1 / -1' }}>{lbl('Confirmation link (hotel/supplier portal)')}<input name="confirmationLink" type="text" placeholder="https://..." style={iStyle} /></div>
             </div>
 
