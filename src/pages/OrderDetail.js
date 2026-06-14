@@ -62,6 +62,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const [documents, setDocuments] = useState([]);
   const [docUploading, setDocUploading] = useState(false);
   const [cancellationDateDisplay, setCancellationDateDisplay] = useState('');
+  const [hotelFocSelected, setHotelFocSelected] = useState('none');
   const [pasteLoading, setPasteLoading] = useState(false);
   const serviceFormRef = useRef(null);
   const orderFormRef = useRef(null);
@@ -125,6 +126,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       hotelFoc: f.hotelFoc?.value || 'none',
       hotelFocOccupancy: f.hotelFocOccupancy?.value || 'dbl',
       cancellationDays: f.cancellationDays?.value || '',
+      cancellationDate: f.cancellationDate?.value || '',
       pricePerPax: f.pricePerPax?.value || '',
       totalPrice: f.totalPrice?.value || '',
       updatedAt: new Date().toISOString(),
@@ -298,6 +300,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     setEditingServiceId(s.id);
     setShowServiceForm(true);
     setPasteText('');
+    setHotelFocSelected(s.hotelFoc || 'none');
     fetchDocuments(s.id);
     setTimeout(() => {
       const f = serviceFormRef.current;
@@ -428,11 +431,13 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             {s.cityTax ? ` · city tax ${s.cityTax}` : ''}
             {s.dinners ? ` · ${s.dinners}× dinner ${s.dinnerPrice ? s.dinnerPrice + ' ' + s.currency : ''}` : ''}
             {s.hotelFoc && s.hotelFoc !== 'none' ? ` · FOC ${s.hotelFoc}` : ''}
-            {s.cancellationDays && s.dateFrom ? (() => {
+            {s.cancellationDate ? (
+              <span style={{ color: colors.danger, fontWeight: 700 }}> · Free cancellation until {new Date(s.cancellationDate).toLocaleDateString('en-GB')}</span>
+            ) : (s.cancellationDays && s.dateFrom ? (() => {
               const d = new Date(s.dateFrom);
               d.setDate(d.getDate() - parseInt(s.cancellationDays));
               return <span style={{ color: colors.danger, fontWeight: 700 }}> · Free cancellation until {d.toLocaleDateString('en-GB')}</span>;
-            })() : ''}
+            })() : '')}
           </div>
         )}
         {s.type === 'hotel' && (() => {
@@ -556,7 +561,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         {SERVICE_TYPES.map(t => (
-          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setDocuments([]); setCancellationDateDisplay(''); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
+          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setDocuments([]); setCancellationDateDisplay(''); setHotelFocSelected('none'); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
             style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
             {t.icon} + {t.label}
           </button>
@@ -646,7 +651,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                     </select>
                   </div>
                   <div>{lbl('Hotel FOC policy')}
-                    <select name="hotelFoc" style={iStyle}>
+                    <select name="hotelFoc" style={iStyle} onChange={(e) => setHotelFocSelected(e.target.value)}>
                       <option value="none">No FOC</option>
                       <option value="1 per 10">1 free person per 10 paying</option>
                       <option value="1 per 15">1 free person per 15 paying</option>
@@ -655,14 +660,21 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                       <option value="custom">Custom (see notes)</option>
                     </select>
                   </div>
-                  <div>{lbl('FOC person occupies')}
-                    <select name="hotelFocOccupancy" style={iStyle}>
-                      <option value="sngl">SNGL room (100% free)</option>
-                      <option value="dbl">DBL room (50% of room free)</option>
-                      <option value="twn">TWN room (50% of room free)</option>
-                      <option value="trpl">TRPL room (33% of room free)</option>
-                    </select>
-                  </div>
+                  {hotelFocSelected !== 'none' ? (
+                    <div>{lbl('FOC person occupies')}
+                      <select name="hotelFocOccupancy" style={iStyle}>
+                        <option value="sngl">SNGL room (100% free)</option>
+                        <option value="dbl">DBL room (50% of room free)</option>
+                        <option value="twn">TWN room (50% of room free)</option>
+                        <option value="trpl">TRPL room (33% of room free)</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div>{lbl('FOC person occupies')}
+                      <input value="—" disabled style={{ ...iStyle, color: colors.muted, background: '#f7f6f3' }} />
+                      <input type="hidden" name="hotelFocOccupancy" value="dbl" />
+                    </div>
+                  )}
                   <div>{lbl('Free cancellation (days before arrival)')}
                     <input name="cancellationDays" type="number" placeholder="e.g. 60" style={iStyle}
                       onChange={(e) => {
@@ -673,11 +685,22 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                           const d = new Date(dateFrom);
                           d.setDate(d.getDate() - days);
                           setCancellationDateDisplay(d.toLocaleDateString('en-GB'));
+                          if (f.cancellationDate) f.cancellationDate.value = '';
                         } else {
                           setCancellationDateDisplay('');
                         }
                       }} />
                     {cancellationDateDisplay && <div style={{ fontSize: 11, color: colors.muted, marginTop: 3 }}>Deadline: {cancellationDateDisplay}</div>}
+                  </div>
+                  <div>{lbl('...or enter exact deadline date')}
+                    <input name="cancellationDate" type="date" style={iStyle}
+                      onChange={(e) => {
+                        const f = serviceFormRef.current;
+                        if (e.target.value) {
+                          if (f.cancellationDays) f.cancellationDays.value = '';
+                          setCancellationDateDisplay('');
+                        }
+                      }} />
                   </div>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '12px 0 8px', borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>Meals in hotel</div>
