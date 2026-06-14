@@ -12,7 +12,7 @@ const PROVIDER_TYPES = [
   { value: 'other', label: 'Other', icon: '📋' },
 ];
 
-export default function Providers({ navigate, colors }) {
+export default function Providers({ navigate, colors, navParams }) {
   const [providers, setProviders] = useState([]);
   const [allOrders, setAllOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +46,18 @@ export default function Providers({ navigate, colors }) {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    if (navParams?.expandProviderName && providers.length > 0) {
+      const target = navParams.expandProviderName.toLowerCase().trim();
+      const match = providers.find(p => p.name.toLowerCase().trim() === target);
+      if (match) {
+        setExpanded(e => ({ ...e, [match.id]: true }));
+        setSearch(match.name);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navParams, providers.length]);
 
   const addContact = () => setContacts(c => [...c, { name: '', role: '', email: '', phone: '' }]);
   const removeContact = (i) => setContacts(c => c.filter((_, idx) => idx !== i));
@@ -178,6 +190,14 @@ export default function Providers({ navigate, colors }) {
 
   return (
     <div>
+      {navParams?.fromOrderId && (
+        <div style={{ marginBottom: '1rem' }}>
+          <button onClick={() => navigate('order-detail', { orderId: navParams.fromOrderId })}
+            style={{ padding: '7px 16px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            ← Back to {navParams.fromOrderName || 'order'}
+          </button>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: colors.primary, margin: 0 }}>Providers</h1>

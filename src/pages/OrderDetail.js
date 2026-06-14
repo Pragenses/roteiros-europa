@@ -87,6 +87,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       name: f.svcName?.value || '',
       providerName: f.providerName?.value || '',
       providerEmail: f.providerEmail?.value || '',
+      providerEmail2: f.providerEmail2?.value || '',
+      providerWebsite: f.providerWebsite?.value || '',
       providerPhone: f.providerPhone?.value || '',
       city: f.city?.value || '',
       dateFrom: f.dateFrom?.value || '',
@@ -300,6 +302,15 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{s.name}</div>
         {s.providerName && <div style={{ fontSize: 12, color: colors.muted }}>{s.providerName}</div>}
         {s.providerEmail && <div style={{ fontSize: 11 }}><a href={`mailto:${s.providerEmail}`} onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>✉ {s.providerEmail}</a></div>}
+        {s.providerEmail2 && <div style={{ fontSize: 11 }}><a href={`mailto:${s.providerEmail2}`} onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>✉ {s.providerEmail2}</a></div>}
+        {s.providerWebsite && <div style={{ fontSize: 11 }}><a href={s.providerWebsite.startsWith('http') ? s.providerWebsite : `https://${s.providerWebsite}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>🌐 {s.providerWebsite}</a></div>}
+        {(s.providerName || s.name) && (
+          <div style={{ fontSize: 11 }}>
+            <a href="#" onClick={e => { e.stopPropagation(); navigate('providers', { expandProviderName: s.providerName || s.name, fromOrderId: order.id, fromOrderName: order.name }); }} style={{ color: colors.muted, textDecoration: 'underline' }}>
+              → View in Providers
+            </a>
+          </div>
+        )}
         {s.providerPhone && <div style={{ fontSize: 11, color: colors.muted }}>✆ {s.providerPhone}</div>}
         {s.city && <div style={{ fontSize: 11, color: colors.muted }}>{s.city}{s.dateFrom ? ` · ${s.dateFrom}` : ''}{s.nights ? ` · ${s.nights} nights` : ''}</div>}
         {s.type === 'hotel' && (
@@ -454,7 +465,9 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               </div>
               <div>{lbl('City')}<input name="city" type="text" style={iStyle} /></div>
               <div>{lbl('Provider email')}<input name="providerEmail" type="email" style={iStyle} /></div>
+              <div>{lbl('Provider email 2')}<input name="providerEmail2" type="email" style={iStyle} /></div>
               <div>{lbl('Provider phone')}<input name="providerPhone" type="text" style={iStyle} /></div>
+              <div>{lbl('Provider website')}<input name="providerWebsite" type="text" placeholder="https://..." style={iStyle} /></div>
               <div>{lbl('Status')}
                 <select name="status" style={iStyle}>
                   {SERVICE_STATUS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}

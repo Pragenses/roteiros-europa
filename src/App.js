@@ -37,6 +37,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -61,6 +62,7 @@ export default function App() {
   const navigate = (p, data) => {
     setPage(p);
     if (data?.orderId) setSelectedOrder(data.orderId);
+    setNavParams(data || {});
   };
 
   if (loading) return (
@@ -103,7 +105,7 @@ export default function App() {
     if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} />;
     if (page === 'clients') return <Clients navigate={navigate} colors={COLORS} />;
     if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
-    if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} />;
+    if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'settings') return <Settings colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} />;
   };
