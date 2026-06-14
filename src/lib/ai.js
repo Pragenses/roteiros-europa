@@ -6,11 +6,16 @@ async function getApiKey() {
   return snap.exists() ? (snap.data().anthropicKey || '') : '';
 }
 
-// Extract the first complete, valid JSON object from a text blob,
+// Extract the first complete, valid JSON value (object or array) from a text blob,
 // even if the model added extra commentary before/after it.
 function extractJSON(text) {
-  const start = text.indexOf('{');
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{' || text[i] === '[') { start = i; break; }
+  }
   if (start === -1) throw new Error('No JSON in response');
+  const openCh = text[start];
+  const closeCh = openCh === '{' ? '}' : ']';
   let depth = 0;
   let inString = false;
   let escape = false;
@@ -27,8 +32,8 @@ function extractJSON(text) {
       continue;
     }
     if (ch === '"') { inString = true; continue; }
-    if (ch === '{') depth++;
-    else if (ch === '}') {
+    if (ch === openCh) depth++;
+    else if (ch === closeCh) {
       depth--;
       if (depth === 0) {
         const candidate = text.slice(start, i + 1);
@@ -36,7 +41,7 @@ function extractJSON(text) {
       }
     }
   }
-  throw new Error('No complete JSON object found in response');
+  throw new Error('No complete JSON value found in response');
 }
 
 async function callClaude(prompt, useWebSearch = true) {
@@ -158,7 +163,10 @@ notes (any other important conditions, payment terms, deposit requirements, etc.
 // Parse pasted text (e.g. from a client email) into service fields for a specific order service type
 export async function parseServiceText(text, serviceType) {
   const hints = SERVICE_FIELD_HINTS[serviceType] || SERVICE_FIELD_HINTS.other;
-  const prompt = `Extract booking information from the following text (likely from an email, possibly in Portuguese, about a European tour booking). Return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON. Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the text or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the text. Dates must be in YYYY-MM-DD format.\n\nTEXT:\n${text}`;
+  const multiNote = serviceType === 'hotel'
+    ? ' If the text describes rates/details for MULTIPLE DIFFERENT hotels (e.g. a quote comparing several properties), return a JSON ARRAY where each element is an object with the fields below for that hotel. If only ONE hotel is described, return a single JSON object (not wrapped in an array).'
+    : '';
+  const prompt = `Extract booking information from the following text (likely from an email, possibly in Portuguese, about a European tour booking). Return ONLY valid JSON, absolutely no markdown, no explanation, no code blocks - just the raw JSON.${multiNote} Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the text or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the text. Dates must be in YYYY-MM-DD format.\n\nTEXT:\n${text}`;
   return callClaude(prompt, false);
 }
 
@@ -196,6 +204,9 @@ async function callClaudeWithDocument(prompt, base64Data, mediaType) {
 // Parse an uploaded PDF contract/confirmation into service fields
 export async function parseServiceDocument(base64Data, mediaType, serviceType) {
   const hints = SERVICE_FIELD_HINTS[serviceType] || SERVICE_FIELD_HINTS.other;
-  const prompt = `This document is a hotel/service contract or confirmation, possibly in Portuguese, Czech, English or another European language, related to a European tour booking. Extract booking information and return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON. Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the document or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the document. Dates must be in YYYY-MM-DD format.`;
+  const multiNote = serviceType === 'hotel'
+    ? ' If the document describes rates/details for MULTIPLE DIFFERENT hotels (e.g. a quote comparing several properties), return a JSON ARRAY where each element is an object with the fields below for that hotel. If only ONE hotel is described, return a single JSON object (not wrapped in an array).'
+    : '';
+  const prompt = `This document is a hotel/service contract or confirmation, possibly in Portuguese, Czech, English or another European language, related to a European tour booking. Extract booking information and return ONLY valid JSON, absolutely no markdown, no explanation, no code blocks - just the raw JSON.${multiNote} Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the document or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the document. Dates must be in YYYY-MM-DD format.`;
   return callClaudeWithDocument(prompt, base64Data, mediaType);
 }

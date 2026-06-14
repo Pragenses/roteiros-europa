@@ -187,6 +187,76 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     fetchData();
   };
 
+  const createHotelServiceFromParsed = async (parsed) => {
+    const data = {
+      type: 'hotel',
+      name: parsed.name || '',
+      providerName: parsed.name || '',
+      providerEmail: '',
+      providerEmail2: '',
+      providerWebsite: '',
+      providerPhone: '',
+      city: parsed.city || '',
+      dateFrom: parsed.dateFrom || '',
+      dateTo: parsed.dateTo || '',
+      ticketCount: '',
+      nights: parsed.nights || '',
+      currency: parsed.currency || 'EUR',
+      status: 'enquired',
+      optionDate: '',
+      depositDate: '',
+      depositAmount: '',
+      depositCurrency: 'EUR',
+      confirmationLink: '',
+      notes: parsed.notes || '',
+      dblRooms: parsed.dblRooms || '',
+      snglRooms: parsed.snglRooms || '',
+      twnRooms: parsed.twnRooms || '',
+      trplRooms: parsed.trplRooms || '',
+      pricePerDblRoom: parsed.pricePerDblRoom || '',
+      pricePerSnglRoom: parsed.pricePerSnglRoom || '',
+      pricePerTwnRoom: parsed.pricePerTwnRoom || '',
+      pricePerTrplRoom: parsed.pricePerTrplRoom || '',
+      cityTax: parsed.cityTax || '',
+      cityTaxIncluded: parsed.cityTaxIncluded || 'separate',
+      cityTaxType: parsed.cityTaxType || 'per_person',
+      dinners: parsed.dinners || '',
+      dinnerPrice: parsed.dinnerPrice || '',
+      lunches: parsed.lunches || '',
+      lunchPrice: parsed.lunchPrice || '',
+      guideRoom: '',
+      guideRoomPrice: '',
+      driverAccom: 'none',
+      driverRoomPrice: '',
+      driverNights: '',
+      hotelFoc: parsed.hotelFoc || 'none',
+      hotelFocOccupancy: parsed.hotelFocOccupancy || 'dbl',
+      cancellationDays: parsed.cancellationDays || '',
+      cancellationDate: parsed.cancellationDate || '',
+      pricePerPax: '',
+      totalPrice: '',
+      updatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+    await addDoc(collection(db, 'orders', orderId, 'services'), data);
+
+    // Auto-create provider if it doesn't exist yet
+    const providerNameToSave = (data.providerName || '').trim();
+    if (providerNameToSave) {
+      const exists = providers.find(p => p.name.toLowerCase().trim() === providerNameToSave.toLowerCase());
+      if (!exists) {
+        await addDoc(collection(db, 'providers'), {
+          name: providerNameToSave,
+          type: 'hotel',
+          city: data.city || '', country: '', address: '', zip: '', vat: '', ico: '', website: '', iban: '', billingEmail: '',
+          email: '', phone: '', notes: '',
+          contacts: [{ name: '', role: '', email: '', phone: '' }],
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
+  };
+
   const applyParsedFields = async (parsed) => {
     const f = serviceFormRef.current;
     if (!f) return;
@@ -254,12 +324,34 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     }
   };
 
+  const handleParsedResult = async (parsed) => {
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) { alert('Could not find any hotels in this text.'); return; }
+      // Apply the first hotel to the current form
+      await applyParsedFields(parsed[0]);
+      const rest = parsed.slice(1);
+      if (rest.length > 0) {
+        const names = rest.map(p => p.name || '(unnamed)').join(', ');
+        const ok = window.confirm(`Found ${parsed.length} hotels in this text. The first (${parsed[0].name || ''}) was filled into this form.\n\nAdd the other ${rest.length} as separate hotel services too?\n${names}`);
+        if (ok) {
+          for (const item of rest) {
+            await createHotelServiceFromParsed(item);
+          }
+          await fetchData();
+          alert(`Added ${rest.length} additional hotel service(s). You'll find them in the Hotels section.`);
+        }
+      }
+    } else {
+      await applyParsedFields(parsed);
+    }
+  };
+
   const handlePasteText = async () => {
     if (!pasteText.trim()) { alert('Paste some text first.'); return; }
     setPasteLoading(true);
     try {
       const parsed = await parseServiceText(pasteText, activeType);
-      await applyParsedFields(parsed);
+      await handleParsedResult(parsed);
     } catch (err) {
       console.error(err);
       alert('Could not parse this text: ' + err.message);
@@ -280,7 +372,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       });
       const mediaType = file.type || 'application/pdf';
       const parsed = await parseServiceDocument(base64, mediaType, activeType);
-      await applyParsedFields(parsed);
+      await handleParsedResult(parsed);
     } catch (err) {
       console.error(err);
       alert('Could not parse this document: ' + err.message);
