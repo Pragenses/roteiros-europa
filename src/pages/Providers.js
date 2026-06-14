@@ -56,8 +56,7 @@ export default function Providers({ navigate, colors, navParams }) {
         setSearch(match.name);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navParams, providers.length]);
+  }, [navParams, providers]);
 
   const addContact = () => setContacts(c => [...c, { name: '', role: '', email: '', phone: '' }]);
   const removeContact = (i) => setContacts(c => c.filter((_, idx) => idx !== i));
