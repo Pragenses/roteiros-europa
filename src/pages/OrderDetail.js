@@ -324,6 +324,11 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           setCancellationDateDisplay(d.toLocaleDateString('en-GB'));
         }
       }
+    } else {
+      // Non-hotel types: total price, currency, notes
+      if (parsed.totalPrice !== undefined && parsed.totalPrice !== '' && f.totalPrice) f.totalPrice.value = parsed.totalPrice;
+      if (parsed.currency && f.currency) f.currency.value = parsed.currency;
+      if (parsed.notes && f.notes && !f.notes.value) f.notes.value = parsed.notes;
     }
     // Try to match against known providers to auto-fill provider/email/phone
     if (parsed.name && f.providerName) {

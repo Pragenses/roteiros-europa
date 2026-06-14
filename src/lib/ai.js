@@ -164,13 +164,13 @@ hotelFocOccupancy ("sngl"/"dbl"/"twn"/"trpl" - what room type the free person oc
 cancellationDays (number of days before arrival for free cancellation, if stated as "X days before arrival"),
 cancellationDate (YYYY-MM-DD, if a specific cancellation deadline date is given instead of a day count),
 notes (any other important conditions, payment terms, deposit requirements, etc., in 1-2 sentences)`,
-  restaurant: 'name (restaurant name), city, dateFrom (YYYY-MM-DD)',
+  restaurant: 'name (restaurant name), city, dateFrom (YYYY-MM-DD), totalPrice (sum of all amounts/prices mentioned in the text, as a single number, if multiple amounts add them all up), currency (3-letter code, e.g. EUR/GBP/CZK/USD/NOK/DKK/CHF/PLN), notes (brief summary of what is included, in 1-2 sentences)',
   ticket: 'name (attraction/ticket name), city',
-  train_boat: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
-  bus: 'name (transport company), city',
-  guide: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
-  extra_cost: 'name, city',
-  other: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+  train_boat: 'name, city, dateFrom (YYYY-MM-DD, earliest date mentioned), dateTo (YYYY-MM-DD, latest date mentioned), totalPrice (sum of all amounts/prices mentioned in the text, as a single number, if multiple amounts add them all up), currency (3-letter code, e.g. EUR/GBP/CZK/USD/NOK/DKK/CHF/PLN), notes (brief summary of what is included, in 1-2 sentences)',
+  bus: 'name (transport company), city, dateFrom (YYYY-MM-DD, earliest date mentioned in the itinerary/text), dateTo (YYYY-MM-DD, latest date mentioned in the itinerary/text), totalPrice (sum of ALL amounts/prices mentioned anywhere in the text for transfers/transport/tours, as a single number - add up every individual price found, even if there are many separate line items), currency (3-letter code, e.g. EUR/GBP/CZK/USD/NOK/DKK/CHF/PLN), notes (brief 2-3 sentence summary listing each day/leg and its price, so the user can verify the total)',
+  guide: 'name, city, dateFrom (YYYY-MM-DD, earliest date mentioned), dateTo (YYYY-MM-DD, latest date mentioned), totalPrice (sum of all amounts/prices mentioned in the text, as a single number, if multiple amounts add them all up), currency (3-letter code, e.g. EUR/GBP/CZK/USD/NOK/DKK/CHF/PLN), notes (brief summary, in 1-2 sentences)',
+  extra_cost: 'name, city, dateFrom (YYYY-MM-DD if a date is mentioned), totalPrice (sum of all amounts/prices mentioned in the text, as a single number, if multiple amounts add them all up), currency (3-letter code, e.g. EUR/GBP/CZK/USD/NOK/DKK/CHF/PLN), notes (brief summary, in 1-2 sentences)',
+  other: 'name, city, dateFrom (YYYY-MM-DD, earliest date mentioned), dateTo (YYYY-MM-DD, latest date mentioned), totalPrice (sum of all amounts/prices mentioned in the text, as a single number, if multiple amounts add them all up), currency (3-letter code, e.g. EUR/GBP/CZK/USD/NOK/DKK/CHF/PLN), notes (brief summary listing each item and its price, in 1-2 sentences)',
 };
 
 // Parse pasted text (e.g. from a client email) into service fields for a specific order service type
