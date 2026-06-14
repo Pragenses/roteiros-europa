@@ -61,7 +61,6 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [clients, setClients] = useState([]);
   const [items, setItems] = useState([]);
   const [margin, setMargin] = useState(15);
-  const [focCount, setFocCount] = useState(0);
   const [paxList, setPaxList] = useState('15,20,25,30,35');
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
@@ -75,7 +74,6 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       setOffer({ id: snap.id, ...data });
       setItems(data.items || []);
       setMargin(data.margin ?? 15);
-      setFocCount(data.focCount ?? 0);
       setPaxList(data.paxList || '15,20,25,30,35');
     }
     const cliSnap = await getDocs(collection(db, 'clients'));
@@ -137,7 +135,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const handleSave = async () => {
     setSaving(true);
     await updateDoc(doc(db, 'offers', offerId), {
-      items, margin: parseFloat(margin) || 0, focCount: parseInt(focCount) || 0, paxList,
+      items, margin: parseFloat(margin) || 0, paxList,
       updatedAt: new Date().toISOString(),
     });
     setSaving(false);
@@ -159,7 +157,6 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       paxCount: '',
       status: 'enquired',
       destinations: offer.destinations || '',
-      focCount: focCount ?? 0,
       focType: 'dbl',
       margin: margin || 15,
       notes: `Created from offer "${offer.name}".\n${offer.notes || ''}`,
@@ -211,7 +208,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const costDbl = groupPerPax + perPaxDblEUR;
     const marginAmount = costDbl * (margin / 100);
     const sellingBeforeFoc = costDbl + marginAmount;
-    const focShare = (focPoolEUR * (focCount || 0)) / pax;
+    const focShare = focPoolEUR / pax;
     const finalDbl = sellingBeforeFoc + focShare;
     const finalSngl = finalDbl + snglSupplementEUR;
     return { pax, groupPerPax, costDbl, marginAmount, sellingBeforeFoc, focShare, finalDbl, finalSngl };
@@ -319,9 +316,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Pricing settings</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 12, marginBottom: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 10 }}>
           <div>{lbl('Margin (%)')}<input type="text" inputMode="decimal" value={margin} onChange={e => setMargin(e.target.value)} onInput={decimalInput} style={iStyle} /></div>
-          <div>{lbl('FOC — persons free of charge')}<input type="number" min="0" max="5" value={focCount} onChange={e => setFocCount(e.target.value)} style={iStyle} /></div>
           <div>{lbl('Pax sizes to calculate (comma-separated)')}<input type="text" value={paxList} onChange={e => setPaxList(e.target.value)} style={iStyle} /></div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -355,7 +351,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <tbody>
             {rows.map(r => (
               <tr key={r.pax} style={{ borderBottom: `1px solid ${colors.border}` }}>
-                <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.pax} + {focCount || 0} FOC</td>
+                <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.pax} + 1 FOC</td>
                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.groupPerPax.toFixed(2)}</td>
                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{perPaxDblEUR.toFixed(2)}</td>
                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.costDbl.toFixed(2)}</td>
