@@ -125,13 +125,23 @@ async function callGemini(prompt) {
 // Search the web (free, via Gemini) for a provider (hotel, transport, guide, etc.)
 export async function aiFillProviderFree(name) {
   const prompt = `Search the web for this travel industry provider/company and return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON on its own. Fields: name (string), type (one of: hotel/transport/guide/attraction/restaurant/other), address (street address), city, zip, country, vat (VAT/DIC tax number if found), ico (company registration number/ICO if found), email (reservations/groups email if found), phone, website, notes (brief useful notes for a tour operator, e.g. group booking conditions). Provider to search: "${name}". Use empty string "" for fields you cannot find.`;
-  return callGemini(prompt);
+  try {
+    return await callGemini(prompt);
+  } catch (err) {
+    console.warn('Gemini lookup failed, falling back to Claude web search:', err.message);
+    return aiFillProvider(name);
+  }
 }
 
 // Search the web (free, via Gemini) for a Brazilian/international tour operator client
 export async function aiFillClientFree(name) {
   const prompt = `Search the web for this tour operator / travel agency company and return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON on its own. Fields: name (string, official company name), country (string), state (string, state/province/federation unit if applicable e.g. for Brazil "Estado" like "SP", "RJ"), billingCompany (full legal company name), billingAddress (street address), billingCity, billingZip, billingCountry, billingVat (VAT/CNPJ/tax number if found), billingIco (company registration number if different from VAT), billingEmail (contact/info email if found), website, notes (brief useful info). Company to search: "${name}". Use empty string "" for fields you cannot find.`;
-  return callGemini(prompt);
+  try {
+    return await callGemini(prompt);
+  } catch (err) {
+    console.warn('Gemini lookup failed, falling back to Claude web search:', err.message);
+    return aiFillClient(name);
+  }
 }
 
 const SERVICE_FIELD_HINTS = {
