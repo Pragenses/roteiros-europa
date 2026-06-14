@@ -450,6 +450,29 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     return { lines, total, nights, totalRooms, currency: cur };
   };
 
+  // Generic cost for any service (used in Cost Summary across all types)
+  const getServiceCost = (s) => {
+    const cur = s.currency || 'EUR';
+    if (s.type === 'hotel') {
+      const calc = calculateHotelCost(s);
+      return calc ? { total: calc.total, currency: cur } : null;
+    }
+    if (s.type === 'ticket') {
+      const count = parseFloat(s.ticketCount) || 0;
+      const price = parseFloat(s.pricePerPax) || 0;
+      if (count > 0 && price > 0) return { total: count * price, currency: cur };
+      return null;
+    }
+    // Other types: use totalPrice (flat fee) or pricePerPax × order pax count
+    if (s.totalPrice) {
+      return { total: parseFloat(s.totalPrice) || 0, currency: cur };
+    }
+    if (s.pricePerPax) {
+      const pax = parseInt(order?.paxCount) || 0;
+      if (pax > 0) return { total: (parseFloat(s.pricePerPax) || 0) * pax, currency: cur };
+    }
+    return null;
+
   const SectionDivider = ({ title, count }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '1.5rem 0 0.75rem' }}>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: colors.primary, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{title}</div>
@@ -587,21 +610,28 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         </div>
       )}
 
-      {hotels.length > 0 && (() => {
-        const rows = hotels.map(h => ({ h, calc: calculateHotelCost(h) })).filter(r => r.calc);
+      {services.length > 0 && (() => {
+        const rows = services.map(s => ({ s, cost: getServiceCost(s) })).filter(r => r.cost);
         if (rows.length === 0) return null;
         const byCurrency = {};
-        rows.forEach(({ calc }) => {
-          byCurrency[calc.currency] = (byCurrency[calc.currency] || 0) + calc.total;
+        rows.forEach(({ cost }) => {
+          byCurrency[cost.currency] = (byCurrency[cost.currency] || 0) + cost.total;
+        });
+        const sortedRows = [...rows].sort((a, b) => {
+          const da = a.s.dateFrom || '9999-99-99';
+          const db = b.s.dateFrom || '9999-99-99';
+          return da < db ? -1 : da > db ? 1 : 0;
         });
         return (
           <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1rem' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>💰 Cost Summary — Hotels</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>💰 Cost Summary — All services</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {rows.map(({ h, calc }, i) => (
-                <div key={h.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: i < rows.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
-                  <span style={{ color: colors.text }}>{h.name}{h.city ? ` (${h.city})` : ''}</span>
-                  <span style={{ fontWeight: 600 }}>{calc.total.toFixed(2)} {calc.currency}</span>
+              {sortedRows.map(({ s, cost }, i) => (
+                <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: i < sortedRows.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
+                  <span style={{ color: colors.text }}>
+                    {SERVICE_TYPES.find(t => t.value === s.type)?.icon || '📋'} {s.name}{s.city ? ` (${s.city})` : ''}{s.dateFrom ? ` · ${s.dateFrom}` : ''}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{cost.total.toFixed(2)} {cost.currency}</span>
                 </div>
               ))}
             </div>
