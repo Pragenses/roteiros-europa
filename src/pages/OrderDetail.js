@@ -57,6 +57,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const [editingServiceId, setEditingServiceId] = useState(null);
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [showRates, setShowRates] = useState(false);
+  const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
+  const [ratesLoading, setRatesLoading] = useState(false);
   const [editingOrder, setEditingOrder] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [documents, setDocuments] = useState([]);
@@ -79,6 +81,28 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   }, [orderId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const fetchLiveRates = useCallback(async () => {
+    setRatesLoading(true);
+    try {
+      const symbols = Object.keys(DEFAULT_RATES).join(',');
+      const resp = await fetch(`https://api.frankfurter.app/latest?from=EUR&to=${symbols}`);
+      const data = await resp.json();
+      if (data && data.rates) {
+        const newRates = {};
+        Object.entries(data.rates).forEach(([cur, value]) => {
+          if (value > 0) newRates[cur] = 1 / value; // value = "1 EUR = X cur" -> we want "1 cur = ? EUR"
+        });
+        setRates(prev => ({ ...prev, ...newRates }));
+        setRatesUpdatedAt(data.date || new Date().toISOString().slice(0, 10));
+      }
+    } catch (err) {
+      console.error('Failed to fetch live exchange rates', err);
+    }
+    setRatesLoading(false);
+  }, []);
+
+  useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
   const handleServiceSubmit = async (e) => {
     e.preventDefault();
@@ -706,7 +730,9 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 12, color: colors.muted, fontWeight: 600 }}>Exchange rates (→ EUR):</div>
+          <div style={{ fontSize: 12, color: colors.muted, fontWeight: 600 }}>
+            Exchange rates (→ EUR){ratesUpdatedAt ? ` · ECB ${ratesUpdatedAt}` : ''}:
+          </div>
           {Object.entries(rates).map(([cur, rate]) => (
             <div key={cur} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 600 }}>{cur}:</span>
@@ -714,10 +740,13 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 <input type="number" step="0.001" value={rate} onChange={e => setRates({ ...rates, [cur]: parseFloat(e.target.value) })}
                   style={{ width: 58, padding: '2px 5px', border: `1px solid ${colors.border}`, borderRadius: 4, fontSize: 12 }} />
               ) : (
-                <span style={{ fontSize: 12, color: colors.muted }}>{rate}</span>
+                <span style={{ fontSize: 12, color: colors.muted }}>{typeof rate === 'number' ? rate.toFixed(4) : rate}</span>
               )}
             </div>
           ))}
+          <button onClick={fetchLiveRates} disabled={ratesLoading} style={{ padding: '3px 10px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.muted, fontFamily: 'inherit' }}>
+            {ratesLoading ? '⏳ Updating...' : '🔄 Refresh'}
+          </button>
           <button onClick={() => setShowRates(!showRates)} style={{ padding: '3px 10px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.muted, fontFamily: 'inherit' }}>
             {showRates ? '✓ Done' : '✏ Edit rates'}
           </button>
