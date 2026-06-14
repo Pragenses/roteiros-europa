@@ -100,19 +100,75 @@ export async function aiFillClientFree(name) {
   return callGemini(prompt);
 }
 
+const SERVICE_FIELD_HINTS = {
+  hotel: `name (hotel name), city, dateFrom (YYYY-MM-DD, check-in date), dateTo (YYYY-MM-DD, check-out date), nights (number of nights),
+dblRooms (number of double rooms), pricePerDblRoom (price per DBL room per night, number only),
+snglRooms (number of single rooms), pricePerSnglRoom (price per SNGL room per night, number only),
+twnRooms (number of twin rooms), pricePerTwnRoom (price per TWN room per night, number only),
+trplRooms (number of triple rooms), pricePerTrplRoom (price per TRPL room per night, number only),
+currency (3-letter code, e.g. EUR/NOK/DKK/CZK/GBP/CHF/PLN/USD),
+cityTax (city tax amount, number only),
+cityTaxIncluded ("included" if the text says city tax is included in the room price, otherwise "separate"),
+cityTaxType ("per_person" if charged per person per night, "per_room" if per room per night, "percent" if a percentage of room price - default "per_person" if unclear),
+dinners (number of dinner nights included), dinnerPrice (price per person for dinner),
+lunches (number of lunch days included), lunchPrice (price per person for lunch),
+hotelFoc (free-of-charge policy as "1 per X" e.g. "1 per 20" if the text mentions e.g. "1 free place per 20 paying", otherwise "none"),
+hotelFocOccupancy ("sngl"/"dbl"/"twn"/"trpl" - what room type the free person occupies, default "dbl" if unclear),
+cancellationDays (number of days before arrival for free cancellation, if stated as "X days before arrival"),
+cancellationDate (YYYY-MM-DD, if a specific cancellation deadline date is given instead of a day count),
+notes (any other important conditions, payment terms, deposit requirements, etc., in 1-2 sentences)`,
+  restaurant: 'name (restaurant name), city, dateFrom (YYYY-MM-DD)',
+  ticket: 'name (attraction/ticket name), city',
+  train_boat: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+  bus: 'name (transport company), city',
+  guide: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+  extra_cost: 'name, city',
+  other: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
+};
+
 // Parse pasted text (e.g. from a client email) into service fields for a specific order service type
 export async function parseServiceText(text, serviceType) {
-  const fieldHints = {
-    hotel: 'name (hotel name), city, dateFrom (YYYY-MM-DD, check-in date), dateTo (YYYY-MM-DD, check-out date), nights (number of nights)',
-    restaurant: 'name (restaurant name), city, dateFrom (YYYY-MM-DD)',
-    ticket: 'name (attraction/ticket name), city',
-    train_boat: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
-    bus: 'name (transport company), city',
-    guide: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
-    extra_cost: 'name, city',
-    other: 'name, city, dateFrom (YYYY-MM-DD), dateTo (YYYY-MM-DD)',
-  };
-  const hints = fieldHints[serviceType] || fieldHints.other;
+  const hints = SERVICE_FIELD_HINTS[serviceType] || SERVICE_FIELD_HINTS.other;
   const prompt = `Extract booking information from the following text (likely from an email, possibly in Portuguese, about a European tour booking). Return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON. Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the text or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the text. Dates must be in YYYY-MM-DD format.\n\nTEXT:\n${text}`;
   return callClaude(prompt, false);
+}
+
+async function callClaudeWithDocument(prompt, base64Data, mediaType) {
+  const apiKey = await getApiKey();
+  if (!apiKey) throw new Error('No Anthropic API key configured. Go to Settings to add one.');
+  const body = {
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64Data } },
+        { type: 'text', text: prompt }
+      ]
+    }]
+  };
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || 'API error');
+  const textBlocks = data.content?.filter(b => b.type === 'text').map(b => b.text) || [];
+  const text = textBlocks.join('\n');
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON in response');
+  return JSON.parse(jsonMatch[0]);
+}
+
+// Parse an uploaded PDF contract/confirmation into service fields
+export async function parseServiceDocument(base64Data, mediaType, serviceType) {
+  const hints = SERVICE_FIELD_HINTS[serviceType] || SERVICE_FIELD_HINTS.other;
+  const prompt = `This document is a hotel/service contract or confirmation, possibly in Portuguese, Czech, English or another European language, related to a European tour booking. Extract booking information and return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON. Today's reference year context: if a date has no year, assume the year mentioned elsewhere in the document or 2027 if none given. Fields to extract: ${hints}. Use empty string "" for fields not present in the document. Dates must be in YYYY-MM-DD format.`;
+  return callClaudeWithDocument(prompt, base64Data, mediaType);
 }

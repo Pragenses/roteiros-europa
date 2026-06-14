@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc } from 'firebase/firestore';
-import { parseServiceText, aiFillProviderFree } from '../lib/ai';
+import { parseServiceText, parseServiceDocument, aiFillProviderFree } from '../lib/ai';
 
 const SERVICE_TYPES = [
   { value: 'hotel', label: 'Hotel', icon: '🏨' },
@@ -187,49 +187,107 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     fetchData();
   };
 
+  const applyParsedFields = async (parsed) => {
+    const f = serviceFormRef.current;
+    if (!f) return;
+    if (parsed.name && f.svcName) f.svcName.value = parsed.name;
+    if (parsed.city && f.city) f.city.value = parsed.city;
+    if (parsed.dateFrom && f.dateFrom) f.dateFrom.value = parsed.dateFrom;
+    if (parsed.dateTo && f.dateTo) f.dateTo.value = parsed.dateTo;
+    if (parsed.nights && f.nights) f.nights.value = parsed.nights;
+
+    if (activeType === 'hotel') {
+      const numFields = ['dblRooms', 'pricePerDblRoom', 'snglRooms', 'pricePerSnglRoom', 'twnRooms', 'pricePerTwnRoom', 'trplRooms', 'pricePerTrplRoom', 'cityTax', 'dinners', 'dinnerPrice', 'lunches', 'lunchPrice', 'cancellationDays'];
+      numFields.forEach(key => {
+        if (parsed[key] !== undefined && parsed[key] !== '' && f[key]) f[key].value = parsed[key];
+      });
+      if (parsed.currency && f.currency) f.currency.value = parsed.currency;
+      if (parsed.cityTaxIncluded && f.cityTaxIncluded) f.cityTaxIncluded.value = parsed.cityTaxIncluded;
+      if (parsed.cityTaxType && f.cityTaxType) f.cityTaxType.value = parsed.cityTaxType;
+      if (parsed.notes && f.notes && !f.notes.value) f.notes.value = parsed.notes;
+
+      if (parsed.hotelFoc && f.hotelFoc) {
+        f.hotelFoc.value = parsed.hotelFoc;
+        setHotelFocSelected(parsed.hotelFoc);
+      }
+      if (parsed.hotelFocOccupancy && f.hotelFocOccupancy) f.hotelFocOccupancy.value = parsed.hotelFocOccupancy;
+
+      if (parsed.cancellationDate && f.cancellationDate) {
+        f.cancellationDate.value = parsed.cancellationDate;
+        if (f.cancellationDays) f.cancellationDays.value = '';
+        setCancellationDateDisplay('');
+      } else if (parsed.cancellationDays && f.cancellationDays) {
+        f.cancellationDays.value = parsed.cancellationDays;
+        if (f.cancellationDate) f.cancellationDate.value = '';
+        const dateFrom = parsed.dateFrom || f.dateFrom?.value;
+        if (dateFrom) {
+          const d = new Date(dateFrom);
+          d.setDate(d.getDate() - parseInt(parsed.cancellationDays));
+          setCancellationDateDisplay(d.toLocaleDateString('en-GB'));
+        }
+      }
+    }
+    // Try to match against known providers to auto-fill provider/email/phone
+    if (parsed.name && f.providerName) {
+      const match = providers.find(p => p.name.toLowerCase().trim() === parsed.name.toLowerCase().trim()
+        || p.name.toLowerCase().includes(parsed.name.toLowerCase())
+        || parsed.name.toLowerCase().includes(p.name.toLowerCase()));
+      if (match) {
+        f.providerName.value = match.name;
+        if (!f.providerEmail.value) f.providerEmail.value = match.email || '';
+        if (!f.providerPhone.value) f.providerPhone.value = match.phone || '';
+        if (!f.city.value && match.city) f.city.value = match.city;
+      } else {
+        // Not in our database - try a web search to find contact info
+        f.providerName.value = parsed.name;
+        try {
+          const webInfo = await aiFillProviderFree(parsed.name);
+          if (webInfo.email && f.providerEmail) f.providerEmail.value = webInfo.email;
+          if (webInfo.phone && f.providerPhone) f.providerPhone.value = webInfo.phone;
+          if (webInfo.website && f.providerWebsite) f.providerWebsite.value = webInfo.website;
+          if (webInfo.city && f.city && !f.city.value) f.city.value = webInfo.city;
+        } catch (webErr) {
+          console.error('Web lookup failed:', webErr);
+          // Non-fatal - just leave email/phone empty, user can fill manually
+        }
+      }
+    }
+  };
+
   const handlePasteText = async () => {
     if (!pasteText.trim()) { alert('Paste some text first.'); return; }
     setPasteLoading(true);
     try {
       const parsed = await parseServiceText(pasteText, activeType);
-      const f = serviceFormRef.current;
-      if (!f) return;
-      if (parsed.name && f.svcName) f.svcName.value = parsed.name;
-      if (parsed.city && f.city) f.city.value = parsed.city;
-      if (parsed.dateFrom && f.dateFrom) f.dateFrom.value = parsed.dateFrom;
-      if (parsed.dateTo && f.dateTo) f.dateTo.value = parsed.dateTo;
-      if (parsed.nights && f.nights) f.nights.value = parsed.nights;
-      // Try to match against known providers to auto-fill provider/email/phone
-      if (parsed.name && f.providerName) {
-        const match = providers.find(p => p.name.toLowerCase().trim() === parsed.name.toLowerCase().trim()
-          || p.name.toLowerCase().includes(parsed.name.toLowerCase())
-          || parsed.name.toLowerCase().includes(p.name.toLowerCase()));
-        if (match) {
-          f.providerName.value = match.name;
-          if (!f.providerEmail.value) f.providerEmail.value = match.email || '';
-          if (!f.providerPhone.value) f.providerPhone.value = match.phone || '';
-          if (!f.city.value && match.city) f.city.value = match.city;
-        } else {
-          // Not in our database - try a web search to find contact info
-          f.providerName.value = parsed.name;
-          try {
-            const webInfo = await aiFillProviderFree(parsed.name);
-            if (webInfo.email && f.providerEmail) f.providerEmail.value = webInfo.email;
-            if (webInfo.phone && f.providerPhone) f.providerPhone.value = webInfo.phone;
-            if (webInfo.website && f.providerWebsite) f.providerWebsite.value = webInfo.website;
-            if (webInfo.city && f.city && !f.city.value) f.city.value = webInfo.city;
-          } catch (webErr) {
-            console.error('Web lookup failed:', webErr);
-            // Non-fatal - just leave email/phone empty, user can fill manually
-          }
-        }
-      }
+      await applyParsedFields(parsed);
     } catch (err) {
       console.error(err);
       alert('Could not parse this text: ' + err.message);
     }
     setPasteLoading(false);
   };
+
+  const handleContractUpload = async (file) => {
+    if (!file) return;
+    if (file.size > 10000000) { alert('File too large for AI parsing (max ~10 MB).'); return; }
+    setPasteLoading(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const mediaType = file.type || 'application/pdf';
+      const parsed = await parseServiceDocument(base64, mediaType, activeType);
+      await applyParsedFields(parsed);
+    } catch (err) {
+      console.error(err);
+      alert('Could not parse this document: ' + err.message);
+    }
+    setPasteLoading(false);
+  };
+
 
   const CHUNK_SIZE = 700000; // chars of base64 per chunk, safely under Firestore 1MB doc limit
 
@@ -782,6 +840,12 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               style={{ padding: '7px 16px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', opacity: pasteLoading ? 0.6 : 1 }}>
               {pasteLoading ? 'Parsing...' : '📋 Parse into fields'}
             </button>
+            <span style={{ fontSize: 12, color: colors.muted, margin: '0 8px' }}>or</span>
+            <label style={{ padding: '7px 16px', background: colors.white, color: colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 6, fontSize: 13, cursor: pasteLoading ? 'default' : 'pointer', fontFamily: 'inherit', opacity: pasteLoading ? 0.6 : 1, display: 'inline-block' }}>
+              {pasteLoading ? 'Parsing...' : '📄 Upload contract (PDF/image) to auto-fill'}
+              <input type="file" accept="application/pdf,image/*" disabled={pasteLoading} style={{ display: 'none' }}
+                onChange={(e) => { if (e.target.files[0]) handleContractUpload(e.target.files[0]); e.target.value = ''; }} />
+            </label>
           </div>
 
           <form ref={serviceFormRef} onSubmit={handleServiceSubmit}>
