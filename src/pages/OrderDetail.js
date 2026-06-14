@@ -472,6 +472,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       if (pax > 0) return { total: (parseFloat(s.pricePerPax) || 0) * pax, currency: cur };
     }
     return null;
+  };
 
   const SectionDivider = ({ title, count }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '1.5rem 0 0.75rem' }}>
