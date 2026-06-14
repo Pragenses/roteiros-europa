@@ -351,7 +351,20 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     fetchData();
   };
 
-  const hotels = services.filter(s => s.type === 'hotel');
+  const sortByDate = (arr) => [...arr].sort((a, b) => {
+    const da = a.dateFrom || '9999-99-99';
+    const db = b.dateFrom || '9999-99-99';
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.createdAt || '') < (b.createdAt || '') ? -1 : 1;
+  });
+  const hotels = sortByDate(services.filter(s => s.type === 'hotel'));
+  const restaurants = sortByDate(services.filter(s => s.type === 'restaurant'));
+  const tickets = sortByDate(services.filter(s => s.type === 'ticket'));
+  const trainsBoats = sortByDate(services.filter(s => s.type === 'train_boat'));
+  const buses = sortByDate(services.filter(s => s.type === 'bus'));
+  const guides = sortByDate(services.filter(s => s.type === 'guide'));
+  const extras = sortByDate(services.filter(s => s.type === 'extra_cost'));
+  const others = sortByDate(services.filter(s => s.type === 'other'));
 
   const StatusBadge = ({ status }) => {
     const s = SERVICE_STATUS.find(x => x.value === status) || SERVICE_STATUS[0];
@@ -887,20 +900,14 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         </div>
       )}
 
-      {services.length > 0 && (() => {
-        const sorted = [...services].sort((a, b) => {
-          const da = a.dateFrom || '9999-99-99';
-          const db = b.dateFrom || '9999-99-99';
-          if (da !== db) return da < db ? -1 : 1;
-          return (a.createdAt || '') < (b.createdAt || '') ? -1 : 1;
-        });
-        return (
-          <>
-            <SectionDivider title="Itinerary (chronological)" count={sorted.length} />
-            <ServicesBlock list={sorted} />
-          </>
-        );
-      })()}
+      {hotels.length > 0 && <><SectionDivider title="Hotels" count={hotels.length} /><ServicesBlock list={hotels} /></>}
+      {restaurants.length > 0 && <><SectionDivider title="Restaurants" count={restaurants.length} /><ServicesBlock list={restaurants} /></>}
+      {tickets.length > 0 && <><SectionDivider title="Tickets / per person" count={tickets.length} /><ServicesBlock list={tickets} /></>}
+      {trainsBoats.length > 0 && <><SectionDivider title="Train / boat" count={trainsBoats.length} /><ServicesBlock list={trainsBoats} /></>}
+      {buses.length > 0 && <><SectionDivider title="Bus" count={buses.length} /><ServicesBlock list={buses} /></>}
+      {guides.length > 0 && <><SectionDivider title="Guides" count={guides.length} /><ServicesBlock list={guides} /></>}
+      {extras.length > 0 && <><SectionDivider title="Extra costs" count={extras.length} /><ServicesBlock list={extras} /></>}
+      {others.length > 0 && <><SectionDivider title="Other" count={others.length} /><ServicesBlock list={others} /></>}
     </div>
   );
 }
