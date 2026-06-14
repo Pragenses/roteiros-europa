@@ -74,7 +74,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     const snap = await getDoc(doc(db, 'orders', orderId));
     if (snap.exists()) setOrder({ id: snap.id, ...snap.data() });
     const svcSnap = await getDocs(collection(db, 'orders', orderId, 'services'));
-    setServices(svcSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setServices(svcSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !(s.draft && !s.name)));
     const provSnap = await getDocs(collection(db, 'providers'));
     setProviders(provSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     setLoading(false);
@@ -155,6 +155,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       cancellationDate: f.cancellationDate?.value || '',
       pricePerPax: f.pricePerPax?.value || '',
       totalPrice: f.totalPrice?.value || '',
+      draft: false,
       updatedAt: new Date().toISOString(),
     };
     if (editingServiceId) {
@@ -180,6 +181,27 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           contacts: [{ name: '', role: '', email: data.providerEmail || '', phone: data.providerPhone || '' }],
           createdAt: new Date().toISOString(),
         });
+      }
+    }
+    setShowServiceForm(false);
+    setEditingServiceId(null);
+    fetchData();
+  };
+
+  const closeServiceForm = async () => {
+    // If this was a freshly-created draft that was never filled in, remove it
+    if (editingServiceId) {
+      const f = serviceFormRef.current;
+      const nameVal = f?.svcName?.value?.trim();
+      if (!nameVal) {
+        try {
+          const snap = await getDoc(doc(db, 'orders', orderId, 'services', editingServiceId));
+          if (snap.exists() && snap.data().draft) {
+            await deleteDoc(doc(db, 'orders', orderId, 'services', editingServiceId));
+          }
+        } catch (err) {
+          console.error('Failed to clean up draft:', err);
+        }
       }
     }
     setShowServiceForm(false);
@@ -914,7 +936,20 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         {SERVICE_TYPES.map(t => (
-          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setDocuments([]); setCancellationDateDisplay(''); setHotelFocSelected('none'); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
+          <button key={t.value} onClick={async () => {
+              setActiveType(t.value);
+              setShowServiceForm(true);
+              setPasteText('');
+              setCancellationDateDisplay('');
+              setHotelFocSelected('none');
+              setTimeout(() => serviceFormRef.current?.reset(), 50);
+              // Create a draft doc immediately so the Documents drag&drop section is available right away
+              const draftRef = await addDoc(collection(db, 'orders', orderId, 'services'), {
+                type: t.value, name: '', draft: true, createdAt: new Date().toISOString(),
+              });
+              setEditingServiceId(draftRef.id);
+              setDocuments([]);
+            }}
             style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
             {t.icon} + {t.label}
           </button>
@@ -924,7 +959,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       {showServiceForm && (
         <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
-            <button type="button" onClick={() => { setShowServiceForm(false); setEditingServiceId(null); }}
+            <button type="button" onClick={closeServiceForm}
               style={{ padding: '6px 14px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
               ← Back to order
             </button>
@@ -1149,7 +1184,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               <button type="submit" style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
                 {editingServiceId ? 'Save changes' : 'Add service'}
               </button>
-              <button type="button" onClick={() => { setShowServiceForm(false); setEditingServiceId(null); }}
+              <button type="button" onClick={closeServiceForm}
                 style={{ padding: '8px 18px', background: 'transparent', color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
                 Cancel
               </button>
