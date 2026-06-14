@@ -537,7 +537,10 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     if (file) {
       uploadFile(file);
     } else {
-      alert('Could not read this as a file directly. Some webmail clients block this for security reasons. Easiest workaround: drag the attachment onto your Desktop first (this always works), then drag that file here, or use "Browse files" below.');
+      const types = Array.from(e.dataTransfer.types || []);
+      const items = Array.from(e.dataTransfer.items || []).map(it => `${it.kind}/${it.type}`);
+      console.log('Drop debug - types:', types, 'items:', items);
+      alert('Could not read this as a file directly.\n\nDebug info (please send this to support):\ntypes: ' + types.join(', ') + '\nitems: ' + items.join(', ') + '\n\nWorkaround: drag the attachment onto your Desktop first, then drag that file here, or use "Browse files" below.');
     }
   };
 
