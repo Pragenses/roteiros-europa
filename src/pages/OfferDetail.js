@@ -95,6 +95,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
+  // Reusable input that shows the computed value below it when the entry starts with "="
+  const FormulaField = ({ value, onChange, placeholder }) => (
+    <div style={{ position: 'relative' }}>
+      <input type="text" placeholder={placeholder} value={value} onChange={onChange} onInput={decimalInput} style={iStyle} />
+      {String(value || '').trim().startsWith('=') && (
+        <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0, whiteSpace: 'nowrap' }}>= {evalAmount(value).toFixed(2)}</div>
+      )}
+    </div>
+  );
+
   const addItem = (type, subType) => {
     setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', groupCost: '', currency: 'EUR' }]);
   };
@@ -156,27 +166,27 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const getEffectiveCostDbl = (it) => {
     if (it.subType === 'hotel') {
-      const price = parseFloat(it.pricePerNightDbl) || 0;
+      const price = evalAmount(it.pricePerNightDbl);
       const nights = parseFloat(it.nights) || 0;
       const cityTax = evalAmount(it.cityTax);
       return (price * nights) / 2 + cityTax * nights;
     }
-    return parseFloat(it.costDbl) || 0;
+    return evalAmount(it.costDbl);
   };
   const getEffectiveCostSngl = (it) => {
     if (it.subType === 'hotel') {
-      const price = parseFloat(it.pricePerNightSngl) || 0;
+      const price = evalAmount(it.pricePerNightSngl);
       const nights = parseFloat(it.nights) || 0;
       const cityTax = evalAmount(it.cityTaxSngl !== '' && it.cityTaxSngl !== undefined ? it.cityTaxSngl : it.cityTax);
       return price * nights + cityTax * nights;
     }
-    return parseFloat(it.costSngl || it.costDbl) || 0;
+    return evalAmount(it.costSngl || it.costDbl);
   };
 
   const groupItems = items.filter(it => it.type === 'group');
   const paxItems = items.filter(it => it.type === 'per_pax');
 
-  const groupTotalEUR = groupItems.reduce((sum, it) => sum + toEUR(it.groupCost, it.currency), 0);
+  const groupTotalEUR = groupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
   const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostDbl(it), it.currency), 0);
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
@@ -257,21 +267,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                   {isHotel ? (
                     <>
-                      <input type="text" inputMode="decimal" placeholder="Price/night DBL" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} onInput={decimalInput} style={iStyle} />
-                      <input type="text" inputMode="decimal" placeholder="Price/night SNGL" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <FormulaField placeholder="Price/night DBL, or =199" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} />
+                      <FormulaField placeholder="Price/night SNGL, or =189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} />
                       <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
-                      <div style={{ position: 'relative' }}>
-                        <input type="text" placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} onInput={decimalInput} style={iStyle} />
-                        {String(it.cityTax || '').trim().startsWith('=') && (
-                          <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0 }}>= {evalAmount(it.cityTax).toFixed(2)}</div>
-                        )}
-                      </div>
-                      <div style={{ position: 'relative' }}>
-                        <input type="text" placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
-                        {String(it.cityTaxSngl || '').trim().startsWith('=') && (
-                          <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0 }}>= {evalAmount(it.cityTaxSngl).toFixed(2)}</div>
-                        )}
-                      </div>
+                      <FormulaField placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} />
+                      <FormulaField placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} />
                       <select value={it.focOccupancy || 'none'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">
                         <option value="none">FOC: none (0)</option>
                         <option value="dbl">FOC: 50% DBL</option>
@@ -283,11 +283,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     </>
                   ) : it.type === 'per_pax' ? (
                     <>
-                      <input type="text" inputMode="decimal" placeholder="Cost/pax DBL" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} onInput={decimalInput} style={iStyle} />
-                      <input type="text" inputMode="decimal" placeholder="Cost/pax SNGL (if different)" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                      <FormulaField placeholder="Cost/pax DBL, or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} />
+                      <FormulaField placeholder="Cost/pax SNGL (if different)" value={it.costSngl} onChange={e => updateItem(it.id, 'costSngl', e.target.value)} />
                     </>
                   ) : (
-                    <input type="text" inputMode="decimal" placeholder="Total group cost" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} onInput={decimalInput} style={iStyle} />
+                    <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} />
                   )}
                   <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
                     {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
