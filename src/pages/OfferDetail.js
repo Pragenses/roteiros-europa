@@ -175,7 +175,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       const price = evalAmount(it.pricePerNightDbl);
       const nights = parseFloat(it.nights) || 0;
       const cityTax = evalAmount(it.cityTax);
-      return (price * nights) / 2 + cityTax * nights;
+      return ((price + cityTax) * nights) / 2;
     }
     return evalAmount(it.costDbl);
   };
