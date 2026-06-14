@@ -71,6 +71,47 @@ Total to pay hotel = Room cost + City tax − FOC discount
 
 ---
 
+## 4. Meals (dinners / lunches)
+
+```
+Total pax for meals = (DBL×2) + (SNGL×1) + (TWN×2) + (TRPL×3)
+
+Dinner cost = Dinners (nights) × Dinner price/person × Total pax
+Lunch cost  = Lunches (days)   × Lunch price/person  × Total pax
+```
+
+---
+
+## 5. Guide accommodation
+
+The guide always stays the **full hotel period** (same as the group):
+
+```
+Guide cost = Guide room price/night × Nights   (only if a guide room type is selected)
+```
+
+---
+
+## 6. Driver accommodation
+
+The driver may stay only **part of the period** (e.g. only the last night before an early departure):
+
+```
+Driver nights = "Driver nights" field if filled, otherwise = Nights (full stay)
+Driver cost   = Driver room price/night × Driver nights   (only if accommodation ≠ "Goes home")
+```
+
+---
+
+## 7. Final total
+
+```
+Total to pay hotel = Room cost + City tax + Dinner cost + Lunch cost
+                    + Guide cost + Driver cost − FOC discount
+```
+
+---
+
 ## Worked example
 
 Say a hotel has:
@@ -79,6 +120,9 @@ Say a hotel has:
 - 3 nights
 - City tax: 4.20 EUR/person/night, charged separately
 - Hotel FOC: "1 per 20", FOC person occupies DBL
+- 2 dinners @ 28 EUR/person
+- Guide: SNGL room @ 100 EUR/night
+- Driver: same hotel @ 90 EUR/night, only 1 night (driverNights = 1)
 
 **Step 1 — Room cost**
 ```
@@ -100,9 +144,24 @@ DBL price ÷ 2 = 150 ÷ 2 = 75 EUR/person/night
 FOC discount = 1 × 75 × 3 = 225 EUR
 ```
 
-**Step 4 — Total**
+**Step 4 — Meals**
 ```
-Total = 4860 + 264.60 − 225 = 4899.60 EUR
+Dinner cost = 2 × 28 × 21 = 1176 EUR
+```
+
+**Step 5 — Guide**
+```
+Guide cost = 100 × 3 = 300 EUR
+```
+
+**Step 6 — Driver**
+```
+Driver cost = 90 × 1 = 90 EUR
+```
+
+**Step 7 — Total**
+```
+Total = 4860 + 264.60 + 1176 + 300 + 90 − 225 = 6465.60 EUR
 ```
 
 ---
@@ -111,4 +170,4 @@ Total = 4860 + 264.60 − 225 = 4899.60 EUR
 
 - The **city tax basis (per person / per room / %)** and **"included vs separate"** setting are taken from what you entered for that specific hotel — double check these are correct for the country, as rules vary widely across Europe.
 - The Hotel FOC discount is **automatic** based on total room occupancy (pax), not on the order's overall pax count — if the hotel's FOC policy is based on a different pax count (e.g. only paying clients, excluding guide/driver), you may need to adjust manually.
-- Meals (dinners/lunches), guide and driver accommodation are tracked separately in the hotel form but are **not yet included** in the "Total to pay hotel" figure shown — this is planned for a future update.
+- Meal counts (dinners/lunches) apply to **everyone staying at this hotel** (rooms-derived pax). If the guide/driver don't eat with the group, or only some pax do, adjust the count/price accordingly as a workaround.
