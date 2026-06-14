@@ -540,7 +540,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       const types = Array.from(e.dataTransfer.types || []);
       const items = Array.from(e.dataTransfer.items || []).map(it => `${it.kind}/${it.type}`);
       console.log('Drop debug - types:', types, 'items:', items);
-      alert('Could not read this as a file directly.\n\nDebug info (please send this to support):\ntypes: ' + types.join(', ') + '\nitems: ' + items.join(', ') + '\n\nWorkaround: drag the attachment onto your Desktop first, then drag that file here, or use "Browse files" below.');
+      window.prompt('Could not read this as a file directly. Debug info below (select & copy and send to support):', 'types: ' + types.join(', ') + ' | items: ' + items.join(', '));
     }
   };
 
