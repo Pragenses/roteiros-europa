@@ -602,6 +602,36 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         </div>
       )}
 
+      {hotels.length > 0 && (() => {
+        const rows = hotels.map(h => ({ h, calc: calculateHotelCost(h) })).filter(r => r.calc);
+        if (rows.length === 0) return null;
+        const byCurrency = {};
+        rows.forEach(({ calc }) => {
+          byCurrency[calc.currency] = (byCurrency[calc.currency] || 0) + calc.total;
+        });
+        return (
+          <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1rem' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>💰 Cost Summary — Hotels</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {rows.map(({ h, calc }, i) => (
+                <div key={h.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: i < rows.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
+                  <span style={{ color: colors.text }}>{h.name}{h.city ? ` (${h.city})` : ''}</span>
+                  <span style={{ fontWeight: 600 }}>{calc.total.toFixed(2)} {calc.currency}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: `2px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {Object.entries(byCurrency).map(([cur, total]) => (
+                <div key={cur} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, color: colors.primary }}>
+                  <span>Total ({cur})</span>
+                  <span>{total.toFixed(2)} {cur}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12, color: colors.muted, fontWeight: 600 }}>Exchange rates (→ EUR):</div>
