@@ -294,8 +294,21 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadFile(file);
+    let file = e.dataTransfer.files?.[0];
+    if (!file && e.dataTransfer.items) {
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const item = e.dataTransfer.items[i];
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) { file = f; break; }
+        }
+      }
+    }
+    if (file) {
+      uploadFile(file);
+    } else {
+      alert('Could not read this as a file (this often happens when dragging directly from Apple Mail). Workaround: in Mail, use File → Save Attachments (or Print → Save as PDF for the whole email), then drag the saved file here, or use "Browse files" below.');
+    }
   };
 
   const handleDragOver = (e) => {
@@ -650,6 +663,18 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 </div>
               ))}
             </div>
+            {(() => {
+              const eurTotal = Object.entries(byCurrency).reduce((sum, [cur, total]) => {
+                const rate = cur === 'EUR' ? 1 : (rates[cur] || 0);
+                return sum + total * rate;
+              }, 0);
+              return (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${colors.border}`, display: 'flex', justifyContent: 'space-between', fontSize: 13, color: colors.muted }}>
+                  <span>Estimated total in EUR (orientational)</span>
+                  <span>≈ {eurTotal.toFixed(2)} EUR</span>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
