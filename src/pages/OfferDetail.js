@@ -17,7 +17,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [clients, setClients] = useState([]);
   const [items, setItems] = useState([]);
   const [margin, setMargin] = useState(15);
-  const [focCount, setFocCount] = useState(1);
+  const [focCount, setFocCount] = useState(0);
   const [paxList, setPaxList] = useState('15,20,25,30,35');
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
@@ -31,7 +31,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       setOffer({ id: snap.id, ...data });
       setItems(data.items || []);
       setMargin(data.margin ?? 15);
-      setFocCount(data.focCount ?? 1);
+      setFocCount(data.focCount ?? 0);
       setPaxList(data.paxList || '15,20,25,30,35');
     }
     const cliSnap = await getDocs(collection(db, 'clients'));
@@ -96,7 +96,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', focOccupancy: 'dbl', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'dbl', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -140,7 +140,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       paxCount: '',
       status: 'enquired',
       destinations: offer.destinations || '',
-      focCount: focCount || 1,
+      focCount: focCount ?? 0,
       focType: 'dbl',
       margin: margin || 15,
       notes: `Created from offer "${offer.name}".\n${offer.notes || ''}`,
@@ -167,7 +167,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     if (it.subType === 'hotel') {
       const price = parseFloat(it.pricePerNightSngl) || 0;
       const nights = parseFloat(it.nights) || 0;
-      const cityTax = evalAmount(it.cityTax);
+      const cityTax = evalAmount(it.cityTaxSngl !== '' && it.cityTaxSngl !== undefined ? it.cityTaxSngl : it.cityTax);
       return price * nights + cityTax * nights;
     }
     return parseFloat(it.costSngl || it.costDbl) || 0;
@@ -246,7 +246,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 110px 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               return (
                 <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${colors.border}` }}>
                   <div style={{ display: 'flex', gap: 2 }}>
@@ -260,9 +260,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       <input type="text" inputMode="decimal" placeholder="Price/night SNGL" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
                       <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
                       <div style={{ position: 'relative' }}>
-                        <input type="text" placeholder="City tax/pers/night, or =106*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} onInput={decimalInput} style={iStyle} />
+                        <input type="text" placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} onInput={decimalInput} style={iStyle} />
                         {String(it.cityTax || '').trim().startsWith('=') && (
                           <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0 }}>= {evalAmount(it.cityTax).toFixed(2)}</div>
+                        )}
+                      </div>
+                      <div style={{ position: 'relative' }}>
+                        <input type="text" placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} onInput={decimalInput} style={iStyle} />
+                        {String(it.cityTaxSngl || '').trim().startsWith('=') && (
+                          <div style={{ fontSize: 10, color: colors.muted, position: 'absolute', top: '100%', left: 0 }}>= {evalAmount(it.cityTaxSngl).toFixed(2)}</div>
                         )}
                       </div>
                       <select value={it.focOccupancy || 'dbl'} onChange={e => updateItem(it.id, 'focOccupancy', e.target.value)} style={iStyle} title="What room does the FOC person occupy at this hotel?">

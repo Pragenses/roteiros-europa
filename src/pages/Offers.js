@@ -49,7 +49,7 @@ export default function Offers({ navigate, colors }) {
       endDate: f.endDate.value,
       status: 'draft',
       margin: parseFloat(f.margin.value) || 15,
-      focCount: parseInt(f.focCount.value) || 1,
+      focCount: parseInt(f.focCount.value) || 0,
       paxList: '15,20,25,30,35',
       items: [],
       notes: f.notes.value,
@@ -116,7 +116,7 @@ export default function Offers({ navigate, colors }) {
               <div>{lbl('End date')}<input name="endDate" type="date" style={iStyle} /></div>
               <div>{lbl('Destinations')}<input name="destinations" type="text" placeholder="London, Brussels, Amsterdam" style={iStyle} /></div>
               <div>{lbl('Margin (%)')}<input name="margin" type="number" defaultValue="15" min="0" max="50" style={iStyle} /></div>
-              <div>{lbl('FOC — persons free of charge')}<input name="focCount" type="number" defaultValue="1" min="0" max="5" style={iStyle} /></div>
+              <div>{lbl('FOC — persons free of charge')}<input name="focCount" type="number" defaultValue="0" min="0" max="5" style={iStyle} /></div>
             </div>
             <div style={{ marginBottom: 12 }}>
               {lbl('Notes')}<textarea name="notes" rows={2} style={{ ...iStyle, resize: 'vertical' }} />
