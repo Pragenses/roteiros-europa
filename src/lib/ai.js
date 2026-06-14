@@ -146,6 +146,9 @@ export async function aiFillClientFree(name) {
 
 const SERVICE_FIELD_HINTS = {
   hotel: `name (hotel name), city, dateFrom (YYYY-MM-DD, check-in date), dateTo (YYYY-MM-DD, check-out date), nights (number of nights),
+email (the hotel/sales contact's email address if mentioned anywhere in the text, e.g. in a signature - look carefully for any @ address),
+phone (the hotel/sales contact's phone number if mentioned anywhere in the text),
+website (the hotel's website URL if mentioned anywhere in the text),
 dblRooms (number of double rooms), pricePerDblRoom (price per DBL room per night, number only),
 snglRooms (number of single rooms), pricePerSnglRoom (price per SNGL room per night, number only),
 twnRooms (number of twin rooms), pricePerTwnRoom (price per TWN room per night, number only),

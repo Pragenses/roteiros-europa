@@ -214,10 +214,10 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       type: 'hotel',
       name: parsed.name || '',
       providerName: parsed.name || '',
-      providerEmail: '',
+      providerEmail: parsed.email || '',
       providerEmail2: '',
-      providerWebsite: '',
-      providerPhone: '',
+      providerWebsite: parsed.website || '',
+      providerPhone: parsed.phone || '',
       city: parsed.city || '',
       dateFrom: parsed.dateFrom || '',
       dateTo: parsed.dateTo || '',
@@ -339,7 +339,11 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       } else {
         f.providerName.value = parsed.name;
       }
-      // If email/phone/website are still missing (no match, or match had empty contact info), web-search for them
+      // Contact info found directly in the pasted text/document takes priority (most accurate, specific to this hotel/email)
+      if (parsed.email && f.providerEmail && !f.providerEmail.value) f.providerEmail.value = parsed.email;
+      if (parsed.phone && f.providerPhone && !f.providerPhone.value) f.providerPhone.value = parsed.phone;
+      if (parsed.website && f.providerWebsite && !f.providerWebsite.value) f.providerWebsite.value = parsed.website;
+      // If email/phone/website are still missing, fall back to a web search
       if (!f.providerEmail.value || !f.providerPhone.value || !f.providerWebsite.value) {
         try {
           const webInfo = await aiFillProviderFree(parsed.name);
