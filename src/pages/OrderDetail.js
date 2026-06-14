@@ -203,13 +203,11 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     setDocuments(docs);
   };
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
+  const uploadFile = async (file) => {
     if (!file) return;
     if (!editingServiceId) { alert('Save the service first, then add documents.'); return; }
     if (file.size > 900000) {
       alert('File is too large (' + Math.round(file.size / 1024) + ' KB). Maximum is about 700 KB per file.');
-      e.target.value = '';
       return;
     }
     setDocUploading(true);
@@ -229,9 +227,25 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         alert('Upload failed: ' + err.message);
       }
       setDocUploading(false);
-      e.target.value = '';
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleFileUpload = (e) => {
+    uploadFile(e.target.files[0]);
+    e.target.value = '';
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer.files?.[0];
+    if (file) uploadFile(file);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   const handleDeleteDocument = async (docId) => {
@@ -574,12 +588,15 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
                 📎 Documents ({documents.length})
               </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ display: 'inline-block', padding: '7px 14px', background: '#f0ede8', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
-                  {docUploading ? 'Uploading...' : '+ Upload contract / invoice'}
+              <div onDrop={handleDrop} onDragOver={handleDragOver}
+                style={{ marginBottom: 10, padding: '1.25rem', border: `2px dashed ${colors.border}`, borderRadius: 8, textAlign: 'center', background: '#fafaf8' }}>
+                <div style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>
+                  {docUploading ? 'Uploading...' : 'Drag & drop a file here (PDF, image — max ~700 KB)'}
+                </div>
+                <label style={{ display: 'inline-block', padding: '6px 14px', background: '#f0ede8', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
+                  or browse files
                   <input type="file" onChange={handleFileUpload} disabled={docUploading} style={{ display: 'none' }} />
                 </label>
-                <span style={{ fontSize: 11, color: colors.muted, marginLeft: 10 }}>Max ~700 KB per file (PDF, image)</span>
               </div>
               {documents.length === 0 ? (
                 <div style={{ fontSize: 13, color: colors.muted }}>No documents uploaded yet.</div>
