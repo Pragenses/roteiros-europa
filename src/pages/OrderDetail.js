@@ -195,6 +195,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     setPasteLoading(false);
   };
 
+  const CHUNK_SIZE = 700000; // chars of base64 per chunk, safely under Firestore 1MB doc limit
+
   const fetchDocuments = async (sid) => {
     if (!sid) { setDocuments([]); return; }
     const snap = await getDocs(collection(db, 'orders', orderId, 'services', sid, 'documents'));
@@ -206,21 +208,32 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const uploadFile = async (file) => {
     if (!file) return;
     if (!editingServiceId) { alert('Save the service first, then add documents.'); return; }
-    if (file.size > 700000) {
-      alert('File is too large (' + Math.round(file.size / 1024) + ' KB). Maximum is about 700 KB per file.');
+    if (file.size > 5000000) {
+      alert('File is too large (' + Math.round(file.size / 1024) + ' KB). Maximum is about 5 MB per file.');
       return;
     }
     setDocUploading(true);
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        await addDoc(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents'), {
+        const dataUrl = reader.result;
+        const chunks = [];
+        for (let i = 0; i < dataUrl.length; i += CHUNK_SIZE) {
+          chunks.push(dataUrl.slice(i, i + CHUNK_SIZE));
+        }
+        const docRef = await addDoc(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents'), {
           name: file.name,
           type: file.type,
           size: file.size,
-          data: reader.result,
+          chunkCount: chunks.length,
           uploadedAt: new Date().toISOString(),
         });
+        for (let i = 0; i < chunks.length; i++) {
+          await addDoc(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents', docRef.id, 'chunks'), {
+            index: i,
+            data: chunks[i],
+          });
+        }
         await fetchDocuments(editingServiceId);
       } catch (err) {
         console.error(err);
@@ -229,6 +242,23 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       setDocUploading(false);
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleDownloadDocument = async (d) => {
+    try {
+      const chunksSnap = await getDocs(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents', d.id, 'chunks'));
+      const chunks = chunksSnap.docs.map(c => c.data()).sort((a, b) => a.index - b.index);
+      const dataUrl = chunks.map(c => c.data).join('');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = d.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error(err);
+      alert('Download failed: ' + err.message);
+    }
   };
 
   const handleFileUpload = (e) => {
@@ -250,6 +280,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
   const handleDeleteDocument = async (docId) => {
     if (!window.confirm('Delete this document?')) return;
+    const chunksSnap = await getDocs(collection(db, 'orders', orderId, 'services', editingServiceId, 'documents', docId, 'chunks'));
+    await Promise.all(chunksSnap.docs.map(c => deleteDoc(c.ref)));
     await deleteDoc(doc(db, 'orders', orderId, 'services', editingServiceId, 'documents', docId));
     await fetchDocuments(editingServiceId);
   };
@@ -591,7 +623,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               <div onDrop={handleDrop} onDragOver={handleDragOver}
                 style={{ marginBottom: 10, padding: '1.25rem', border: `2px dashed ${colors.border}`, borderRadius: 8, textAlign: 'center', background: '#fafaf8' }}>
                 <div style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>
-                  {docUploading ? 'Uploading...' : 'Drag & drop a file here (PDF, image — max ~700 KB)'}
+                  {docUploading ? 'Uploading...' : 'Drag & drop a file here (PDF, image — max ~5 MB)'}
                 </div>
                 <label style={{ display: 'inline-block', padding: '6px 14px', background: '#f0ede8', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
                   or browse files
@@ -605,7 +637,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                   {documents.map(d => (
                     <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#f7f6f3', borderRadius: 7, fontSize: 13 }}>
                       <span style={{ fontSize: 16 }}>{d.type?.includes('pdf') ? '📄' : '🖼'}</span>
-                      <a href={d.data} download={d.name} style={{ flex: 1, color: colors.text, textDecoration: 'none', fontWeight: 500 }}>{d.name}</a>
+                      <a href="#" onClick={e => { e.preventDefault(); handleDownloadDocument(d); }} style={{ flex: 1, color: colors.text, textDecoration: 'none', fontWeight: 500 }}>{d.name}</a>
                       <span style={{ fontSize: 11, color: colors.muted }}>{new Date(d.uploadedAt).toLocaleDateString('en-GB')}</span>
                       <span style={{ fontSize: 11, color: colors.muted }}>{Math.round((d.size || 0) / 1024)} KB</span>
                       <button onClick={() => handleDeleteDocument(d.id)} style={{ padding: '3px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.danger }}>✕</button>
