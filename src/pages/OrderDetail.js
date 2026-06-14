@@ -633,14 +633,14 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       {showServiceForm && (
         <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: colors.primary }}>
-              {editingServiceId ? 'Edit' : 'Add'}: {SERVICE_TYPES.find(t => t.value === activeType)?.icon} {SERVICE_TYPES.find(t => t.value === activeType)?.label}
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
             <button type="button" onClick={() => { setShowServiceForm(false); setEditingServiceId(null); }}
               style={{ padding: '6px 14px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
               ← Back to order
             </button>
+            <div style={{ fontSize: 14, fontWeight: 600, color: colors.primary }}>
+              {editingServiceId ? 'Edit' : 'Add'}: {SERVICE_TYPES.find(t => t.value === activeType)?.icon} {SERVICE_TYPES.find(t => t.value === activeType)?.label}
+            </div>
           </div>
           <div style={{ background: '#f0ede8', borderRadius: 8, padding: '0.875rem 1rem', marginBottom: '1.25rem' }}>
             <div style={{ fontSize: 13, color: colors.primary, fontWeight: 500, marginBottom: 6 }}>📋 Paste from email to auto-fill</div>
