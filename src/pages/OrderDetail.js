@@ -123,6 +123,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       guideRoomPrice: f.guideRoomPrice?.value || '',
       driverAccom: f.driverAccom?.value || 'none',
       driverRoomPrice: f.driverRoomPrice?.value || '',
+      driverNights: f.driverNights?.value || '',
       hotelFoc: f.hotelFoc?.value || 'none',
       hotelFocOccupancy: f.hotelFocOccupancy?.value || 'dbl',
       cancellationDays: f.cancellationDays?.value || '',
@@ -375,6 +376,31 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
     let total = roomCost + cityTaxCost;
 
+    // Meals (dinners/lunches) - per person for everyone staying at this hotel
+    const totalPaxForMeals = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
+    const dinnersCount = parseFloat(s.dinners) || 0;
+    const dinnerPrice = parseFloat(s.dinnerPrice) || 0;
+    const dinnerCost = dinnersCount * dinnerPrice * totalPaxForMeals;
+    const lunchesCount = parseFloat(s.lunches) || 0;
+    const lunchPrice = parseFloat(s.lunchPrice) || 0;
+    const lunchCost = lunchesCount * lunchPrice * totalPaxForMeals;
+    total += dinnerCost + lunchCost;
+
+    // Guide accommodation - stays the full hotel period
+    let guideCost = 0;
+    if (s.guideRoom && s.guideRoomPrice) {
+      guideCost = (parseFloat(s.guideRoomPrice) || 0) * nights;
+      total += guideCost;
+    }
+
+    // Driver accommodation - may stay only some nights
+    let driverCost = 0;
+    if (s.driverAccom && s.driverAccom !== 'none' && s.driverRoomPrice) {
+      const driverNights = s.driverNights ? parseFloat(s.driverNights) : nights;
+      driverCost = (parseFloat(s.driverRoomPrice) || 0) * driverNights;
+      total += driverCost;
+    }
+
     // Hotel FOC: 1 free person per X paying, occupying a room of given type
     let focInfo = null;
     let focDiscount = 0;
@@ -395,7 +421,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       }
     }
 
-    return { roomCost, cityTaxCost, focDiscount, total, nights, totalRooms, focInfo, currency: s.currency || 'EUR' };
+    return { roomCost, cityTaxCost, focDiscount, dinnerCost, lunchCost, guideCost, driverCost, total, nights, totalRooms, focInfo, currency: s.currency || 'EUR' };
   };
 
   const SectionDivider = ({ title, count }) => (
@@ -453,6 +479,30 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: colors.muted }}>City tax</span>
                   <span>{calc.cityTaxCost.toFixed(2)} {calc.currency}</span>
+                </div>
+              )}
+              {calc.dinnerCost > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: colors.muted }}>Dinners</span>
+                  <span>{calc.dinnerCost.toFixed(2)} {calc.currency}</span>
+                </div>
+              )}
+              {calc.lunchCost > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: colors.muted }}>Lunches</span>
+                  <span>{calc.lunchCost.toFixed(2)} {calc.currency}</span>
+                </div>
+              )}
+              {calc.guideCost > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: colors.muted }}>Guide room</span>
+                  <span>{calc.guideCost.toFixed(2)} {calc.currency}</span>
+                </div>
+              )}
+              {calc.driverCost > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: colors.muted }}>Driver room</span>
+                  <span>{calc.driverCost.toFixed(2)} {calc.currency}</span>
                 </div>
               )}
               {calc.focDiscount > 0 && (
@@ -728,7 +778,9 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                     </select>
                   </div>
                   <div>{lbl('Driver room price / night')}<input name="driverRoomPrice" type="number" placeholder="0" style={iStyle} /></div>
+                  <div>{lbl('Driver nights (if not full stay)')}<input name="driverNights" type="number" placeholder="e.g. 1" style={iStyle} /></div>
                 </div>
+                <div style={{ fontSize: 11, color: colors.muted, marginTop: -4, marginBottom: 8 }}>If driver stays the whole period, leave "Driver nights" empty — it will use the hotel's total nights.</div>
               </>
             )}
 
