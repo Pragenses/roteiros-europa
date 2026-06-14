@@ -101,6 +101,18 @@ export default function Providers({ navigate, colors, navParams }) {
     try {
       const parsed = await parseProviderText(parseText);
       applyParsed(parsed);
+      // If phone/website weren't in the text, try to fill them via web search
+      if ((!parsed.phone || !parsed.website) && parsed.name) {
+        try {
+          const webInfo = await aiFillProviderFree(parsed.name);
+          const f = formRef.current;
+          if (!parsed.phone && webInfo.phone && f.phone && !f.phone.value) f.phone.value = webInfo.phone;
+          if (!parsed.website && webInfo.website && f.website && !f.website.value) f.website.value = webInfo.website;
+          if (!parsed.email && webInfo.email && f.email && !f.email.value) f.email.value = webInfo.email;
+        } catch (webErr) {
+          console.error('Web lookup failed:', webErr);
+        }
+      }
     } catch (err) {
       console.error(err);
       alert('Could not parse this text. Please fill in manually.');
