@@ -7,6 +7,7 @@ import Orders from './pages/Orders';
 import OrderDetail from './pages/OrderDetail';
 import Providers from './pages/Providers';
 import Calendar from './pages/Calendar';
+import Settings from './pages/Settings';
 
 const COLORS = {
   primary: '#1a3a5c',
@@ -28,6 +29,7 @@ const NAV = [
   { id: 'clients', label: 'Clients', icon: '◉' },
   { id: 'orders', label: 'Orders', icon: '◧' },
   { id: 'providers', label: 'Providers', icon: '◎' },
+  { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
 
 export default function App() {
@@ -102,6 +104,7 @@ export default function App() {
     if (page === 'clients') return <Clients navigate={navigate} colors={COLORS} />;
     if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
     if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} />;
+    if (page === 'settings') return <Settings colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} />;
   };
 

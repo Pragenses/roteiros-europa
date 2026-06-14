@@ -1,6 +1,19 @@
-const API_KEY = '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';
+import { db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
+
+let cachedKey = null;
+
+async function getApiKey() {
+  if (cachedKey) return cachedKey;
+  const snap = await getDoc(doc(db, 'settings', 'apiKeys'));
+  const key = snap.exists() ? snap.data().anthropicKey : '';
+  cachedKey = key;
+  return key;
+}
 
 async function callClaude(prompt, useWebSearch = true) {
+  const apiKey = await getApiKey();
+  if (!apiKey) throw new Error('No Anthropic API key configured. Go to Settings to add one.');
   const body = {
     model: 'claude-sonnet-4-6',
     max_tokens: 1500,
@@ -13,7 +26,7 @@ async function callClaude(prompt, useWebSearch = true) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
+      'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true'
     },
@@ -52,9 +65,14 @@ export async function parseClientText(text) {
   return callClaude(prompt, false);
 }
 
-const GEMINI_KEY = 'AQ.Ab8RN6K-ktG4ComqbnIZGOmjPHEmSfv0o-TrRZhxwTtBp0Xm8w';
+async function getGeminiKey() {
+  const snap = await getDoc(doc(db, 'settings', 'apiKeys'));
+  return snap.exists() ? (snap.data().geminiKey || '') : '';
+}
 
 async function callGemini(prompt) {
+  const GEMINI_KEY = await getGeminiKey();
+  if (!GEMINI_KEY) throw new Error('No Gemini API key configured. Go to Settings to add one.');
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
     {
