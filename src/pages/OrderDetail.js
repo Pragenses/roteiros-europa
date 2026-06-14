@@ -370,40 +370,48 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     const pDbl = parseFloat(s.pricePerDblRoom) || 0, pSngl = parseFloat(s.pricePerSnglRoom) || 0, pTwn = parseFloat(s.pricePerTwnRoom) || 0, pTrpl = parseFloat(s.pricePerTrplRoom) || 0;
     const totalRooms = dbl + sngl + twn + trpl;
     if (totalRooms === 0 || nights === 0) return null;
+    const cur = s.currency || 'EUR';
+    const lines = [];
 
-    const roomCostPerNight = dbl * pDbl + sngl * pSngl + twn * pTwn + trpl * pTrpl;
-    const roomCost = roomCostPerNight * nights;
+    let roomCost = 0;
+    if (dbl > 0) { const amt = dbl * pDbl * nights; roomCost += amt; lines.push({ label: `${dbl}× DBL @ ${pDbl} ${cur} × ${nights} night(s)`, amount: amt }); }
+    if (sngl > 0) { const amt = sngl * pSngl * nights; roomCost += amt; lines.push({ label: `${sngl}× SNGL @ ${pSngl} ${cur} × ${nights} night(s)`, amount: amt }); }
+    if (twn > 0) { const amt = twn * pTwn * nights; roomCost += amt; lines.push({ label: `${twn}× TWN @ ${pTwn} ${cur} × ${nights} night(s)`, amount: amt }); }
+    if (trpl > 0) { const amt = trpl * pTrpl * nights; roomCost += amt; lines.push({ label: `${trpl}× TRPL @ ${pTrpl} ${cur} × ${nights} night(s)`, amount: amt }); }
+
+    const totalPax = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
 
     let cityTaxCost = 0;
     const cityTax = parseFloat(s.cityTax) || 0;
     if (s.cityTaxIncluded !== 'included' && cityTax > 0) {
       if (s.cityTaxType === 'percent') {
         cityTaxCost = roomCost * (cityTax / 100);
+        lines.push({ label: `City tax: ${cityTax}% of room cost (${roomCost.toFixed(2)} ${cur})`, amount: cityTaxCost });
       } else if (s.cityTaxType === 'per_room') {
         cityTaxCost = cityTax * totalRooms * nights;
+        lines.push({ label: `City tax: ${totalRooms} room(s) × ${cityTax} ${cur} × ${nights} night(s)`, amount: cityTaxCost });
       } else {
-        const totalPax = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
         cityTaxCost = cityTax * totalPax * nights;
+        lines.push({ label: `City tax: ${totalPax} pax × ${cityTax} ${cur} × ${nights} night(s)`, amount: cityTaxCost });
       }
     }
 
-    let total = roomCost + cityTaxCost;
-
     // Meals (dinners/lunches) - per person for everyone staying at this hotel
-    const totalPaxForMeals = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
     const dinnersCount = parseFloat(s.dinners) || 0;
     const dinnerPrice = parseFloat(s.dinnerPrice) || 0;
-    const dinnerCost = dinnersCount * dinnerPrice * totalPaxForMeals;
+    const dinnerCost = dinnersCount * dinnerPrice * totalPax;
+    if (dinnerCost > 0) lines.push({ label: `Dinners: ${dinnersCount}× × ${totalPax} pax × ${dinnerPrice} ${cur}`, amount: dinnerCost });
+
     const lunchesCount = parseFloat(s.lunches) || 0;
     const lunchPrice = parseFloat(s.lunchPrice) || 0;
-    const lunchCost = lunchesCount * lunchPrice * totalPaxForMeals;
-    total += dinnerCost + lunchCost;
+    const lunchCost = lunchesCount * lunchPrice * totalPax;
+    if (lunchCost > 0) lines.push({ label: `Lunches: ${lunchesCount}× × ${totalPax} pax × ${lunchPrice} ${cur}`, amount: lunchCost });
 
     // Guide accommodation - stays the full hotel period
     let guideCost = 0;
     if (s.guideRoom && s.guideRoomPrice) {
       guideCost = (parseFloat(s.guideRoomPrice) || 0) * nights;
-      total += guideCost;
+      lines.push({ label: `Guide room (${s.guideRoom.toUpperCase()}) @ ${s.guideRoomPrice} ${cur} × ${nights} night(s)`, amount: guideCost });
     }
 
     // Driver accommodation - may stay only some nights
@@ -411,30 +419,28 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     if (s.driverAccom && s.driverAccom !== 'none' && s.driverRoomPrice) {
       const driverNights = s.driverNights ? parseFloat(s.driverNights) : nights;
       driverCost = (parseFloat(s.driverRoomPrice) || 0) * driverNights;
-      total += driverCost;
+      lines.push({ label: `Driver room @ ${s.driverRoomPrice} ${cur} × ${driverNights} night(s)`, amount: driverCost });
     }
 
     // Hotel FOC: 1 free person per X paying, occupying a room of given type
-    let focInfo = null;
     let focDiscount = 0;
     if (s.hotelFoc && s.hotelFoc.startsWith('1 per ')) {
       const per = parseInt(s.hotelFoc.replace('1 per ', ''));
-      const totalPax = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
       if (per > 0 && totalPax > 0) {
         const freePersons = Math.floor(totalPax / per);
         if (freePersons > 0) {
-          const occupancyMap = { sngl: { price: pSngl, share: 1 }, dbl: { price: pDbl, share: 2 }, twn: { price: pTwn, share: 2 }, trpl: { price: pTrpl, share: 3 } };
+          const occupancyMap = { sngl: { price: pSngl, share: 1, label: 'SNGL', pct: '100%' }, dbl: { price: pDbl, share: 2, label: 'DBL', pct: '50%' }, twn: { price: pTwn, share: 2, label: 'TWN', pct: '50%' }, trpl: { price: pTrpl, share: 3, label: 'TRPL', pct: '33%' } };
           const occ = occupancyMap[s.hotelFocOccupancy || 'dbl'];
           const perPersonPrice = occ.share > 0 ? occ.price / occ.share : 0;
           focDiscount = freePersons * perPersonPrice * nights;
-          total -= focDiscount;
-          const pct = occ.share === 1 ? '100%' : occ.share === 2 ? '50%' : '33%';
-          focInfo = { freePersons, pct, occupancy: (s.hotelFocOccupancy || 'dbl').toUpperCase() };
+          lines.push({ label: `Hotel FOC: ${freePersons}× free person (${occ.pct} of ${occ.label} @ ${occ.price} ${cur}) × ${nights} night(s)`, amount: -focDiscount });
         }
       }
     }
 
-    return { roomCost, cityTaxCost, focDiscount, dinnerCost, lunchCost, guideCost, driverCost, total, nights, totalRooms, focInfo, currency: s.currency || 'EUR' };
+    const total = lines.reduce((sum, l) => sum + l.amount, 0);
+
+    return { lines, total, nights, totalRooms, currency: cur };
   };
 
   const SectionDivider = ({ title, count }) => (
@@ -484,46 +490,13 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           if (!calc) return null;
           return (
             <div style={{ fontSize: 12, marginTop: 6, padding: '8px 10px', background: '#f0ede8', borderRadius: 6, color: colors.text }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: colors.muted }}>Rooms × {calc.nights} night(s)</span>
-                <span>{calc.roomCost.toFixed(2)} {calc.currency}</span>
-              </div>
-              {calc.cityTaxCost > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.muted }}>City tax</span>
-                  <span>{calc.cityTaxCost.toFixed(2)} {calc.currency}</span>
+              <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>How this is calculated:</div>
+              {calc.lines.map((line, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span style={{ color: colors.muted }}>{line.label}</span>
+                  <span style={{ whiteSpace: 'nowrap' }}>{line.amount < 0 ? '-' : ''}{Math.abs(line.amount).toFixed(2)} {calc.currency}</span>
                 </div>
-              )}
-              {calc.dinnerCost > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.muted }}>Dinners</span>
-                  <span>{calc.dinnerCost.toFixed(2)} {calc.currency}</span>
-                </div>
-              )}
-              {calc.lunchCost > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.muted }}>Lunches</span>
-                  <span>{calc.lunchCost.toFixed(2)} {calc.currency}</span>
-                </div>
-              )}
-              {calc.guideCost > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.muted }}>Guide room</span>
-                  <span>{calc.guideCost.toFixed(2)} {calc.currency}</span>
-                </div>
-              )}
-              {calc.driverCost > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.muted }}>Driver room</span>
-                  <span>{calc.driverCost.toFixed(2)} {calc.currency}</span>
-                </div>
-              )}
-              {calc.focDiscount > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: colors.muted }}>Hotel FOC discount ({calc.focInfo.freePersons}× {calc.focInfo.pct} of {calc.focInfo.occupancy})</span>
-                  <span>-{calc.focDiscount.toFixed(2)} {calc.currency}</span>
-                </div>
-              )}
+              ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, borderTop: `1px solid ${colors.border}`, marginTop: 4, paddingTop: 4 }}>
                 <span>Total to pay hotel</span>
                 <span>{calc.total.toFixed(2)} {calc.currency}</span>
