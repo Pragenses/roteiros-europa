@@ -458,11 +458,11 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             {s.dinners ? ` · ${s.dinners}× dinner ${s.dinnerPrice ? s.dinnerPrice + ' ' + s.currency : ''}` : ''}
             {s.hotelFoc && s.hotelFoc !== 'none' ? ` · FOC ${s.hotelFoc}` : ''}
             {s.cancellationDate ? (
-              <span style={{ color: colors.danger, fontWeight: 700 }}> · Free cancellation until {new Date(s.cancellationDate).toLocaleDateString('en-GB')}</span>
+              <span style={{ color: '#dc2626', fontWeight: 700 }}> · Free cancellation until {new Date(s.cancellationDate).toLocaleDateString('en-GB')}</span>
             ) : (s.cancellationDays && s.dateFrom ? (() => {
               const d = new Date(s.dateFrom);
               d.setDate(d.getDate() - parseInt(s.cancellationDays));
-              return <span style={{ color: colors.danger, fontWeight: 700 }}> · Free cancellation until {d.toLocaleDateString('en-GB')}</span>;
+              return <span style={{ color: '#dc2626', fontWeight: 700 }}> · Free cancellation until {d.toLocaleDateString('en-GB')}</span>;
             })() : '')}
           </div>
         )}
