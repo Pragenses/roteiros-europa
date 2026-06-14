@@ -110,7 +110,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   );
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', dateFrom: '', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', focOccupancy: 'none', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -271,7 +271,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   <div>
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                     {isHotel && (
-                      <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={{ ...iStyle, marginTop: 4 }} title="Check-in date (used later when converting to an Order)" />
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                        <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={iStyle} title="Check-in date" />
+                        <input type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} style={iStyle} title="Check-out date" />
+                      </div>
                     )}
                   </div>
                   {isHotel ? (
