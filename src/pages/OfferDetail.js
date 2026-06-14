@@ -270,10 +270,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   </div>
                   <div>
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
-                    {isHotel && (
+                    {(isHotel || it.type === 'group') && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                        <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={iStyle} title="Check-in date" />
-                        <input type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} style={iStyle} title="Check-out date" />
+                        <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={iStyle} title="Date from" />
+                        <input type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} style={iStyle} title="Date to" />
                       </div>
                     )}
                   </div>
