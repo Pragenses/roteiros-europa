@@ -112,6 +112,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       pricePerTwnRoom: f.pricePerTwnRoom?.value || '',
       pricePerTrplRoom: f.pricePerTrplRoom?.value || '',
       cityTax: f.cityTax?.value || '',
+      cityTaxIncluded: f.cityTaxIncluded?.value || 'separate',
+      cityTaxType: f.cityTaxType?.value || 'per_person',
       dinners: f.dinners?.value || '',
       dinnerPrice: f.dinnerPrice?.value || '',
       lunches: f.lunches?.value || '',
@@ -344,6 +346,44 @@ export default function OrderDetail({ orderId, navigate, colors }) {
     return <span style={{ background: s.bg, color: s.color, fontSize: 11, padding: '2px 7px', borderRadius: 5, fontWeight: 500, whiteSpace: 'nowrap' }}>{s.label}</span>;
   };
 
+  const calculateHotelCost = (s) => {
+    const nights = parseFloat(s.nights) || 0;
+    const dbl = parseInt(s.dblRooms) || 0, sngl = parseInt(s.snglRooms) || 0, twn = parseInt(s.twnRooms) || 0, trpl = parseInt(s.trplRooms) || 0;
+    const pDbl = parseFloat(s.pricePerDblRoom) || 0, pSngl = parseFloat(s.pricePerSnglRoom) || 0, pTwn = parseFloat(s.pricePerTwnRoom) || 0, pTrpl = parseFloat(s.pricePerTrplRoom) || 0;
+    const totalRooms = dbl + sngl + twn + trpl;
+    if (totalRooms === 0 || nights === 0) return null;
+
+    const roomCostPerNight = dbl * pDbl + sngl * pSngl + twn * pTwn + trpl * pTrpl;
+    const roomCost = roomCostPerNight * nights;
+
+    let cityTaxCost = 0;
+    const cityTax = parseFloat(s.cityTax) || 0;
+    if (s.cityTaxIncluded !== 'included' && cityTax > 0) {
+      if (s.cityTaxType === 'percent') {
+        cityTaxCost = roomCost * (cityTax / 100);
+      } else if (s.cityTaxType === 'per_room') {
+        cityTaxCost = cityTax * totalRooms * nights;
+      } else {
+        const totalPax = dbl * 2 + sngl * 1 + twn * 2 + trpl * 3;
+        cityTaxCost = cityTax * totalPax * nights;
+      }
+    }
+
+    const total = roomCost + cityTaxCost;
+
+    // Hotel FOC info (informational - doesn't auto-deduct since room type for FOC varies)
+    let focInfo = null;
+    if (s.hotelFoc && s.hotelFoc.startsWith('1 per ')) {
+      const per = parseInt(s.hotelFoc.replace('1 per ', ''));
+      if (per > 0) {
+        const freeRooms = Math.floor(totalRooms / per);
+        if (freeRooms > 0) focInfo = freeRooms;
+      }
+    }
+
+    return { roomCost, cityTaxCost, total, nights, totalRooms, focInfo, currency: s.currency || 'EUR' };
+  };
+
   const SectionDivider = ({ title, count }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '1.5rem 0 0.75rem' }}>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: colors.primary, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{title}</div>
@@ -384,6 +424,33 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             })() : ''}
           </div>
         )}
+        {s.type === 'hotel' && (() => {
+          const calc = calculateHotelCost(s);
+          if (!calc) return null;
+          return (
+            <div style={{ fontSize: 12, marginTop: 6, padding: '8px 10px', background: '#f0ede8', borderRadius: 6, color: colors.text }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: colors.muted }}>Rooms × {calc.nights} night(s)</span>
+                <span>{calc.roomCost.toFixed(2)} {calc.currency}</span>
+              </div>
+              {calc.cityTaxCost > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: colors.muted }}>City tax</span>
+                  <span>{calc.cityTaxCost.toFixed(2)} {calc.currency}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, borderTop: `1px solid ${colors.border}`, marginTop: 4, paddingTop: 4 }}>
+                <span>Total to pay hotel</span>
+                <span>{calc.total.toFixed(2)} {calc.currency}</span>
+              </div>
+              {calc.focInfo && (
+                <div style={{ fontSize: 11, color: '#633806', marginTop: 4 }}>
+                  ℹ Hotel FOC policy suggests {calc.focInfo} room(s) may be free — confirm with hotel
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {s.type === 'ticket' && s.pricePerPax && (
           <div style={{ fontSize: 11, color: colors.muted }}>{s.pricePerPax} {s.currency}/person × {order?.paxCount || '?'} = {((parseFloat(s.pricePerPax) || 0) * (parseInt(order?.paxCount) || 0)).toFixed(0)} {s.currency}</div>
         )}
@@ -552,7 +619,20 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                   <div>{lbl('Price SNGL / room / night')}<input name="pricePerSnglRoom" type="number" placeholder="120" style={iStyle} /></div>
                   <div>{lbl('Price TWN / room / night')}<input name="pricePerTwnRoom" type="number" placeholder="150" style={iStyle} /></div>
                   <div>{lbl('Price TRPL / room / night')}<input name="pricePerTrplRoom" type="number" placeholder="190" style={iStyle} /></div>
-                  <div>{lbl('City tax / person / night')}<input name="cityTax" type="number" placeholder="4.20" style={iStyle} /></div>
+                  <div>{lbl('City tax amount')}<input name="cityTax" type="number" placeholder="4.20" style={iStyle} /></div>
+                  <div>{lbl('City tax basis')}
+                    <select name="cityTaxIncluded" style={iStyle}>
+                      <option value="separate">Charged separately</option>
+                      <option value="included">Included in room price</option>
+                    </select>
+                  </div>
+                  <div>{lbl('City tax calculated')}
+                    <select name="cityTaxType" style={iStyle}>
+                      <option value="per_person">Per person / night</option>
+                      <option value="per_room">Per room / night</option>
+                      <option value="percent">% of room price</option>
+                    </select>
+                  </div>
                   <div>{lbl('Hotel FOC policy')}
                     <select name="hotelFoc" style={iStyle}>
                       <option value="none">No FOC</option>
