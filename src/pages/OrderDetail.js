@@ -95,6 +95,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       city: f.city?.value || '',
       dateFrom: f.dateFrom?.value || '',
       dateTo: f.dateTo?.value || '',
+      ticketCount: f.ticketCount?.value || '',
       nights: f.nights?.value || '',
       currency: f.currency?.value || 'EUR',
       status: f.status?.value || 'enquired',
@@ -351,13 +352,6 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   };
 
   const hotels = services.filter(s => s.type === 'hotel');
-  const restaurants = services.filter(s => s.type === 'restaurant');
-  const tickets = services.filter(s => s.type === 'ticket');
-  const trainsBoats = services.filter(s => s.type === 'train_boat');
-  const buses = services.filter(s => s.type === 'bus');
-  const guides = services.filter(s => s.type === 'guide');
-  const extras = services.filter(s => s.type === 'extra_cost');
-  const others = services.filter(s => s.type === 'other');
 
   const StatusBadge = ({ status }) => {
     const s = SERVICE_STATUS.find(x => x.value === status) || SERVICE_STATUS[0];
@@ -505,7 +499,12 @@ export default function OrderDetail({ orderId, navigate, colors }) {
           );
         })()}
         {s.type === 'ticket' && s.pricePerPax && (
-          <div style={{ fontSize: 11, color: colors.muted }}>{s.pricePerPax} {s.currency}/person × {order?.paxCount || '?'} = {((parseFloat(s.pricePerPax) || 0) * (parseInt(order?.paxCount) || 0)).toFixed(0)} {s.currency}</div>
+          <div style={{ fontSize: 12, marginTop: 4, padding: '6px 10px', background: '#f0ede8', borderRadius: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: colors.muted }}>{s.ticketCount || '?'} ticket(s) × {s.pricePerPax} {s.currency}</span>
+              <span style={{ fontWeight: 700 }}>{s.ticketCount ? ((parseFloat(s.pricePerPax) || 0) * (parseInt(s.ticketCount) || 0)).toFixed(2) : '?'} {s.currency}</span>
+            </div>
+          </div>
         )}
         {s.totalPrice && s.type !== 'ticket' && <div style={{ fontSize: 11, color: colors.muted }}>Total: {s.totalPrice} {s.currency}</div>}
         {s.confirmationLink && <div style={{ fontSize: 11 }}><a href={s.confirmationLink} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0C447C', textDecoration: 'none' }}>🔗 Confirmation</a></div>}
@@ -685,9 +684,16 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                   {SERVICE_STATUS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
-              <div>{lbl('Date from')}<input name="dateFrom" type="date" style={iStyle} /></div>
-              <div>{lbl('Date to')}<input name="dateTo" type="date" style={iStyle} /></div>
+              {activeType === 'ticket' ? (
+                <div>{lbl('Date')}<input name="dateFrom" type="date" style={iStyle} /></div>
+              ) : (
+                <>
+                  <div>{lbl('Date from')}<input name="dateFrom" type="date" style={iStyle} /></div>
+                  <div>{lbl('Date to')}<input name="dateTo" type="date" style={iStyle} /></div>
+                </>
+              )}
               {['hotel', 'restaurant'].includes(activeType) && <div>{lbl('Nights')}<input name="nights" type="number" style={iStyle} /></div>}
+              {activeType === 'ticket' && <div>{lbl('Number of tickets')}<input name="ticketCount" type="number" placeholder="e.g. 20" style={iStyle} /></div>}
             </div>
 
             {activeType === 'hotel' && (
@@ -881,14 +887,20 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         </div>
       )}
 
-      {hotels.length > 0 && <><SectionDivider title="Hotels" count={hotels.length} /><ServicesBlock list={hotels} /></>}
-      {restaurants.length > 0 && <><SectionDivider title="Restaurants" count={restaurants.length} /><ServicesBlock list={restaurants} /></>}
-      {tickets.length > 0 && <><SectionDivider title="Tickets / per person" count={tickets.length} /><ServicesBlock list={tickets} /></>}
-      {trainsBoats.length > 0 && <><SectionDivider title="Train / boat" count={trainsBoats.length} /><ServicesBlock list={trainsBoats} /></>}
-      {buses.length > 0 && <><SectionDivider title="Bus" count={buses.length} /><ServicesBlock list={buses} /></>}
-      {guides.length > 0 && <><SectionDivider title="Guides" count={guides.length} /><ServicesBlock list={guides} /></>}
-      {extras.length > 0 && <><SectionDivider title="Extra costs" count={extras.length} /><ServicesBlock list={extras} /></>}
-      {others.length > 0 && <><SectionDivider title="Other" count={others.length} /><ServicesBlock list={others} /></>}
+      {services.length > 0 && (() => {
+        const sorted = [...services].sort((a, b) => {
+          const da = a.dateFrom || '9999-99-99';
+          const db = b.dateFrom || '9999-99-99';
+          if (da !== db) return da < db ? -1 : 1;
+          return (a.createdAt || '') < (b.createdAt || '') ? -1 : 1;
+        });
+        return (
+          <>
+            <SectionDivider title="Itinerary (chronological)" count={sorted.length} />
+            <ServicesBlock list={sorted} />
+          </>
+        );
+      })()}
     </div>
   );
 }
