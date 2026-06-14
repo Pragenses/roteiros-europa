@@ -61,6 +61,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const [pasteText, setPasteText] = useState('');
   const [documents, setDocuments] = useState([]);
   const [docUploading, setDocUploading] = useState(false);
+  const [cancellationDateDisplay, setCancellationDateDisplay] = useState('');
   const [pasteLoading, setPasteLoading] = useState(false);
   const serviceFormRef = useRef(null);
   const orderFormRef = useRef(null);
@@ -105,9 +106,11 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       dblRooms: f.dblRooms?.value || '',
       snglRooms: f.snglRooms?.value || '',
       twnRooms: f.twnRooms?.value || '',
+      trplRooms: f.trplRooms?.value || '',
       pricePerDblRoom: f.pricePerDblRoom?.value || '',
       pricePerSnglRoom: f.pricePerSnglRoom?.value || '',
       pricePerTwnRoom: f.pricePerTwnRoom?.value || '',
+      pricePerTrplRoom: f.pricePerTrplRoom?.value || '',
       cityTax: f.cityTax?.value || '',
       dinners: f.dinners?.value || '',
       dinnerPrice: f.dinnerPrice?.value || '',
@@ -118,6 +121,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       driverAccom: f.driverAccom?.value || 'none',
       driverRoomPrice: f.driverRoomPrice?.value || '',
       hotelFoc: f.hotelFoc?.value || 'none',
+      cancellationDays: f.cancellationDays?.value || '',
       pricePerPax: f.pricePerPax?.value || '',
       totalPrice: f.totalPrice?.value || '',
       updatedAt: new Date().toISOString(),
@@ -297,6 +301,13 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       if (!f) return;
       Object.keys(s).forEach(k => { if (f[k]) f[k].value = s[k] || ''; });
       if (f.svcName) f.svcName.value = s.name || '';
+      if (s.cancellationDays && s.dateFrom) {
+        const d = new Date(s.dateFrom);
+        d.setDate(d.getDate() - parseInt(s.cancellationDays));
+        setCancellationDateDisplay(d.toLocaleDateString('en-GB'));
+      } else {
+        setCancellationDateDisplay('');
+      }
     }, 80);
   };
 
@@ -361,11 +372,16 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         {s.city && <div style={{ fontSize: 11, color: colors.muted }}>{s.city}{s.dateFrom ? ` · ${s.dateFrom}` : ''}{s.nights ? ` · ${s.nights} nights` : ''}</div>}
         {s.type === 'hotel' && (
           <div style={{ fontSize: 11, color: colors.muted }}>
-            {s.dblRooms ? `${s.dblRooms}×DBL` : ''}{s.snglRooms ? ` ${s.snglRooms}×SNGL` : ''}{s.twnRooms ? ` ${s.twnRooms}×TWN` : ''}
+            {s.dblRooms ? `${s.dblRooms}×DBL` : ''}{s.snglRooms ? ` ${s.snglRooms}×SNGL` : ''}{s.twnRooms ? ` ${s.twnRooms}×TWN` : ''}{s.trplRooms ? ` ${s.trplRooms}×TRPL` : ''}
             {s.pricePerDblRoom ? ` · DBL ${s.pricePerDblRoom} ${s.currency}` : ''}
             {s.cityTax ? ` · city tax ${s.cityTax}` : ''}
             {s.dinners ? ` · ${s.dinners}× dinner ${s.dinnerPrice ? s.dinnerPrice + ' ' + s.currency : ''}` : ''}
             {s.hotelFoc && s.hotelFoc !== 'none' ? ` · FOC ${s.hotelFoc}` : ''}
+            {s.cancellationDays && s.dateFrom ? (() => {
+              const d = new Date(s.dateFrom);
+              d.setDate(d.getDate() - parseInt(s.cancellationDays));
+              return ` · Free cancellation until ${d.toLocaleDateString('en-GB')}`;
+            })() : ''}
           </div>
         )}
         {s.type === 'ticket' && s.pricePerPax && (
@@ -461,7 +477,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1.25rem' }}>
         {SERVICE_TYPES.map(t => (
-          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setDocuments([]); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
+          <button key={t.value} onClick={() => { setActiveType(t.value); setEditingServiceId(null); setShowServiceForm(true); setPasteText(''); setDocuments([]); setCancellationDateDisplay(''); setTimeout(() => serviceFormRef.current?.reset(), 50); }}
             style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
             {t.icon} + {t.label}
           </button>
@@ -527,13 +543,15 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             {activeType === 'hotel' && (
               <>
                 <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '12px 0 8px', borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>Client rooms</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 10 }}>
                   <div>{lbl('DBL rooms')}<input name="dblRooms" type="number" placeholder="10" style={iStyle} /></div>
                   <div>{lbl('SNGL rooms')}<input name="snglRooms" type="number" placeholder="2" style={iStyle} /></div>
                   <div>{lbl('TWN rooms')}<input name="twnRooms" type="number" placeholder="0" style={iStyle} /></div>
+                  <div>{lbl('TRPL rooms')}<input name="trplRooms" type="number" placeholder="0" style={iStyle} /></div>
                   <div>{lbl('Price DBL / room / night')}<input name="pricePerDblRoom" type="number" placeholder="150" style={iStyle} /></div>
                   <div>{lbl('Price SNGL / room / night')}<input name="pricePerSnglRoom" type="number" placeholder="120" style={iStyle} /></div>
                   <div>{lbl('Price TWN / room / night')}<input name="pricePerTwnRoom" type="number" placeholder="150" style={iStyle} /></div>
+                  <div>{lbl('Price TRPL / room / night')}<input name="pricePerTrplRoom" type="number" placeholder="190" style={iStyle} /></div>
                   <div>{lbl('City tax / person / night')}<input name="cityTax" type="number" placeholder="4.20" style={iStyle} /></div>
                   <div>{lbl('Hotel FOC policy')}
                     <select name="hotelFoc" style={iStyle}>
@@ -544,6 +562,22 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                       <option value="1 per 20">1 free per 20 paying</option>
                       <option value="custom">Custom (see notes)</option>
                     </select>
+                  </div>
+                  <div>{lbl('Free cancellation (days before arrival)')}
+                    <input name="cancellationDays" type="number" placeholder="e.g. 60" style={iStyle}
+                      onChange={(e) => {
+                        const f = serviceFormRef.current;
+                        const days = parseInt(e.target.value);
+                        const dateFrom = f?.dateFrom?.value;
+                        if (days && dateFrom) {
+                          const d = new Date(dateFrom);
+                          d.setDate(d.getDate() - days);
+                          setCancellationDateDisplay(d.toLocaleDateString('en-GB'));
+                        } else {
+                          setCancellationDateDisplay('');
+                        }
+                      }} />
+                    {cancellationDateDisplay && <div style={{ fontSize: 11, color: colors.muted, marginTop: 3 }}>Deadline: {cancellationDateDisplay}</div>}
                   </div>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', margin: '12px 0 8px', borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>Meals in hotel</div>
