@@ -1,14 +1,9 @@
 import { db } from './firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
-let cachedKey = null;
-
 async function getApiKey() {
-  if (cachedKey) return cachedKey;
   const snap = await getDoc(doc(db, 'settings', 'apiKeys'));
-  const key = snap.exists() ? snap.data().anthropicKey : '';
-  cachedKey = key;
-  return key;
+  return snap.exists() ? (snap.data().anthropicKey || '') : '';
 }
 
 async function callClaude(prompt, useWebSearch = true) {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc } from 'firebase/firestore';
-import { parseServiceText } from '../lib/ai';
+import { parseServiceText, aiFillProviderFree } from '../lib/ai';
 
 const SERVICE_TYPES = [
   { value: 'hotel', label: 'Hotel', icon: '🏨' },
@@ -160,6 +160,30 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       if (parsed.dateFrom && f.dateFrom) f.dateFrom.value = parsed.dateFrom;
       if (parsed.dateTo && f.dateTo) f.dateTo.value = parsed.dateTo;
       if (parsed.nights && f.nights) f.nights.value = parsed.nights;
+      // Try to match against known providers to auto-fill provider/email/phone
+      if (parsed.name && f.providerName) {
+        const match = providers.find(p => p.name.toLowerCase().trim() === parsed.name.toLowerCase().trim()
+          || p.name.toLowerCase().includes(parsed.name.toLowerCase())
+          || parsed.name.toLowerCase().includes(p.name.toLowerCase()));
+        if (match) {
+          f.providerName.value = match.name;
+          if (!f.providerEmail.value) f.providerEmail.value = match.email || '';
+          if (!f.providerPhone.value) f.providerPhone.value = match.phone || '';
+          if (!f.city.value && match.city) f.city.value = match.city;
+        } else {
+          // Not in our database - try a web search to find contact info
+          f.providerName.value = parsed.name;
+          try {
+            const webInfo = await aiFillProviderFree(parsed.name);
+            if (webInfo.email && f.providerEmail) f.providerEmail.value = webInfo.email;
+            if (webInfo.phone && f.providerPhone) f.providerPhone.value = webInfo.phone;
+            if (webInfo.city && f.city && !f.city.value) f.city.value = webInfo.city;
+          } catch (webErr) {
+            console.error('Web lookup failed:', webErr);
+            // Non-fatal - just leave email/phone empty, user can fill manually
+          }
+        }
+      }
     } catch (err) {
       console.error(err);
       alert('Could not parse this text: ' + err.message);
