@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
-
-const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, CZK: 0.040, USD: 0.92 };
-const CURRENCIES = ['EUR', 'GBP', 'CHF', 'PLN', 'NOK', 'DKK', 'CZK', 'USD'];
+import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -16,25 +14,6 @@ const decimalInput = (e) => {
   const val = e.target.value;
   const normalized = val.replace(/,/g, '.');
   if (normalized !== val) e.target.value = normalized;
-};
-
-// Allow city tax / prices to be entered as a plain number OR an Excel-style formula starting with "="
-// e.g. "=106*0.05" -> evaluates to 5.3
-const evalAmount = (value) => {
-  if (value === undefined || value === null || value === '') return 0;
-  const str = String(value).trim();
-  if (str.startsWith('=')) {
-    const expr = str.slice(1);
-    if (!/^[0-9+\-*/.() ]+$/.test(expr)) return 0;
-    try {
-      // eslint-disable-next-line no-new-func
-      const result = new Function('return (' + expr + ')')();
-      return typeof result === 'number' && isFinite(result) ? result : 0;
-    } catch {
-      return 0;
-    }
-  }
-  return parseFloat(str) || 0;
 };
 
 // Reusable input that accepts plain numbers or "=formula" expressions, and converts
@@ -103,11 +82,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
-  const toEUR = (amount, currency) => {
-    const val = parseFloat(amount) || 0;
-    if (!currency || currency === 'EUR') return val;
-    return val * (rates[currency] || 1);
-  };
+  const toEURWithRates = (amount, currency) => toEUR(amount, currency, rates);
 
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
@@ -170,37 +145,18 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
 
-  const getEffectiveCostDbl = (it) => {
-    if (it.subType === 'hotel') {
-      const price = evalAmount(it.pricePerNightDbl);
-      const nights = parseFloat(it.nights) || 0;
-      const cityTax = evalAmount(it.cityTax);
-      return ((price + cityTax) * nights) / 2;
-    }
-    return evalAmount(it.costDbl);
-  };
-  const getEffectiveCostSngl = (it) => {
-    if (it.subType === 'hotel') {
-      const price = evalAmount(it.pricePerNightSngl);
-      const nights = parseFloat(it.nights) || 0;
-      const cityTax = evalAmount(it.cityTaxSngl !== '' && it.cityTaxSngl !== undefined ? it.cityTaxSngl : it.cityTax);
-      return price * nights + cityTax * nights;
-    }
-    return evalAmount(it.costSngl || it.costDbl);
-  };
-
   const groupItems = items.filter(it => it.type === 'group');
   const paxItems = items.filter(it => it.type === 'per_pax');
 
-  const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostDbl(it), it.currency), 0);
-  const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEUR(getEffectiveCostSngl(it), it.currency), 0);
+  const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostDbl(it), it.currency), 0);
+  const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
 
   // Hotel guide cost = sum of SNGL-room cost across ALL hotels in this offer (the guide travels with
   // the group, occupying a SNGL room at every hotel) — computed automatically, no manual input.
   const regularGroupItems = groupItems.filter(it => it.subType !== 'guide_hotel');
   const guideHotelItems = groupItems.filter(it => it.subType === 'guide_hotel');
-  const regularGroupTotalEUR = regularGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
+  const regularGroupTotalEUR = regularGroupItems.reduce((sum, it) => sum + toEURWithRates(evalAmount(it.groupCost), it.currency), 0);
   const getGuideHotelCost = (it) => {
     const override = it.guideOverride;
     if (override !== '' && override !== undefined && override !== null) return evalAmount(override);
@@ -395,6 +351,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           </tbody>
         </table>
         {rows.length === 0 && <div style={{ color: colors.muted, fontSize: 13 }}>Add cost items and pax sizes to see the calculation.</div>}
+      </div>
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Programa da viagem (PT-BR)</div>
+        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+          Cole aqui o texto do roteiro dia-a-dia (em português). Este texto será usado na proposta gerada para o cliente.
+        </div>
+        <textarea defaultValue={offer.programText} onBlur={e => handleHeaderChange('programText', e.target.value)} rows={10} placeholder={"📅 07/04/2027 • QUARTA-FEIRA • DIA 1: BRASIL / LISBOA / BERLIM (AÉREO)\nApresentação no aeroporto para embarque...\n\n📅 08/04/2027 • QUINTA-FEIRA • DIA 2: BERLIM • CITY TOUR\n..."} style={{ ...iStyle, resize: 'vertical', fontFamily: 'Georgia, serif', lineHeight: 1.5 }} />
+        <div style={{ marginTop: 14 }}>
+          <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            📄 Gerar oferta (PDF)
+          </button>
+        </div>
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
