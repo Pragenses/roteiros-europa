@@ -135,40 +135,6 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           </>
         )}
 
-        {programParagraphs.length > 0 && (
-          <div className="op-section">
-            <h2>Roteiro</h2>
-            {programParagraphs.map((p, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{p}</p>)}
-          </div>
-        )}
-
-        <div className="op-section">
-          <h2>Incluído no preço</h2>
-          <ul>
-            {hotels.length > 0 && (
-              <li>
-                Hospedagem em hotéis selecionados, com café da manhã incluído ({hotels.length} {hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)
-              </li>
-            )}
-            {hasCityTax && <li>Taxas municipais (city tax) dos hotéis</li>}
-            {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => (
-              <li key={it.id}>{it.name}</li>
-            ))}
-            {guideHotels.length > 0 && <li>Acompanhamento de guia durante todo o roteiro, incluindo hospedagem</li>}
-            {tickets.map(it => (
-              <li key={it.id}>{it.name}</li>
-            ))}
-            <li>Assistência da nossa equipe durante toda a viagem</li>
-          </ul>
-          <h3 style={{ marginTop: 14 }}>Não incluído</h3>
-          <ul>
-            <li>Voos internacionais e taxas de embarque</li>
-            <li>Bebidas e refeições não mencionadas</li>
-            <li>Gorjetas e despesas de caráter pessoal</li>
-            <li>Seguro viagem</li>
-          </ul>
-        </div>
-
         <div className="op-section">
           <h2>Investimento</h2>
           <p style={{ fontSize: 11, color: '#666' }}>
@@ -193,6 +159,41 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             </tbody>
           </table>
           {rows.length === 0 && <p style={{ color: '#999' }}>Nenhum valor calculado — verifique os itens e o número de participantes na nabídka.</p>}
+        </div>
+
+        {programParagraphs.length > 0 && (
+          <div className="op-section">
+            <h2>Roteiro</h2>
+            {programParagraphs.map((p, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{p}</p>)}
+          </div>
+        )}
+
+        <div className="op-section">
+          <h2>Incluído no preço</h2>
+          <ul>
+            {hotels.length > 0 && (
+              <li>
+                Hospedagem em hotéis selecionados, com café da manhã incluído ({hotels.length} {hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)
+              </li>
+            )}
+            {hasCityTax && <li>Taxas municipais (city tax) dos hotéis</li>}
+            {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => (
+              <li key={it.id}>{it.name}</li>
+            ))}
+            {guideHotels.length > 0 && <li>Acompanhamento de guia durante todo o roteiro, incluindo hospedagem</li>}
+            {tickets.map(it => (
+              <li key={it.id}>1x {it.name}</li>
+            ))}
+            <li>Assistência da nossa equipe durante toda a viagem</li>
+          </ul>
+          <h3 style={{ marginTop: 14 }}>Não incluído</h3>
+          <ul>
+            <li>Voos internacionais e taxas de embarque</li>
+            <li>Bebidas e refeições não mencionadas</li>
+            <li>Gorjetas e despesas de caráter pessoal</li>
+            <li>Maleteiros</li>
+            <li>Seguro viagem</li>
+          </ul>
         </div>
 
         <div className="op-section" style={{ marginTop: 24, textAlign: 'center' }}>
