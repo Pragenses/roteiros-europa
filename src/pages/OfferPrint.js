@@ -12,6 +12,23 @@ const fmtDate = (d) => {
   return `${day}/${m}/${y}`;
 };
 
+const PageChrome = () => (
+  <>
+    <div className="op-header">
+      <div>
+        TOUR PRAGENSES<br />
+        www.tour-pragenses.com<br />
+        +420 777 079 997<br />
+        info@tour-pragenses.com
+      </div>
+      <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" />
+    </div>
+    <div className="op-footer">
+      <b>Pragenses s.r.o.</b> &nbsp;|&nbsp; Lipnická 688, Praha 9 - Kyje, Czech Republic &nbsp;|&nbsp; IČO: 284 45 961 &nbsp;|&nbsp; DIČ: CZ284 45 961
+    </div>
+  </>
+);
+
 export default function OfferPrint({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -70,9 +87,9 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         @media print {
           .op-page-frame { position: relative; }
         }
-        .op-header { position: fixed; top: 8mm; left: 18mm; right: 18mm; display: flex; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; }
+        .op-header { position: absolute; top: 8mm; left: 18mm; right: 18mm; display: flex; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; z-index: 1; }
         .op-header img { height: 32px; opacity: 0.55; }
-        .op-footer { position: fixed; bottom: 8mm; left: 18mm; right: 18mm; text-align: center; font-family: Arial, sans-serif; font-size: 9px; color: #999; }
+        .op-footer { position: absolute; bottom: 8mm; left: 18mm; right: 18mm; text-align: center; font-family: Arial, sans-serif; font-size: 9px; color: #999; z-index: 1; }
         .op-watermark { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; object-position: bottom right; pointer-events: none; z-index: 0; }
         .op-page-content { position: relative; z-index: 1; }
         .op-cover-img { width: 100%; }
@@ -93,30 +110,18 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir / Salvar PDF</button>
       </div>
 
-      {/* Fixed elements repeat on every printed page */}
-      <div className="op-header">
-        <div>
-          TOUR PRAGENSES<br />
-          www.tour-pragenses.com<br />
-          +420 777 079 997<br />
-          info@tour-pragenses.com
-        </div>
-        <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" />
-      </div>
-      <div className="op-footer">
-        <b>Pragenses s.r.o.</b> &nbsp;|&nbsp; Lipnická 688, Praha 9 - Kyje, Czech Republic &nbsp;|&nbsp; IČO: 284 45 961 &nbsp;|&nbsp; DIČ: CZ284 45 961
-      </div>
-      <img className="op-watermark" src={`${ASSETS}/watermark.png`} alt="" />
 
       {/* Cover page */}
       <div className="op-page-frame op-cover">
         <img className="op-cover-img op-page-content" src={`${ASSETS}/cover.png`} alt="Tour Pragenses — Seu parceiro na Europa" />
         <img className="op-watermark" src={`${ASSETS}/watermark.png`} alt="" />
+        <PageChrome />
       </div>
 
       {/* Content page(s) */}
       <div className="op-page-frame op-content">
         <img className="op-watermark" src={`${ASSETS}/watermark.png`} alt="" />
+        <PageChrome />
         <div className="op-page-content">
         <h2 style={{ marginTop: 0, color: '#0c447c', fontSize: 20 }}>{offer.name}</h2>
         {offer.destinations && <p><b>Destinos:</b> {offer.destinations}</p>}
