@@ -166,13 +166,6 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           {rows.length === 0 && <p style={{ color: '#999' }}>Nenhum valor calculado — verifique os itens e o número de participantes na nabídka.</p>}
         </div>
 
-        {programParagraphs.length > 0 && (
-          <div className="op-section">
-            <h2>Roteiro</h2>
-            {programParagraphs.map((p, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{p}</p>)}
-          </div>
-        )}
-
         <div className="op-section">
           <h2>Incluído no preço</h2>
           <ul>
@@ -200,6 +193,13 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             <li>Seguro viagem</li>
           </ul>
         </div>
+
+        {programParagraphs.length > 0 && (
+          <div className="op-section">
+            <h2>Roteiro</h2>
+            {programParagraphs.map((p, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{p}</p>)}
+          </div>
+        )}
 
         <div className="op-section" style={{ marginTop: 24, textAlign: 'center' }}>
           <p style={{ fontWeight: 700 }}>Equipe Tour Pragenses</p>
