@@ -88,7 +88,26 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
+    const newItem = { id: Date.now() + Math.random(), name: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' };
+    const newItems = [...items];
+    if (type === 'per_pax' && subType === 'hotel') {
+      // Insert after last hotel
+      const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+      newItems.splice(lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0, 0, newItem);
+    } else if (type === 'per_pax' && subType === 'ticket') {
+      // Insert after last ticket/meal (or after last hotel if no tickets yet)
+      const lastTicketIdx = newItems.map((it, i) => it.subType === 'ticket' ? i : -1).filter(i => i >= 0).pop();
+      if (lastTicketIdx !== undefined) {
+        newItems.splice(lastTicketIdx + 1, 0, newItem);
+      } else {
+        const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+        newItems.splice(lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0, 0, newItem);
+      }
+    } else {
+      // Group costs go to the end
+      newItems.push(newItem);
+    }
+    setItems(newItems);
   };
 
   const moveItem = (index, direction) => {
