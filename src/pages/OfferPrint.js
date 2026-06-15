@@ -46,7 +46,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const items = offer.items || [];
   const margin = offer.margin || 15;
   const paxList = offer.paxList || '15,20,25,30,35';
-  const { rows, perPaxDblEUR, perPaxSnglEUR, snglSupplementEUR } = computeOfferPricing(items, margin, paxList, rates);
+  const { rows } = computeOfferPricing(items, margin, paxList, rates);
 
   const hotels = items.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
   const programParagraphs = (offer.programText || '').split(/\n\s*\n/).filter(p => p.trim());
@@ -69,7 +69,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         .op-header { position: fixed; top: 8mm; left: 18mm; right: 18mm; display: flex; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; }
         .op-header img { height: 32px; opacity: 0.55; }
         .op-footer { position: fixed; bottom: 8mm; left: 18mm; right: 18mm; text-align: center; font-family: Arial, sans-serif; font-size: 9px; color: #999; }
-        .op-watermark { position: absolute; bottom: 0; right: 0; width: 320px; max-width: 45%; pointer-events: none; z-index: 0; }
+        .op-watermark { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; object-position: bottom right; pointer-events: none; z-index: 0; }
         .op-page-content { position: relative; z-index: 1; }
         .op-cover-img { width: 100%; }
         .op-content h2 { color: #1a3a5c; font-size: 16px; border-bottom: 2px solid #c8a84b; padding-bottom: 4px; margin-top: 26px; }
@@ -162,9 +162,6 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             </tbody>
           </table>
           {rows.length === 0 && <p style={{ color: '#999' }}>Nenhum valor calculado — verifique os itens e o número de participantes na nabídka.</p>}
-          <p style={{ fontSize: 10, color: '#999', marginTop: 10 }}>
-            Custo base por pessoa (DBL): € {perPaxDblEUR.toFixed(2)} · (SNGL): € {perPaxSnglEUR.toFixed(2)} · Suplemento individual: € {snglSupplementEUR.toFixed(2)}
-          </p>
         </div>
 
         <div className="op-section" style={{ marginTop: 24, textAlign: 'center' }}>
