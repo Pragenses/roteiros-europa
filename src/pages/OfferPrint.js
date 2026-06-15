@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { DEFAULT_RATES, computeOfferPricing } from '../lib/offerCalc';
+import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
 
 const ASSETS = process.env.PUBLIC_URL + '/offer-assets';
 
@@ -49,6 +49,10 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const { rows } = computeOfferPricing(items, margin, paxList, rates);
 
   const hotels = items.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
+  const tickets = items.filter(it => it.type === 'per_pax' && it.subType === 'ticket' && it.name);
+  const groupServices = items.filter(it => it.type === 'group' && it.name);
+  const guideHotels = items.filter(it => it.type === 'group' && it.subType === 'guide_hotel');
+  const hasCityTax = hotels.some(h => evalAmount(h.cityTax) > 0 || evalAmount(h.cityTaxSngl) > 0);
   const programParagraphs = (offer.programText || '').split(/\n\s*\n/).filter(p => p.trim());
 
   return (
@@ -137,6 +141,33 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             {programParagraphs.map((p, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{p}</p>)}
           </div>
         )}
+
+        <div className="op-section">
+          <h2>Incluído no preço</h2>
+          <ul>
+            {hotels.length > 0 && (
+              <li>
+                Hospedagem em hotéis selecionados, com café da manhã incluído ({hotels.length} {hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)
+              </li>
+            )}
+            {hasCityTax && <li>Taxas municipais (city tax) dos hotéis</li>}
+            {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => (
+              <li key={it.id}>{it.name}</li>
+            ))}
+            {guideHotels.length > 0 && <li>Acompanhamento de guia durante todo o roteiro, incluindo hospedagem</li>}
+            {tickets.map(it => (
+              <li key={it.id}>{it.name}</li>
+            ))}
+            <li>Assistência da nossa equipe durante toda a viagem</li>
+          </ul>
+          <h3 style={{ marginTop: 14 }}>Não incluído</h3>
+          <ul>
+            <li>Voos internacionais e taxas de embarque</li>
+            <li>Bebidas e refeições não mencionadas</li>
+            <li>Gorjetas e despesas de caráter pessoal</li>
+            <li>Seguro viagem</li>
+          </ul>
+        </div>
 
         <div className="op-section">
           <h2>Investimento</h2>
