@@ -61,12 +61,16 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           .op-section { page-break-inside: avoid; }
         }
         @media screen {
-          .op-page-frame { max-width: 800px; margin: 0 auto 24px; background: #fff; box-shadow: 0 0 12px rgba(0,0,0,0.12); padding: 32mm 18mm 22mm 18mm; box-sizing: border-box; position: relative; min-height: 1000px; }
+          .op-page-frame { max-width: 800px; margin: 0 auto 24px; background: #fff; box-shadow: 0 0 12px rgba(0,0,0,0.12); padding: 32mm 18mm 22mm 18mm; box-sizing: border-box; position: relative; min-height: 1000px; overflow: hidden; }
+        }
+        @media print {
+          .op-page-frame { position: relative; }
         }
         .op-header { position: fixed; top: 8mm; left: 18mm; right: 18mm; display: flex; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; }
         .op-header img { height: 32px; opacity: 0.55; }
         .op-footer { position: fixed; bottom: 8mm; left: 18mm; right: 18mm; text-align: center; font-family: Arial, sans-serif; font-size: 9px; color: #999; }
-        .op-watermark { position: fixed; bottom: 0; right: 0; width: 320px; max-width: 45vw; pointer-events: none; z-index: -1; }
+        .op-watermark { position: absolute; bottom: 0; right: 0; width: 320px; max-width: 45%; pointer-events: none; z-index: 0; }
+        .op-page-content { position: relative; z-index: 1; }
         .op-cover-img { width: 100%; }
         .op-content h2 { color: #1a3a5c; font-size: 16px; border-bottom: 2px solid #c8a84b; padding-bottom: 4px; margin-top: 26px; }
         .op-content h3 { color: #1a3a5c; font-size: 13px; margin: 14px 0 4px; }
@@ -102,11 +106,14 @@ export default function OfferPrint({ offerId, navigate, colors }) {
 
       {/* Cover page */}
       <div className="op-page-frame op-cover">
-        <img className="op-cover-img" src={`${ASSETS}/cover.png`} alt="Tour Pragenses — Seu parceiro na Europa" />
+        <img className="op-cover-img op-page-content" src={`${ASSETS}/cover.png`} alt="Tour Pragenses — Seu parceiro na Europa" />
+        <img className="op-watermark" src={`${ASSETS}/watermark.png`} alt="" />
       </div>
 
       {/* Content page(s) */}
       <div className="op-page-frame op-content">
+        <img className="op-watermark" src={`${ASSETS}/watermark.png`} alt="" />
+        <div className="op-page-content">
         <h2 style={{ marginTop: 0, color: '#0c447c', fontSize: 20 }}>{offer.name}</h2>
         {offer.destinations && <p><b>Destinos:</b> {offer.destinations}</p>}
         {(offer.startDate || offer.endDate) && <p><b>Período:</b> {fmtDate(offer.startDate)} {offer.endDate ? `a ${fmtDate(offer.endDate)}` : ''}</p>}
@@ -163,6 +170,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <div className="op-section" style={{ marginTop: 24, textAlign: 'center' }}>
           <p style={{ fontWeight: 700 }}>Equipe Tour Pragenses</p>
           <p style={{ fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
+        </div>
         </div>
       </div>
     </div>
