@@ -88,7 +88,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
   const addItem = (type, subType) => {
-    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
+    setItems([...items, { id: Date.now() + Math.random(), name: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' }]);
   };
 
   const moveItem = (index, direction) => {
@@ -145,8 +145,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
 
-  const groupItems = items.filter(it => it.type === 'group');
-  const paxItems = items.filter(it => it.type === 'per_pax');
+  const activeItems = items.filter(it => it.enabled !== false);
+  const groupItems = activeItems.filter(it => it.type === 'group');
+  const paxItems = activeItems.filter(it => it.type === 'per_pax');
 
   const perPaxDblEUR = paxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostDbl(it), it.currency), 0);
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostSngl(it), it.currency), 0);
@@ -229,12 +230,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const isGuideHotel = it.type === 'group' && it.subType === 'guide_hotel';
               const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 1fr 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
+              const isEnabled = it.enabled !== false;
               const rowBg = isGuideHotel ? '#FCE4EC' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               return (
-                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth }}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} title="Move up" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? colors.border : colors.muted }}>▲</button>
-                    <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} title="Move down" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === items.length - 1 ? 'default' : 'pointer', color: idx === items.length - 1 ? colors.border : colors.muted }}>▼</button>
+                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth, opacity: isEnabled ? 1 : 0.45 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+                    <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)} title={isEnabled ? 'Incluído no cálculo (clique para excluir)' : 'Excluído do cálculo (clique para incluir)'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} title="Move up" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? colors.border : colors.muted }}>▲</button>
+                      <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} title="Move down" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === items.length - 1 ? 'default' : 'pointer', color: idx === items.length - 1 ? colors.border : colors.muted }}>▼</button>
+                    </div>
                   </div>
                   <div>
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />

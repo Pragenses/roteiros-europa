@@ -52,8 +52,9 @@ export const toEUR = (amount, currency, rates) => {
 
 // Computes the full selling-price table for a given offer's items/margin/paxList using the given rates.
 export const computeOfferPricing = (items, margin, paxList, rates) => {
-  const groupItems = items.filter(it => it.type === 'group');
-  const paxItems = items.filter(it => it.type === 'per_pax');
+  const activeItems = items.filter(it => it.enabled !== false);
+  const groupItems = activeItems.filter(it => it.type === 'group');
+  const paxItems = activeItems.filter(it => it.type === 'per_pax');
 
   const regularGroupItems = groupItems.filter(it => it.subType !== 'guide_hotel');
   const guideHotelItems = groupItems.filter(it => it.subType === 'guide_hotel');
