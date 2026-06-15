@@ -87,8 +87,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
 
+  const newItemRef = React.useRef(null);
+  const [newItemId, setNewItemId] = React.useState(null);
+
+  React.useEffect(() => {
+    if (newItemRef.current) {
+      newItemRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      newItemRef.current = null;
+    }
+  }, [items]);
+
   const addItem = (type, subType) => {
     const newItem = { id: Date.now() + Math.random(), name: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' };
+    setNewItemId(newItem.id);
     const newItems = [...items];
     if (type === 'per_pax' && subType === 'hotel') {
       // Insert after last hotel
@@ -252,7 +263,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const isEnabled = it.enabled !== false;
               const rowBg = isGuideHotel ? '#FCE4EC' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               return (
-                <div key={it.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth, opacity: isEnabled ? 1 : 0.45 }}>
+                <div key={it.id} ref={it.id === newItemId ? newItemRef : null} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth, opacity: isEnabled ? 1 : 0.45 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
                     <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)} title={isEnabled ? 'Incluído no cálculo (clique para excluir)' : 'Excluído do cálculo (clique para incluir)'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
                     <div style={{ display: 'flex', gap: 2 }}>
