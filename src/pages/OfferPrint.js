@@ -63,7 +63,68 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const items = offer.items || [];
   const margin = offer.margin || 15;
   const paxList = offer.paxList || '15,20,25,30,35';
+  const activeItems = items.filter(it => it.enabled !== false);
   const { rows } = computeOfferPricing(items, margin, paxList, rates);
+
+  const SPLIT_CURRENCIES = ['CHF', 'GBP'];
+  const CUR_SYMBOL = { EUR: '€', CHF: 'CHF', GBP: '£' };
+  const CUR_FLAG = { EUR: '🇪🇺', CHF: '🇨🇭', GBP: '🇬🇧' };
+  const activeCurrencies = [...new Set(activeItems.map(it => it.currency))].filter(c => SPLIT_CURRENCIES.includes(c));
+  const hasSplit = activeCurrencies.length > 0;
+  const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
+
+  const computeByCurrency = (cur) => {
+    const paxItems = activeItems.filter(it => it.type === 'per_pax');
+    const groupItems = activeItems.filter(it => it.type === 'group');
+    const curPaxItems = paxItems.filter(it => it.currency === cur);
+    const curGroupItems = groupItems.filter(it => it.currency === cur && it.subType !== 'guide_hotel');
+    const perPaxDbl = curPaxItems.reduce((sum, it) => sum + evalAmount(it.subType === 'hotel'
+      ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
+      : it.costDbl), 0);
+    const perPaxSngl = curPaxItems.reduce((sum, it) => sum + evalAmount(it.subType === 'hotel'
+      ? ((evalAmount(it.pricePerNightSngl) + evalAmount(it.cityTaxSngl || it.cityTax)) * (parseFloat(it.nights) || 0))
+      : (it.costSngl || it.costDbl)), 0);
+    const groupTotal = curGroupItems.reduce((sum, it) => sum + evalAmount(it.groupCost), 0);
+    const snglSupp = perPaxSngl - perPaxDbl;
+    const rows = paxCounts.map(pax => {
+      const costDbl = groupTotal / pax + perPaxDbl;
+      const marginAmount = costDbl * (margin / 100);
+      const focShare = perPaxDbl / pax;
+      const finalDbl = costDbl + marginAmount + focShare;
+      const finalSngl = finalDbl + snglSupp;
+      return { pax, finalDbl, finalSngl };
+    });
+    return { cur, rows };
+  };
+
+  const computeEurOnly = () => {
+    const paxItems = activeItems.filter(it => it.type === 'per_pax');
+    const groupItems = activeItems.filter(it => it.type === 'group');
+    const eurPaxItems = paxItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency));
+    const eurGroupItems = groupItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency) && it.subType !== 'guide_hotel');
+    const toEUR = (v, c) => c === 'EUR' ? v : v * (rates[c] || 1);
+    const perPaxDbl = eurPaxItems.reduce((sum, it) => sum + toEUR(evalAmount(it.subType === 'hotel'
+      ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
+      : it.costDbl), it.currency), 0);
+    const perPaxSngl = eurPaxItems.reduce((sum, it) => sum + toEUR(evalAmount(it.subType === 'hotel'
+      ? ((evalAmount(it.pricePerNightSngl) + evalAmount(it.cityTaxSngl || it.cityTax)) * (parseFloat(it.nights) || 0))
+      : (it.costSngl || it.costDbl)), it.currency), 0);
+    const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
+    const snglSupp = perPaxSngl - perPaxDbl;
+    const rows = paxCounts.map(pax => {
+      const costDbl = groupTotal / pax + perPaxDbl;
+      const marginAmount = costDbl * (margin / 100);
+      const focShare = perPaxDbl / pax;
+      const finalDbl = costDbl + marginAmount + focShare;
+      const finalSngl = finalDbl + snglSupp;
+      return { pax, finalDbl, finalSngl };
+    });
+    return { cur: 'EUR', rows };
+  };
+
+  const splitData = hasSplit
+    ? [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()]
+    : null;
 
   const hotels = items.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
   const tickets = items.filter(it => it.type === 'per_pax' && it.subType === 'ticket' && it.name);
@@ -143,27 +204,55 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <div className="op-section">
           <h2>Investimento</h2>
           <p style={{ fontSize: 11, color: '#666' }}>
-            Valores por pessoa, em EUR. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro.
+            Valores por pessoa. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro.
           </p>
-          <table className="op-table">
-            <thead>
-              <tr>
-                <th>Participantes</th>
-                <th>Quarto duplo (por pessoa)</th>
-                <th>Quarto individual (por pessoa)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.pax}>
-                  <td>{r.pax} + 1 cortesia</td>
-                  <td className="op-final">€ {r.finalDbl.toFixed(2)}</td>
-                  <td className="op-final">€ {r.finalSngl.toFixed(2)}</td>
+          {hasSplit ? (
+            splitData.map(({ cur, rows: sRows }) => (
+              <div key={cur} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a3a5c', marginBottom: 4 }}>
+                  {CUR_FLAG[cur]} Serviços faturados em {cur}
+                </div>
+                <table className="op-table">
+                  <thead>
+                    <tr>
+                      <th>Participantes</th>
+                      <th>Quarto duplo (por pessoa)</th>
+                      <th>Quarto individual (por pessoa)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sRows.map(r => (
+                      <tr key={r.pax}>
+                        <td>{r.pax} + 1 cortesia</td>
+                        <td className="op-final">{CUR_SYMBOL[cur]} {r.finalDbl.toFixed(2)}</td>
+                        <td className="op-final">{CUR_SYMBOL[cur]} {r.finalSngl.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))
+          ) : (
+            <table className="op-table">
+              <thead>
+                <tr>
+                  <th>Participantes</th>
+                  <th>Quarto duplo (por pessoa)</th>
+                  <th>Quarto individual (por pessoa)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length === 0 && <p style={{ color: '#999' }}>Nenhum valor calculado — verifique os itens e o número de participantes na nabídka.</p>}
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.pax}>
+                    <td>{r.pax} + 1 cortesia</td>
+                    <td className="op-final">€ {r.finalDbl.toFixed(2)}</td>
+                    <td className="op-final">€ {r.finalSngl.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {rows.length === 0 && <p style={{ color: '#999' }}>Nenhum valor calculado.</p>}
         </div>
 
         <div className="op-section">
