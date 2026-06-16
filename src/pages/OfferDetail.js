@@ -76,6 +76,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showSplit, setShowSplit] = useState(false);
 
   const fetchData = useCallback(async () => {
     const snap = await getDoc(doc(db, 'offers', offerId));
@@ -356,8 +357,6 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   // FOC: the free person's cost is the sum of ALL per-pax items (hotels, meals, tickets, city tax, boats, trains...)
   // on a DBL basis, divided across the paying pax. Group costs (bus, guide, flights) are NOT included.
   const focPoolEUR = perPaxDblEUR;
-
-  const [showSplit, setShowSplit] = useState(false);
 
   // Compute per-currency breakdown (only CHF, GBP — other currencies stay in EUR)
   const SPLIT_CURRENCIES = ['CHF', 'GBP'];
