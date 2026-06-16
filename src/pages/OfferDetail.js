@@ -98,7 +98,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   }, [items]);
 
   const addItem = (type, subType) => {
-    const newItem = { id: Date.now() + Math.random(), name: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' };
+    const newItem = { id: Date.now() + Math.random(), name: '', city: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' };
     setNewItemId(newItem.id);
     const newItems = [...items];
     if (type === 'per_pax' && subType === 'hotel') {
@@ -282,7 +282,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     </div>
                   </div>
                   <div>
-                    <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                    {isHotel ? (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <input key={`city-${it.id}`} type="text" placeholder="Město" value={it.city || ''} onChange={e => updateItem(it.id, 'city', e.target.value)} style={{ ...iStyle, flex: '0 0 35%', fontWeight: 600 }} />
+                        <input key={`name-${it.id}`} type="text" placeholder="Název hotelu" value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={{ ...iStyle, flex: 1 }} />
+                      </div>
+                    ) : (
+                      <input key={`name-${it.id}`} type="text" placeholder={isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                    )}
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
                         <input key={`df-${it.id}`} type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} onBlur={e => {
@@ -314,6 +321,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       <FormulaField placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} colors={colors} />
                       <FormulaField placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} colors={colors} />
                       <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
+                        {it.city ? <span style={{ fontWeight: 600 }}>{it.city}</span> : null}{it.city && it.name ? ' · ' : ''}{it.name}<br/>
                         DBL: {getEffectiveCostDbl(it).toFixed(2)} / SNGL: {getEffectiveCostSngl(it).toFixed(2)} per pax
                       </div>
                     </>

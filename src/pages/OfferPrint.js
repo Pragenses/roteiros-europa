@@ -133,7 +133,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             <ul>
               {hotels.map(h => (
                 <li key={h.id}>
-                  <b>{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}
+                  <b>{h.city ? `${h.city}: ` : ''}{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}
                 </li>
               ))}
             </ul>
