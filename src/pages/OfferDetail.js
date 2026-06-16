@@ -118,44 +118,70 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     setParseError('');
     // Normalize: replace all dash variants, non-breaking spaces, etc.
     const normalized = itineraryText
-      .replace(/[\u2013\u2014\u2012\u2015]/g, '-')  // en-dash, em-dash → hyphen
-      .replace(/\u00a0/g, ' ')  // non-breaking space → space
+      .replace(/[\u2013\u2014\u2012\u2015]/g, '-')
+      .replace(/\u00a0/g, ' ')
       .replace(/\r/g, '');
     const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
-    const datePattern = /(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s*-+\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s+(.+)/;
     const newHotels = [];
 
     for (const line of lines) {
-      const m = line.match(datePattern);
-      if (!m) continue;
-      const [, d1, mo1, y1, d2, mo2, y2, rest] = m;
-      const dateFrom = `${y1}-${mo1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
-      const dateTo = `${y2}-${mo2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+      // Remove trailing notes like "- obeslano", "- FD ...", "- June..."
+      const cleanLine = line.replace(/\s*-\s*(obeslano|FD|June|July|Aug|Sep|Oct|Nov|Dec|Jan|Feb|Mar|Apr|objedn)[^\n]*/i, '').trim();
+
+      let dateFrom = '', dateTo = '', cityRaw = '', hotelName = '';
+
+      // Format 1: DD/MM a DD/MM/YY – CITY: HOTEL
+      // or       DD/MM a DD/MM/YYYY – CITY: HOTEL
+      const fmt1 = cleanLine.match(/(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\s+a\s+(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s*-+\s*([^:]+)(?::\s*(.+))?/i);
+      if (fmt1) {
+        const [, d1, m1, y1raw, d2, m2, y2raw, city, hotel] = fmt1;
+        const y2 = y2raw.length === 2 ? '20' + y2raw : y2raw;
+        const y1 = y1raw ? (y1raw.length === 2 ? '20' + y1raw : y1raw) : y2;
+        dateFrom = `${y1}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+        dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+        cityRaw = city.trim();
+        hotelName = hotel ? hotel.trim() : '';
+      } else {
+        // Format 2: DD.MM.YYYY - DD.MM.YYYY CITY (original format)
+        const fmt2 = cleanLine.match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s*-+\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s+(.+)/);
+        if (fmt2) {
+          const [, d1, mo1, y1, d2, mo2, y2, rest] = fmt2;
+          dateFrom = `${y1}-${mo1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${y2}-${mo2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          // City is before double-space or colon, hotel is after
+          const colonIdx = rest.indexOf(':');
+          if (colonIdx > 0) {
+            cityRaw = rest.slice(0, colonIdx).trim();
+            hotelName = rest.slice(colonIdx + 1).trim();
+          } else {
+            cityRaw = rest.trim();
+            hotelName = '';
+          }
+        }
+      }
+
+      if (!dateFrom || !dateTo) continue;
+
       const nights = Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000);
+      if (nights <= 0) continue;
 
-      // Extract city (first word(s) in uppercase before any lowercase text/hotel name)
-      const cityRaw = rest.trim().toUpperCase().split(/\s{2,}|\s+-\s+/)[0].trim();
-      const cityPT = CITY_PT[cityRaw] || (cityRaw.charAt(0) + cityRaw.slice(1).toLowerCase());
-
-      // Hotel name: anything after double space or dash
-      const hotelMatch = rest.match(/^[A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.]+?\s{2,}(.+)/) ||
-                         rest.match(/^[A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.]+?\s+-\s+(.+)/);
-      const hotelName = hotelMatch ? hotelMatch[1].trim() : '';
+      // Remove country suffix like "/ITÁLIA", "/FRANCE" from city
+      const cityClean = cityRaw.replace(/\/[A-ZÁÉÍÓÚÀÂÊÔÃÕ]+$/, '').trim().toUpperCase();
+      const cityPT = CITY_PT[cityClean] || (cityClean.charAt(0) + cityClean.slice(1).toLowerCase());
 
       newHotels.push({
         id: Date.now() + Math.random(),
-        name: hotelName,
-        city: cityPT,
+        name: hotelName, city: cityPT,
         type: 'per_pax', subType: 'hotel', enabled: true,
         costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '',
-        nights: nights > 0 ? String(nights) : '',
+        nights: String(nights),
         cityTax: '', cityTaxSngl: '', guideOverride: '',
         dateFrom, dateTo, groupCost: '', currency: 'EUR'
       });
     }
 
     if (newHotels.length === 0) {
-      setParseError('Nepodařilo se rozpoznat žádné řádky. Zkontrolujte formát: DD.MM.YYYY – DD.MM.YYYY MĚSTO');
+      setParseError('Nepodařilo se rozpoznat žádné řádky. Zkontrolujte formát.');
       return;
     }
 
