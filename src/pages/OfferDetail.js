@@ -249,6 +249,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Cost items</div>
+        {(() => {
+          const totalNights = activeItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
+          return totalNights > 0 ? (
+            <div style={{ fontSize: 13, color: colors.primary, fontWeight: 600, marginBottom: 10, padding: '6px 10px', background: '#FFFDE7', borderRadius: 7, display: 'inline-block' }}>
+              🏨 Celkem nocí: {totalNights}
+            </div>
+          ) : null;
+        })()}
         <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>
           <b>Per-pax (hotels, tickets, meals)</b>: enter the cost per person for the whole trip, in DBL and SNGL room basis. <b>Group cost (bus, flight)</b>: enter the total cost for the whole group — it gets divided by the number of paying pax. <b>Hotel guide</b>: SNGL room price × nights, also divided by pax.
         </div>
