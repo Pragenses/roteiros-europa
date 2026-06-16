@@ -363,6 +363,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const activeCurrencies = [...new Set(activeItems.map(it => it.currency))].filter(c => SPLIT_CURRENCIES.includes(c));
   const hasSplit = activeCurrencies.length > 0;
 
+  const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
+
   // Per-currency per-pax and group costs (in original currency, no conversion)
   const computeByCurrency = (cur) => {
     const curPaxItems = paxItems.filter(it => it.currency === cur);
@@ -415,8 +417,6 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const splitData = showSplit && hasSplit
     ? [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()]
     : null;
-
-  const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
 
   const rows = paxCounts.map(pax => {
     const groupPerPax = groupTotalEUR / pax;
