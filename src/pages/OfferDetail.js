@@ -82,7 +82,75 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
+  const [itineraryText, setItineraryText] = useState('');
+  const [parsingItinerary, setParsingItinerary] = useState(false);
+  const [parseError, setParseError] = useState('');
+
   const toEURWithRates = (amount, currency) => toEUR(amount, currency, rates);
+
+  const handleParseItinerary = async () => {
+    setParsingItinerary(true);
+    setParseError('');
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1000,
+          messages: [{
+            role: 'user',
+            content: `Parse the following travel itinerary text and return ONLY a JSON array of hotel objects. Each object must have:
+- "city": city name translated to Brazilian Portuguese (e.g. "Munique", "Salzburgo", "Innsbruck", "Bolzano", "Milão", "Berna", "Fussen" stays as "Füssen", etc.)
+- "name": hotel name if mentioned, otherwise empty string ""
+- "dateFrom": date in YYYY-MM-DD format
+- "dateTo": date in YYYY-MM-DD format
+- "nights": number of nights (integer)
+
+Ignore any notes like "obeslano", "FD", email addresses, phone numbers etc.
+Return ONLY the JSON array, no other text.
+
+Text:
+${itineraryText}`
+          }]
+        })
+      });
+      const data = await response.json();
+      const text = data.content?.[0]?.text || '';
+      const clean = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+      if (!Array.isArray(parsed)) throw new Error('Neplatný formát odpovědi');
+
+      const newHotels = parsed.map(h => ({
+        id: Date.now() + Math.random(),
+        name: h.name || '',
+        city: h.city || '',
+        type: 'per_pax',
+        subType: 'hotel',
+        enabled: true,
+        costDbl: '', costSngl: '',
+        pricePerNightDbl: '', pricePerNightSngl: '',
+        nights: String(h.nights || ''),
+        cityTax: '', cityTaxSngl: '',
+        guideOverride: '',
+        dateFrom: h.dateFrom || '',
+        dateTo: h.dateTo || '',
+        groupCost: '',
+        currency: 'EUR'
+      }));
+
+      // Insert new hotels after existing hotels
+      const existingItems = [...items];
+      const lastHotelIdx = existingItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+      const insertAt = lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0;
+      existingItems.splice(insertAt, 0, ...newHotels);
+      setItems(existingItems);
+      setItineraryText('');
+    } catch (err) {
+      setParseError('Chyba při zpracování: ' + err.message);
+    }
+    setParsingItinerary(false);
+  };
 
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>{t}</label>;
@@ -245,6 +313,21 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         <div style={{ marginTop: 10 }}>
           {lbl('Destinations')}<input type="text" defaultValue={offer.destinations} onBlur={e => handleHeaderChange('destinations', e.target.value)} style={iStyle} />
         </div>
+      </div>
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>📋 Vytvořit hotely z textu</div>
+        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+          Vložte text s itinerářem (datumy, města, případně hotely) — aplikace automaticky vytvoří hotelové řádky s datumy a přeloží města do PT-BR.
+        </div>
+        <textarea value={itineraryText} onChange={e => setItineraryText(e.target.value)} rows={5}
+          placeholder={"18.5.2027 – 21.5.2027 MUNICH\n21.5.2027 – 23.5.2027 SALZBURG\n23.5.2027 – 24.5.2027 INNSBRUCK"}
+          style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
+        <button onClick={handleParseItinerary} disabled={parsingItinerary || !itineraryText.trim()}
+          style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: parsingItinerary ? 0.6 : 1 }}>
+          {parsingItinerary ? '⏳ Zpracovávám...' : '✨ Vytvořit hotely z textu'}
+        </button>
+        {parseError && <div style={{ fontSize: 12, color: colors.danger, marginTop: 8 }}>{parseError}</div>}
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
