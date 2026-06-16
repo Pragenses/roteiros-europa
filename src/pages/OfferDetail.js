@@ -285,17 +285,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                        <input type="date" defaultValue={it.dateFrom || ''} onBlur={e => {
+                        <input key={`df-${it.id}`} type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} onBlur={e => {
                           const val = e.target.value;
-                          updateItem(it.id, 'dateFrom', val);
                           if (val && it.dateTo && val.length === 10 && it.dateTo.length === 10) {
                             const n = Math.round((new Date(it.dateTo) - new Date(val)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} style={iStyle} title="Date from" />
-                        <input type="date" defaultValue={it.dateTo || ''} onBlur={e => {
+                        <input key={`dt-${it.id}`} type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} onBlur={e => {
                           const val = e.target.value;
-                          updateItem(it.id, 'dateTo', val);
                           if (val && it.dateFrom && val.length === 10 && it.dateFrom.length === 10) {
                             const n = Math.round((new Date(val) - new Date(it.dateFrom)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
