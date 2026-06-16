@@ -116,8 +116,13 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const handleParseItinerary = () => {
     setParseError('');
-    const lines = itineraryText.split('\n').map(l => l.trim()).filter(l => l);
-    const datePattern = /(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s*[-–—]\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s+(.+)/;
+    // Normalize: replace all dash variants, non-breaking spaces, etc.
+    const normalized = itineraryText
+      .replace(/[\u2013\u2014\u2012\u2015]/g, '-')  // en-dash, em-dash → hyphen
+      .replace(/\u00a0/g, ' ')  // non-breaking space → space
+      .replace(/\r/g, '');
+    const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
+    const datePattern = /(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s*-+\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s+(.+)/;
     const newHotels = [];
 
     for (const line of lines) {
