@@ -357,6 +357,66 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   // on a DBL basis, divided across the paying pax. Group costs (bus, guide, flights) are NOT included.
   const focPoolEUR = perPaxDblEUR;
 
+  const [showSplit, setShowSplit] = useState(false);
+
+  // Compute per-currency breakdown (only CHF, GBP — other currencies stay in EUR)
+  const SPLIT_CURRENCIES = ['CHF', 'GBP'];
+  const activeCurrencies = [...new Set(activeItems.map(it => it.currency))].filter(c => SPLIT_CURRENCIES.includes(c));
+  const hasSplit = activeCurrencies.length > 0;
+
+  // Per-currency per-pax and group costs (in original currency, no conversion)
+  const computeByCurrency = (cur) => {
+    const curPaxItems = paxItems.filter(it => it.currency === cur);
+    const curGroupItems = groupItems.filter(it => it.currency === cur && it.subType !== 'guide_hotel');
+    const perPaxDbl = curPaxItems.reduce((sum, it) => sum + evalAmount(it.subType === 'hotel'
+      ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
+      : it.costDbl), 0);
+    const perPaxSngl = curPaxItems.reduce((sum, it) => sum + evalAmount(it.subType === 'hotel'
+      ? ((evalAmount(it.pricePerNightSngl) + evalAmount(it.cityTaxSngl || it.cityTax)) * (parseFloat(it.nights) || 0))
+      : (it.costSngl || it.costDbl)), 0);
+    const groupTotal = curGroupItems.reduce((sum, it) => sum + evalAmount(it.groupCost), 0);
+    const snglSupp = perPaxSngl - perPaxDbl;
+    const focPool = perPaxDbl;
+    const rows = paxCounts.map(pax => {
+      const groupPerPax = groupTotal / pax;
+      const costDbl = groupPerPax + perPaxDbl;
+      const marginAmount = costDbl * (margin / 100);
+      const sellingBeforeFoc = costDbl + marginAmount;
+      const focShare = focPool / pax;
+      const finalDbl = sellingBeforeFoc + focShare;
+      const finalSngl = finalDbl + snglSupp;
+      return { pax, groupPerPax, costDbl, marginAmount, focShare, finalDbl, finalSngl };
+    });
+    return { cur, perPaxDbl, perPaxSngl, groupTotal, snglSupp, rows };
+  };
+
+  // EUR-only items (currency === EUR or not in SPLIT_CURRENCIES)
+  const computeEurOnly = () => {
+    const eurPaxItems = paxItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency));
+    const eurGroupItems = groupItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency) && it.subType !== 'guide_hotel');
+    const perPaxDbl = eurPaxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostDbl(it), it.currency), 0);
+    const perPaxSngl = eurPaxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostSngl(it), it.currency), 0);
+    const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEURWithRates(evalAmount(it.groupCost), it.currency), 0)
+      + guideHotelTotalEUR;
+    const snglSupp = perPaxSngl - perPaxDbl;
+    const focPool = perPaxDbl;
+    const rows = paxCounts.map(pax => {
+      const groupPerPax = groupTotal / pax;
+      const costDbl = groupPerPax + perPaxDbl;
+      const marginAmount = costDbl * (margin / 100);
+      const sellingBeforeFoc = costDbl + marginAmount;
+      const focShare = focPool / pax;
+      const finalDbl = sellingBeforeFoc + focShare;
+      const finalSngl = finalDbl + snglSupp;
+      return { pax, groupPerPax, costDbl, marginAmount, focShare, finalDbl, finalSngl };
+    });
+    return { cur: 'EUR', perPaxDbl, perPaxSngl, groupTotal, snglSupp, rows };
+  };
+
+  const splitData = showSplit && hasSplit
+    ? [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()]
+    : null;
+
   const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
 
   const rows = paxCounts.map(pax => {
@@ -562,39 +622,86 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       </div>
 
       <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem', overflowX: 'auto' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>💰 Selling price per pax (EUR)</div>
-        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
-          Hotels/tickets per pax (DBL): {perPaxDblEUR.toFixed(2)} EUR · (SNGL): {perPaxSnglEUR.toFixed(2)} EUR · SNGL supplement: {snglSupplementEUR.toFixed(2)} EUR · Group costs total: {groupTotalEUR.toFixed(2)} EUR · FOC cost pool/person: {focPoolEUR.toFixed(2)} EUR
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>💰 Selling price per pax</div>
+          {hasSplit && (
+            <button onClick={() => setShowSplit(s => !s)} style={{ padding: '5px 12px', background: showSplit ? colors.primary : colors.white, color: showSplit ? colors.white : colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+              {showSplit ? '📊 Zobrazit celkem (EUR)' : `📊 Rozdělit podle měn (${activeCurrencies.join(' + ')} + EUR)`}
+            </button>
+          )}
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
-              <th style={{ textAlign: 'left', padding: '6px 8px' }}>Pax</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>Group cost/pax</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>+ Hotel/tickets (DBL)</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>= Cost/pax (DBL)</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>+ Margin ({margin}%)</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px' }}>+ FOC share</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>= Price/pax DBL</th>
-              <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>Price/pax SNGL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.pax} style={{ borderBottom: `1px solid ${colors.border}` }}>
-                <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.pax} + 1 FOC</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.groupPerPax.toFixed(2)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{perPaxDblEUR.toFixed(2)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.costDbl.toFixed(2)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.marginAmount.toFixed(2)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.focShare.toFixed(2)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>{r.finalDbl.toFixed(2)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>{r.finalSngl.toFixed(2)}</td>
-              </tr>
+
+        {!showSplit ? (
+          <>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+              Hotels/tickets per pax (DBL): {perPaxDblEUR.toFixed(2)} EUR · (SNGL): {perPaxSnglEUR.toFixed(2)} EUR · SNGL supplement: {snglSupplementEUR.toFixed(2)} EUR · Group costs total: {groupTotalEUR.toFixed(2)} EUR
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
+                  <th style={{ textAlign: 'left', padding: '6px 8px' }}>Pax</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px' }}>Group cost/pax</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px' }}>+ Hotel/tickets (DBL)</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px' }}>= Cost/pax (DBL)</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px' }}>+ Margin ({margin}%)</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px' }}>+ FOC share</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>= Price/pax DBL</th>
+                  <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 700 }}>Price/pax SNGL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.pax} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.pax} + 1 FOC</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.groupPerPax.toFixed(2)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{perPaxDblEUR.toFixed(2)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.costDbl.toFixed(2)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.marginAmount.toFixed(2)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.focShare.toFixed(2)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>{r.finalDbl.toFixed(2)}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>{r.finalSngl.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rows.length === 0 && <div style={{ color: colors.muted, fontSize: 13 }}>Add cost items and pax sizes to see the calculation.</div>}
+          </>
+        ) : (
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            {splitData.map(({ cur, perPaxDbl, groupTotal, snglSupp, rows: sRows }) => (
+              <div key={cur} style={{ flex: '1 1 300px', minWidth: 280 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 6, padding: '4px 10px', background: cur === 'EUR' ? '#EAF3DE' : '#E3F2FD', borderRadius: 6, display: 'inline-block' }}>
+                  {cur === 'EUR' ? '🇪🇺' : cur === 'CHF' ? '🇨🇭' : '🇬🇧'} Cena v {cur}
+                </div>
+                <div style={{ fontSize: 11, color: colors.muted, marginBottom: 8 }}>
+                  Hotel/vstupenky/pax (DBL): {perPaxDbl.toFixed(2)} · Group costs: {groupTotal.toFixed(2)} · SNGL příplatek: {snglSupp.toFixed(2)}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
+                      <th style={{ textAlign: 'left', padding: '5px 6px' }}>Pax</th>
+                      <th style={{ textAlign: 'right', padding: '5px 6px' }}>+Marže</th>
+                      <th style={{ textAlign: 'right', padding: '5px 6px' }}>+FOC</th>
+                      <th style={{ textAlign: 'right', padding: '5px 6px', fontWeight: 700 }}>DBL {cur}</th>
+                      <th style={{ textAlign: 'right', padding: '5px 6px', fontWeight: 700 }}>SNGL {cur}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sRows.map(r => (
+                      <tr key={r.pax} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                        <td style={{ padding: '5px 6px', fontWeight: 600 }}>{r.pax}+1</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right' }}>{r.marginAmount.toFixed(2)}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right' }}>{r.focShare.toFixed(2)}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>{r.finalDbl.toFixed(2)}</td>
+                        <td style={{ padding: '5px 6px', textAlign: 'right', fontWeight: 700, color: '#dc2626' }}>{r.finalSngl.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && <div style={{ color: colors.muted, fontSize: 13 }}>Add cost items and pax sizes to see the calculation.</div>}
+          </div>
+        )}
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
