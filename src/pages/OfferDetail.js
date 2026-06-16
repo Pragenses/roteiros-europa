@@ -283,7 +283,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                        <input type="date" value={it.dateFrom || ''} onChange={e => {
+                        <input type="date" defaultValue={it.dateFrom || ''} onBlur={e => {
                           const val = e.target.value;
                           updateItem(it.id, 'dateFrom', val);
                           if (val && it.dateTo && val.length === 10 && it.dateTo.length === 10) {
@@ -291,7 +291,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} style={iStyle} title="Date from" />
-                        <input type="date" value={it.dateTo || ''} onChange={e => {
+                        <input type="date" defaultValue={it.dateTo || ''} onBlur={e => {
                           const val = e.target.value;
                           updateItem(it.id, 'dateTo', val);
                           if (val && it.dateFrom && val.length === 10 && it.dateFrom.length === 10) {
