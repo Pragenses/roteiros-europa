@@ -274,9 +274,25 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   <div>
                     <input type="text" placeholder={isHotel ? 'e.g. Hotel Kopthorne Tara' : isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                        <input type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} style={iStyle} title="Date from" />
-                        <input type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} style={iStyle} title="Date to" />
+                      <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
+                        <input type="date" value={it.dateFrom || ''} onChange={e => {
+                          updateItem(it.id, 'dateFrom', e.target.value);
+                          if (it.dateTo && e.target.value) {
+                            const nights = Math.round((new Date(it.dateTo) - new Date(e.target.value)) / 86400000);
+                            if (nights > 0) updateItem(it.id, 'nights', String(nights));
+                          }
+                        }} style={iStyle} title="Date from" />
+                        <input type="date" value={it.dateTo || ''} onChange={e => {
+                          updateItem(it.id, 'dateTo', e.target.value);
+                          if (it.dateFrom && e.target.value) {
+                            const nights = Math.round((new Date(e.target.value) - new Date(it.dateFrom)) / 86400000);
+                            if (nights > 0) updateItem(it.id, 'nights', String(nights));
+                          }
+                        }} style={iStyle} title="Date to" />
+                        {it.dateFrom && it.dateTo && (() => {
+                          const n = Math.round((new Date(it.dateTo) - new Date(it.dateFrom)) / 86400000);
+                          return n > 0 ? <span style={{ fontSize: 11, color: colors.primary, fontWeight: 600, whiteSpace: 'nowrap', alignSelf: 'center' }}>{n} {n === 1 ? 'noc' : n < 5 ? 'noci' : 'nocí'}</span> : null;
+                        })()}
                       </div>
                     )}
                   </div>
