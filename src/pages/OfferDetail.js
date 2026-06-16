@@ -99,6 +99,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       const data = snap.data();
       setOffer({ id: snap.id, ...data });
       setItems(data.items || []);
+      setLastSavedItems(data.items || []);
       setMargin(data.margin ?? 15);
       setPaxList(data.paxList || '15,20,25,30,35');
     }
@@ -310,12 +311,24 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     setItems(items.filter(it => it.id !== id));
   };
 
+  const [lastSavedItems, setLastSavedItems] = useState(null);
+
   const handleSave = async () => {
+    // Safety: never save while data is still loading
+    if (loading) {
+      alert('Data se ještě načítají — počkejte prosím.');
+      return;
+    }
+    // Safety: warn if saving empty items when we had items before
+    if (items.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
+      if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) return;
+    }
     setSaving(true);
     await updateDoc(doc(db, 'offers', offerId), {
       items, margin: parseFloat(margin) || 0, paxList,
       updatedAt: new Date().toISOString(),
     });
+    setLastSavedItems(items);
     setSaving(false);
   };
 
@@ -626,7 +639,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <div>{lbl('Pax sizes to calculate (comma-separated)')}<input type="text" value={paxList} onChange={e => setPaxList(e.target.value)} style={iStyle} /></div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <button onClick={handleSave} disabled={saving} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: saving ? 0.6 : 1 }}>
+          <button onClick={handleSave} disabled={saving || loading} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: (saving || loading) ? 0.6 : 1 }}>
             {saving ? 'Saving...' : '💾 Save offer'}
           </button>
           <div style={{ fontSize: 12, color: colors.muted }}>
