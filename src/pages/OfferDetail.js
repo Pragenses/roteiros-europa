@@ -238,6 +238,23 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     setItems(newItems);
   };
 
+  const dragItem = React.useRef(null);
+  const dragOverItem = React.useRef(null);
+
+  const handleDragStart = (idx) => { dragItem.current = idx; };
+  const handleDragEnter = (idx) => { dragOverItem.current = idx; };
+  const handleDragEnd = () => {
+    const from = dragItem.current;
+    const to = dragOverItem.current;
+    if (from === null || to === null || from === to) { dragItem.current = null; dragOverItem.current = null; return; }
+    const newItems = [...items];
+    const dragged = newItems.splice(from, 1)[0];
+    newItems.splice(to, 0, dragged);
+    setItems(newItems);
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+
   const updateItem = (id, field, value) => {
     setItems(items.map(it => it.id === id ? { ...it, [field]: value } : it));
   };
@@ -397,13 +414,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const isEnabled = it.enabled !== false;
               const rowBg = isGuideHotel ? '#FCE4EC' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               return (
-                <div key={it.id} ref={it.id === newItemId ? newItemRef : null} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth, opacity: isEnabled ? 1 : 0.45 }}>
+                <div key={it.id} ref={it.id === newItemId ? newItemRef : null}
+                  draggable
+                  onDragStart={() => handleDragStart(idx)}
+                  onDragEnter={() => handleDragEnter(idx)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={e => e.preventDefault()}
+                  style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth, opacity: isEnabled ? 1 : 0.45, cursor: 'grab' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-                    <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)} title={isEnabled ? 'Incluído no cálculo (clique para excluir)' : 'Excluído do cálculo (clique para incluir)'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} title="Move up" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? colors.border : colors.muted }}>▲</button>
-                      <button onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1} title="Move down" style={{ padding: '4px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: idx === items.length - 1 ? 'default' : 'pointer', color: idx === items.length - 1 ? colors.border : colors.muted }}>▼</button>
-                    </div>
+                    <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                    <span title="Přetáhněte pro přesunutí" style={{ fontSize: 14, color: colors.muted, cursor: 'grab', lineHeight: 1, userSelect: 'none' }}>⠿</span>
                   </div>
                   <div>
                     {isHotel ? (
