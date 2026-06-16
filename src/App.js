@@ -62,11 +62,17 @@ export default function App() {
     }
   };
 
+  const ALLOWED_EMAILS = ['helena.maria.brito@gmail.com', 'filipdlask@gmail.com'];
+
   const handleGoogleLogin = async () => {
     setLoginError('');
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      if (!ALLOWED_EMAILS.includes(result.user.email)) {
+        await signOut(auth);
+        setLoginError('Přístup zamítnut. Tento účet nemá oprávnění.');
+      }
     } catch (err) {
       setLoginError('Google přihlášení selhalo: ' + err.message);
     }
