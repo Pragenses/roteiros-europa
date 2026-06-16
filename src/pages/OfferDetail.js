@@ -83,73 +83,83 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
   const [itineraryText, setItineraryText] = useState('');
-  const [parsingItinerary, setParsingItinerary] = useState(false);
   const [parseError, setParseError] = useState('');
 
   const toEURWithRates = (amount, currency) => toEUR(amount, currency, rates);
 
-  const handleParseItinerary = async () => {
-    setParsingItinerary(true);
+  const CITY_PT = {
+    'MUNICH': 'Munique', 'MÜNCHEN': 'Munique', 'SALZBURG': 'Salzburgo', 'SALSBURG': 'Salzburgo',
+    'INNSBRUCK': 'Innsbruck', 'FUSSEN': 'Füssen', 'FÜSSEN': 'Füssen', 'BERN': 'Berna',
+    'GRINDELWALD': 'Grindelwald', 'ST. MORITZ': 'St. Moritz', 'SAINT MORITZ': 'St. Moritz',
+    'BOLZANO': 'Bolzano', 'BOLSANO': 'Bolzano', 'MILAN': 'Milão', 'MILANO': 'Milão',
+    'VIENNA': 'Viena', 'WIEN': 'Viena', 'PRAGUE': 'Praga', 'PRAHA': 'Praga',
+    'BUDAPEST': 'Budapeste', 'WARSAW': 'Varsóvia', 'WARSZAWA': 'Varsóvia',
+    'KRAKOW': 'Cracóvia', 'KRAKÓW': 'Cracóvia', 'BERLIN': 'Berlim', 'FRANKFURT': 'Frankfurt',
+    'HAMBURG': 'Hamburgo', 'COLOGNE': 'Colônia', 'KÖLN': 'Colônia', 'DRESDEN': 'Dresden',
+    'AMSTERDAM': 'Amsterdã', 'BRUSSELS': 'Bruxelas', 'BRUXELLES': 'Bruxelas',
+    'BRUGES': 'Bruges', 'PARIS': 'Paris', 'LYON': 'Lyon', 'NICE': 'Nice',
+    'ROME': 'Roma', 'ROMA': 'Roma', 'FLORENCE': 'Florença', 'FIRENZE': 'Florença',
+    'VENICE': 'Veneza', 'VENEZIA': 'Veneza', 'NAPLES': 'Nápoles', 'NAPOLI': 'Nápoles',
+    'BARCELONA': 'Barcelona', 'MADRID': 'Madrid', 'SEVILLE': 'Sevilha', 'SEVILLA': 'Sevilha',
+    'LISBON': 'Lisboa', 'LISBOA': 'Lisboa', 'PORTO': 'Porto',
+    'LONDON': 'Londres', 'EDINBURGH': 'Edimburgo', 'DUBLIN': 'Dublin',
+    'ZURICH': 'Zurique', 'ZÜRICH': 'Zurique', 'GENEVA': 'Genebra', 'GENÈVE': 'Genebra',
+    'LUCERNE': 'Lucerna', 'LUZERN': 'Lucerna', 'INTERLAKEN': 'Interlaken',
+    'STOCKHOLM': 'Estocolmo', 'OSLO': 'Oslo', 'COPENHAGEN': 'Copenhague',
+    'HELSINKI': 'Helsinque', 'TALLINN': 'Tallinn', 'RIGA': 'Riga', 'VILNIUS': 'Vilnius',
+    'ATHENS': 'Atenas', 'ATENAS': 'Atenas', 'SANTORINI': 'Santorini',
+    'ISTANBUL': 'Istambul', 'DUBROVNIK': 'Dubrovnik', 'SPLIT': 'Split',
+    'BELGRADE': 'Belgrado', 'BEOGRAD': 'Belgrado', 'SOFIA': 'Sofia',
+    'BUCHAREST': 'Bucareste', 'BUCURESTI': 'Bucareste', 'CZESTOCHOWA': 'Czestochowa',
+    'VADUZ': 'Vaduz', 'LUXEMBOURG': 'Luxemburgo',
+  };
+
+  const handleParseItinerary = () => {
     setParseError('');
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1000,
-          messages: [{
-            role: 'user',
-            content: `Parse the following travel itinerary text and return ONLY a JSON array of hotel objects. Each object must have:
-- "city": city name translated to Brazilian Portuguese (e.g. "Munique", "Salzburgo", "Innsbruck", "Bolzano", "Milão", "Berna", "Fussen" stays as "Füssen", etc.)
-- "name": hotel name if mentioned, otherwise empty string ""
-- "dateFrom": date in YYYY-MM-DD format
-- "dateTo": date in YYYY-MM-DD format
-- "nights": number of nights (integer)
+    const lines = itineraryText.split('\n').map(l => l.trim()).filter(l => l);
+    const datePattern = /(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s*[-–—]\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s+(.+)/;
+    const newHotels = [];
 
-Ignore any notes like "obeslano", "FD", email addresses, phone numbers etc.
-Return ONLY the JSON array, no other text.
+    for (const line of lines) {
+      const m = line.match(datePattern);
+      if (!m) continue;
+      const [, d1, mo1, y1, d2, mo2, y2, rest] = m;
+      const dateFrom = `${y1}-${mo1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+      const dateTo = `${y2}-${mo2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+      const nights = Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000);
 
-Text:
-${itineraryText}`
-          }]
-        })
-      });
-      const data = await response.json();
-      const text = data.content?.[0]?.text || '';
-      const clean = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
-      if (!Array.isArray(parsed)) throw new Error('Neplatný formát odpovědi');
+      // Extract city (first word(s) in uppercase before any lowercase text/hotel name)
+      const cityRaw = rest.trim().toUpperCase().split(/\s{2,}|\s+-\s+/)[0].trim();
+      const cityPT = CITY_PT[cityRaw] || (cityRaw.charAt(0) + cityRaw.slice(1).toLowerCase());
 
-      const newHotels = parsed.map(h => ({
+      // Hotel name: anything after double space or dash
+      const hotelMatch = rest.match(/^[A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.]+?\s{2,}(.+)/) ||
+                         rest.match(/^[A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.]+?\s+-\s+(.+)/);
+      const hotelName = hotelMatch ? hotelMatch[1].trim() : '';
+
+      newHotels.push({
         id: Date.now() + Math.random(),
-        name: h.name || '',
-        city: h.city || '',
-        type: 'per_pax',
-        subType: 'hotel',
-        enabled: true,
-        costDbl: '', costSngl: '',
-        pricePerNightDbl: '', pricePerNightSngl: '',
-        nights: String(h.nights || ''),
-        cityTax: '', cityTaxSngl: '',
-        guideOverride: '',
-        dateFrom: h.dateFrom || '',
-        dateTo: h.dateTo || '',
-        groupCost: '',
-        currency: 'EUR'
-      }));
-
-      // Insert new hotels after existing hotels
-      const existingItems = [...items];
-      const lastHotelIdx = existingItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
-      const insertAt = lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0;
-      existingItems.splice(insertAt, 0, ...newHotels);
-      setItems(existingItems);
-      setItineraryText('');
-    } catch (err) {
-      setParseError('Chyba při zpracování: ' + err.message);
+        name: hotelName,
+        city: cityPT,
+        type: 'per_pax', subType: 'hotel', enabled: true,
+        costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '',
+        nights: nights > 0 ? String(nights) : '',
+        cityTax: '', cityTaxSngl: '', guideOverride: '',
+        dateFrom, dateTo, groupCost: '', currency: 'EUR'
+      });
     }
-    setParsingItinerary(false);
+
+    if (newHotels.length === 0) {
+      setParseError('Nepodařilo se rozpoznat žádné řádky. Zkontrolujte formát: DD.MM.YYYY – DD.MM.YYYY MĚSTO');
+      return;
+    }
+
+    const existingItems = [...items];
+    const lastHotelIdx = existingItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+    const insertAt = lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0;
+    existingItems.splice(insertAt, 0, ...newHotels);
+    setItems(existingItems);
+    setItineraryText('');
   };
 
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
@@ -323,9 +333,9 @@ ${itineraryText}`
         <textarea value={itineraryText} onChange={e => setItineraryText(e.target.value)} rows={5}
           placeholder={"18.5.2027 – 21.5.2027 MUNICH\n21.5.2027 – 23.5.2027 SALZBURG\n23.5.2027 – 24.5.2027 INNSBRUCK"}
           style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
-        <button onClick={handleParseItinerary} disabled={parsingItinerary || !itineraryText.trim()}
-          style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: parsingItinerary ? 0.6 : 1 }}>
-          {parsingItinerary ? '⏳ Zpracovávám...' : '✨ Vytvořit hotely z textu'}
+        <button onClick={handleParseItinerary} disabled={!itineraryText.trim()}
+          style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+          ✨ Vytvořit hotely z textu
         </button>
         {parseError && <div style={{ fontSize: 12, color: colors.danger, marginTop: 8 }}>{parseError}</div>}
       </div>
