@@ -250,7 +250,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Cost items</div>
         {(() => {
-          const totalNights = activeItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
+          const totalNights = offer.startDate && offer.endDate && offer.startDate.length === 10 && offer.endDate.length === 10
+            ? Math.round((new Date(offer.endDate) - new Date(offer.startDate)) / 86400000)
+            : activeItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
           return totalNights > 0 ? (
             <div style={{ fontSize: 13, color: colors.primary, fontWeight: 600, marginBottom: 10, padding: '6px 10px', background: '#FFFDE7', borderRadius: 7, display: 'inline-block' }}>
               🏨 Celkem nocí: {totalNights}
