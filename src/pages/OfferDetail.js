@@ -130,6 +130,25 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
+  // Autosave every 30 seconds — only when data is loaded and items exist
+  const [lastAutoSave, setLastAutoSave] = useState(null);
+  useEffect(() => {
+    if (loading) return;
+    const interval = setInterval(async () => {
+      if (loading || items.length === 0) return;
+      try {
+        await updateDoc(doc(db, 'offers', offerId), {
+          items, margin: parseFloat(margin) || 0, paxList,
+          updatedAt: new Date().toISOString(),
+        });
+        setLastAutoSave(new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      } catch (err) {
+        console.error('Autosave failed:', err);
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [loading, items, margin, paxList, offerId]);
+
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
 
@@ -642,6 +661,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <button onClick={handleSave} disabled={saving || loading} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: (saving || loading) ? 0.6 : 1 }}>
             {saving ? 'Saving...' : '💾 Save offer'}
           </button>
+          {lastAutoSave && <div style={{ fontSize: 11, color: colors.muted }}>✓ Automaticky uloženo v {lastAutoSave}</div>}
           <div style={{ fontSize: 12, color: colors.muted }}>
             Exchange rates (→ EUR){ratesUpdatedAt ? ` · ECB ${ratesUpdatedAt}` : ''}: {Object.entries(rates).map(([c, r]) => `${c} ${r.toFixed(4)}`).join(' · ')}
           </div>
