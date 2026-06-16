@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { auth } from './lib/firebase';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import Dashboard from './pages/Dashboard';
 import Clients from './pages/Clients';
 import Orders from './pages/Orders';
@@ -62,6 +62,16 @@ export default function App() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setLoginError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setLoginError('Google přihlášení selhalo: ' + err.message);
+    }
+  };
+
   const handleLogout = () => signOut(auth);
 
   const navigate = (p, data) => {
@@ -101,6 +111,15 @@ export default function App() {
             Sign in
           </button>
         </form>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0' }}>
+          <div style={{ flex: 1, height: 1, background: COLORS.border }} />
+          <span style={{ fontSize: 12, color: COLORS.muted }}>nebo</span>
+          <div style={{ flex: 1, height: 1, background: COLORS.border }} />
+        </div>
+        <button onClick={handleGoogleLogin} style={{ width: '100%', padding: '10px', background: COLORS.white, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 7, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#4285F4" d="M44.5 20H24v8.5h11.7C34.3 33.1 29.8 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 7.9 2.9l6-6C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.2-4z"/></svg>
+          Přihlásit se přes Google
+        </button>
       </div>
     </div>
   );
