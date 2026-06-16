@@ -284,17 +284,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
                         <input type="date" value={it.dateFrom || ''} onChange={e => {
-                          updateItem(it.id, 'dateFrom', e.target.value);
-                          if (it.dateTo && e.target.value) {
-                            const nights = Math.round((new Date(it.dateTo) - new Date(e.target.value)) / 86400000);
-                            if (nights > 0) updateItem(it.id, 'nights', String(nights));
+                          const val = e.target.value;
+                          updateItem(it.id, 'dateFrom', val);
+                          if (val && it.dateTo && val.length === 10 && it.dateTo.length === 10) {
+                            const n = Math.round((new Date(it.dateTo) - new Date(val)) / 86400000);
+                            if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} style={iStyle} title="Date from" />
                         <input type="date" value={it.dateTo || ''} onChange={e => {
-                          updateItem(it.id, 'dateTo', e.target.value);
-                          if (it.dateFrom && e.target.value) {
-                            const nights = Math.round((new Date(e.target.value) - new Date(it.dateFrom)) / 86400000);
-                            if (nights > 0) updateItem(it.id, 'nights', String(nights));
+                          const val = e.target.value;
+                          updateItem(it.id, 'dateTo', val);
+                          if (val && it.dateFrom && val.length === 10 && it.dateFrom.length === 10) {
+                            const n = Math.round((new Date(val) - new Date(it.dateFrom)) / 86400000);
+                            if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} style={iStyle} title="Date to" />
                         {it.dateFrom && it.dateTo && (() => {
