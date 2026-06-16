@@ -35,6 +35,37 @@ const FormulaField = ({ value, onChange, placeholder, colors }) => {
   );
 };
 
+// Date input in DD.MM.YYYY order — always consistent regardless of browser/OS locale
+const DateDMY = ({ value, onChange, colors }) => {
+  const parts = value && value.length === 10 ? value.split('-') : ['', '', ''];
+  const yyyy = parts[0], mm = parts[1], dd = parts[2];
+  const iStyle = { padding: '6px 4px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', textAlign: 'center' };
+
+  const emit = (newDd, newMm, newYyyy) => {
+    if (newDd.length === 2 && newMm.length === 2 && newYyyy.length === 4) {
+      onChange(`${newYyyy}-${newMm}-${newDd}`);
+    } else {
+      onChange('');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      <input type="text" inputMode="numeric" maxLength={2} placeholder="DD" defaultValue={dd}
+        onBlur={e => emit(e.target.value.padStart(2,'0'), mm, yyyy)}
+        style={{ ...iStyle, width: 34 }} />
+      <span style={{ color: colors.muted, fontSize: 12 }}>.</span>
+      <input type="text" inputMode="numeric" maxLength={2} placeholder="MM" defaultValue={mm}
+        onBlur={e => emit(dd, e.target.value.padStart(2,'0'), yyyy)}
+        style={{ ...iStyle, width: 34 }} />
+      <span style={{ color: colors.muted, fontSize: 12 }}>.</span>
+      <input type="text" inputMode="numeric" maxLength={4} placeholder="RRRR" defaultValue={yyyy}
+        onBlur={e => emit(dd, mm, e.target.value)}
+        style={{ ...iStyle, width: 48 }} />
+    </div>
+  );
+};
+
 export default function OfferDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
@@ -360,8 +391,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <div>{lbl('Start date')}<input type="date" defaultValue={offer.startDate} onBlur={e => handleHeaderChange('startDate', e.target.value)} style={iStyle} /></div>
-          <div>{lbl('End date')}<input type="date" defaultValue={offer.endDate} onBlur={e => handleHeaderChange('endDate', e.target.value)} style={iStyle} /></div>
+          <div>{lbl('Start date')}<DateDMY value={offer.startDate || ''} onChange={v => handleHeaderChange('startDate', v)} colors={colors} /></div>
+          <div>{lbl('End date')}<DateDMY value={offer.endDate || ''} onChange={v => handleHeaderChange('endDate', v)} colors={colors} /></div>
           <div>{lbl('Status')}
             <select defaultValue={offer.status || 'draft'} onChange={e => handleHeaderChange('status', e.target.value)} style={iStyle}>
               {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -436,20 +467,20 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     )}
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                        <input key={`df-${it.id}`} type="date" value={it.dateFrom || ''} onChange={e => updateItem(it.id, 'dateFrom', e.target.value)} onBlur={e => {
-                          const val = e.target.value;
-                          if (val && it.dateTo && val.length === 10 && it.dateTo.length === 10) {
-                            const n = Math.round((new Date(it.dateTo) - new Date(val)) / 86400000);
+                        <DateDMY value={it.dateFrom || ''} colors={colors} onChange={v => {
+                          updateItem(it.id, 'dateFrom', v);
+                          if (v && it.dateTo && v.length === 10 && it.dateTo.length === 10) {
+                            const n = Math.round((new Date(it.dateTo) - new Date(v)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
-                        }} style={iStyle} title="Date from" />
-                        <input key={`dt-${it.id}`} type="date" value={it.dateTo || ''} onChange={e => updateItem(it.id, 'dateTo', e.target.value)} onBlur={e => {
-                          const val = e.target.value;
-                          if (val && it.dateFrom && val.length === 10 && it.dateFrom.length === 10) {
-                            const n = Math.round((new Date(val) - new Date(it.dateFrom)) / 86400000);
+                        }} />
+                        <DateDMY value={it.dateTo || ''} colors={colors} onChange={v => {
+                          updateItem(it.id, 'dateTo', v);
+                          if (v && it.dateFrom && v.length === 10 && it.dateFrom.length === 10) {
+                            const n = Math.round((new Date(v) - new Date(it.dateFrom)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
-                        }} style={iStyle} title="Date to" />
+                        }} />
                         {it.dateFrom && it.dateTo && (() => {
                           const n = Math.round((new Date(it.dateTo) - new Date(it.dateFrom)) / 86400000);
                           return n > 0 ? <span style={{ fontSize: 11, color: colors.primary, fontWeight: 600, whiteSpace: 'nowrap', alignSelf: 'center' }}>{n} {n === 1 ? 'noc' : n < 5 ? 'noci' : 'nocí'}</span> : null;
