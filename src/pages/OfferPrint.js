@@ -143,13 +143,12 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       <style>{`
         @media print {
           .op-no-print { display: none !important; }
-          /* Hide the sidebar/nav when printing */
-          nav, aside, [class*="sidebar"], [class*="nav"], [class*="menu"] { display: none !important; }
-          body > div > div:first-child { display: none !important; }
-          @page { size: A4; margin: 32mm 18mm 22mm 18mm; }
+          .app-sidebar { display: none !important; }
+          .app-main { padding: 0 !important; }
+          @page { size: A4; margin: 0; }
           .op-cover { page-break-after: always; }
           .op-section { page-break-inside: avoid; }
-          .op-page-frame { box-shadow: none !important; margin: 0 !important; max-width: 100% !important; width: 100% !important; }
+          .op-page-frame { box-shadow: none !important; margin: 0 !important; max-width: 100% !important; width: 100% !important; padding: 32mm 18mm 22mm 18mm !important; min-height: 297mm; }
         }
         @media screen {
           .op-page-frame { max-width: 800px; margin: 0 auto 24px; background: #fff; box-shadow: 0 0 12px rgba(0,0,0,0.12); padding: 32mm 18mm 22mm 18mm; box-sizing: border-box; position: relative; min-height: 1000px; overflow: hidden; }
@@ -175,10 +174,6 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
         <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir / Salvar PDF</button>
-        <a href={`mailto:${clientEmail}?subject=${emailSubject}&body=${emailBody}`}
-          style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, textDecoration: 'none', fontSize: 14 }}>
-          ✉️ Enviar por email
-        </a>
         {createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
 
@@ -195,7 +190,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <PageChrome />
         <div className="op-page-content">
         <h2 style={{ marginTop: 0, color: '#0c447c', fontSize: 20 }}>{offer.name}</h2>
-        {createdDate && <p style={{ fontSize: 11, color: '#999', marginTop: -8 }}>Proposta elaborada em: {createdDate}</p>}
+        {createdDate && <p style={{ fontSize: 11, color: '#999', marginTop: 8 }}>Proposta elaborada em: {createdDate}</p>}
         {offer.destinations && <p><b>Destinos:</b> {offer.destinations}</p>}
         {(offer.startDate || offer.endDate) && <p><b>Período:</b> {fmtDate(offer.startDate)} {offer.endDate ? `a ${fmtDate(offer.endDate)}` : ''}</p>}
 
