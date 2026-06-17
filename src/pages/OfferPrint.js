@@ -278,7 +278,9 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => (
               <li key={it.id}>{it.name}</li>
             ))}
-            {guideHotels.length > 0 && <li>Acompanhamento de guia durante todo o roteiro, incluindo hospedagem</li>}
+            {guideHotels.length > 0 && guideHotels.map(it => (
+              <li key={it.id}>{it.name || 'Acompanhamento de guia/motorista, incluindo hospedagem'}</li>
+            ))}
             {tickets.map(it => (
               <li key={it.id}>1x {it.name}</li>
             ))}
