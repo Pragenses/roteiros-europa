@@ -85,6 +85,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
   const [items, setItems] = useState([]);
+  const [isLocked, setIsLocked] = useState(false);
+  const [showLockDialog, setShowLockDialog] = useState(false);
+  const [showUnlockDialog, setShowUnlockDialog] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
   const [margin, setMargin] = useState(15);
   const [paxList, setPaxList] = useState('15,20,25,30,35');
   const [rates, setRates] = useState(DEFAULT_RATES);
@@ -100,6 +105,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       setOffer({ id: snap.id, ...data });
       setItems(data.items || []);
       setLastSavedItems(data.items || []);
+      setIsLocked(data.locked || false);
       setMargin(data.margin ?? 15);
       setPaxList(data.paxList || '15,20,25,30,35');
     }
@@ -135,7 +141,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   useEffect(() => {
     if (loading) return;
     const interval = setInterval(async () => {
-      if (loading || items.length === 0) return;
+      if (loading || isLocked || items.length === 0) return;
       try {
         await updateDoc(doc(db, 'offers', offerId), {
           items, margin: parseFloat(margin) || 0, paxList,
@@ -153,6 +159,33 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [parseError, setParseError] = useState('');
 
   const toEURWithRates = (amount, currency) => toEUR(amount, currency, rates);
+
+  const hashPin = (pin) => {
+    // Simple hash — not cryptographic but sufficient for this use case
+    let h = 0;
+    for (let i = 0; i < pin.length; i++) { h = (Math.imul(31, h) + pin.charCodeAt(i)) | 0; }
+    return String(h);
+  };
+
+  const handleLock = async () => {
+    if (!pinInput || pinInput.length < 4) { setPinError('Zadejte minimálně 4 znaky.'); return; }
+    await updateDoc(doc(db, 'offers', offerId), { locked: true, pinHash: hashPin(pinInput), updatedAt: new Date().toISOString() });
+    setIsLocked(true);
+    setShowLockDialog(false);
+    setPinInput('');
+    setPinError('');
+  };
+
+  const handleUnlock = async () => {
+    if (hashPin(pinInput) !== offer?.pinHash) { setPinError('Nesprávný PIN.'); return; }
+    await updateDoc(doc(db, 'offers', offerId), { locked: false, updatedAt: new Date().toISOString() });
+    setIsLocked(false);
+    setShowUnlockDialog(false);
+    setPinInput('');
+    setPinError('');
+  };
+
+
 
   const CITY_PT = {
     'MUNICH': 'Munique', 'MÜNCHEN': 'Munique', 'SALZBURG': 'Salzburgo', 'SALSBURG': 'Salzburgo',
@@ -352,11 +385,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [lastSavedItems, setLastSavedItems] = useState(null);
 
   const handleSave = async () => {
-    // Safety: never save while data is still loading
-    if (loading) {
-      alert('Data se ještě načítají — počkejte prosím.');
-      return;
-    }
+    if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
+    if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
     // Safety: warn if saving empty items when we had items before
     if (items.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
       if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) return;
@@ -497,9 +527,58 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   return (
     <div>
-      <button onClick={() => navigate('offers')} style={{ padding: '6px 14px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', marginBottom: '1rem' }}>
-        ← Back to Offers
-      </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <button onClick={() => navigate('offers')} style={{ padding: '6px 14px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+          ← Back to Offers
+        </button>
+        <button onClick={() => { setPinInput(''); setPinError(''); isLocked ? setShowUnlockDialog(true) : setShowLockDialog(true); }}
+          style={{ padding: '6px 14px', background: isLocked ? '#dc2626' : '#f7f6f3', color: isLocked ? '#fff' : colors.text, border: `1px solid ${isLocked ? '#dc2626' : colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: isLocked ? 700 : 400 }}>
+          {isLocked ? '🔒 Zamčeno — klikněte pro odemčení' : '🔓 Zamknout nabídku (PIN)'}
+        </button>
+      </div>
+
+      {/* Lock dialog */}
+      {showLockDialog && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '2rem', width: 320, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>🔒 Zamknout nabídku</div>
+            <div style={{ fontSize: 13, color: colors.muted, marginBottom: 16 }}>Zadejte PIN (min. 4 znaky). Bez tohoto PIN nebude možné nabídku odemknout a upravovat.</div>
+            <input type="password" value={pinInput} onChange={e => { setPinInput(e.target.value); setPinError(''); }}
+              placeholder="Zadejte PIN" autoFocus
+              style={{ width: '100%', padding: '10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 16, textAlign: 'center', boxSizing: 'border-box', letterSpacing: 6, marginBottom: 8 }} />
+            {pinError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{pinError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleLock} style={{ flex: 1, padding: '10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600 }}>Zamknout</button>
+              <button onClick={() => setShowLockDialog(false)} style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>Zrušit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unlock dialog */}
+      {showUnlockDialog && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '2rem', width: 320, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>🔓 Odemknout nabídku</div>
+            <div style={{ fontSize: 13, color: colors.muted, marginBottom: 16 }}>Zadejte PIN pro odemčení a povolení úprav.</div>
+            <input type="password" value={pinInput} onChange={e => { setPinInput(e.target.value); setPinError(''); }}
+              placeholder="Zadejte PIN" autoFocus
+              onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+              style={{ width: '100%', padding: '10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 16, textAlign: 'center', boxSizing: 'border-box', letterSpacing: 6, marginBottom: 8 }} />
+            {pinError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{pinError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleUnlock} style={{ flex: 1, padding: '10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600 }}>Odemknout</button>
+              <button onClick={() => setShowUnlockDialog(false)} style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>Zrušit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLocked && (
+        <div style={{ background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 10, padding: '12px 16px', marginBottom: '1rem', fontSize: 13, color: '#dc2626', fontWeight: 600 }}>
+          🔒 Tato nabídka je zamčena. Pro úpravy ji odemkněte PINem.
+        </div>
+      )}
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
