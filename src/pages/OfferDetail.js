@@ -885,6 +885,36 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         </div>
       </div>
 
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>Incluído no preço</div>
+          <button onClick={() => {
+            const hotelItems = activeItems.filter(it => it.subType === 'hotel');
+            const ticketItems = activeItems.filter(it => it.subType === 'ticket' && it.name);
+            const groupSvcs = activeItems.filter(it => it.type === 'group' && it.name && it.subType !== 'guide_hotel');
+            const hasTax = hotelItems.some(h => evalAmount(h.cityTax) > 0);
+            const lines = [];
+            if (hotelItems.length > 0) lines.push(`Hospedagem em hotéis selecionados, com café da manhã incluído (${hotelItems.length} ${hotelItems.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)`);
+            if (hasTax) lines.push('Taxas municipais (city tax) dos hotéis');
+            groupSvcs.forEach(it => lines.push(it.name));
+            ticketItems.forEach(it => lines.push(`1x ${it.name}`));
+            lines.push('Assistência da nossa equipe durante toda a viagem');
+            handleHeaderChange('includedText', lines.join('\n'));
+          }} style={{ padding: '5px 12px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+            ↻ Gerar automaticamente
+          </button>
+        </div>
+        <textarea defaultValue={offer.includedText} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
+          placeholder={'Hospedagem em hotéis selecionados...\nTransporte por ônibus panorâmico...\n1x Visita ao Coliseu...'}
+          style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
+      </div>
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Não incluído</div>
+        <textarea defaultValue={offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem'} onBlur={e => handleHeaderChange('notIncludedText', e.target.value)} rows={5}
+          style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
+      </div>
+
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Notes</div>
         <textarea defaultValue={offer.notes} onBlur={e => handleHeaderChange('notes', e.target.value)} rows={3} style={{ ...iStyle, resize: 'vertical', marginBottom: 14 }} />

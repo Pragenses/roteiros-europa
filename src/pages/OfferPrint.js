@@ -146,17 +146,17 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
           .app-main { padding: 0 !important; background: white !important; }
-          @page {
-            size: A4;
-            margin: 28mm 18mm 20mm 18mm;
-          }
+          @page { size: A4; margin: 0; }
+          @page :first { margin: 0; }
           .op-page-frame { display: none !important; }
           .op-print-only { display: block !important; }
-          .op-cover-print { page-break-after: always; }
+          .op-cover-print { page-break-after: always; width: 210mm; height: 297mm; overflow: hidden; }
+          .op-cover-print img { width: 210mm; height: 297mm; object-fit: cover; display: block; }
+          .op-content-print { padding: 22mm 18mm 20mm 18mm; }
           .op-section { page-break-inside: avoid; }
-          .op-print-header { display: flex !important; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; margin-bottom: 12mm; }
+          .op-print-header { display: flex !important; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; margin-bottom: 10mm; }
           .op-print-header img { height: 28px; opacity: 0.55; }
-          .op-print-footer { font-family: Arial, sans-serif; font-size: 9px; color: #999; text-align: center; margin-top: 10mm; border-top: 1px solid #eee; padding-top: 4px; }
+          .op-print-footer { font-family: Arial, sans-serif; font-size: 9px; color: #999; text-align: center; margin-top: 8mm; border-top: 1px solid #eee; padding-top: 3px; }
         }
         @media screen {
           .op-print-only { display: none !important; }
@@ -275,27 +275,11 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <div className="op-section">
           <h2>Incluído no preço</h2>
           <ul>
-            {hotels.length > 0 && (
-              <li>
-                Hospedagem em hotéis selecionados, com café da manhã incluído ({hotels.length} {hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)
-              </li>
-            )}
-            {hasCityTax && <li>Taxas municipais (city tax) dos hotéis</li>}
-            {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => (
-              <li key={it.id}>{it.name}</li>
-            ))}
-            {tickets.map(it => (
-              <li key={it.id}>1x {it.name}</li>
-            ))}
-            <li>Assistência da nossa equipe durante toda a viagem</li>
+            {(offer.includedText || '').split('\n').filter(l => l.trim()).map((line, i) => <li key={i}>{line}</li>)}
           </ul>
           <h3 style={{ marginTop: 14 }}>Não incluído</h3>
           <ul>
-            <li>Voos internacionais e taxas de embarque</li>
-            <li>Bebidas e refeições não mencionadas</li>
-            <li>Gorjetas e despesas de caráter pessoal</li>
-            <li>Maleteiros</li>
-            <li>Seguro viagem</li>
+            {(offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem').split('\n').filter(l => l.trim()).map((line, i) => <li key={i}>{line}</li>)}
           </ul>
         </div>
 
@@ -315,19 +299,13 @@ export default function OfferPrint({ offerId, navigate, colors }) {
 
       {/* PRINT-ONLY VERSION — hidden on screen, shown only when printing */}
       <div className="op-print-only" style={{ fontFamily: 'Arial, sans-serif' }}>
-        {/* Cover page for print */}
+        {/* Cover page for print — full page image only */}
         <div className="op-cover-print">
-          <div className="op-print-header">
-            <div style={{ fontSize: 9, color: '#999', lineHeight: 1.5 }}>
-              TOUR PRAGENSES<br/>www.tour-pragenses.com<br/>+420 777 079 997<br/>info@tour-pragenses.com
-            </div>
-            <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" style={{ height: 28, opacity: 0.55 }} />
-          </div>
-          <img src={coverBase64} alt="" style={{ width: '100%', display: 'block' }} />
+          <img src={coverBase64} alt="" />
         </div>
 
         {/* Content pages for print */}
-        <div>
+        <div className="op-content-print">
           <div className="op-print-header">
             <div style={{ fontSize: 9, color: '#999', lineHeight: 1.5 }}>
               TOUR PRAGENSES<br/>www.tour-pragenses.com<br/>+420 777 079 997<br/>info@tour-pragenses.com
@@ -369,19 +347,11 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           <div className="op-section">
             <h2>Incluído no preço</h2>
             <ul>
-              {hotels.length > 0 && <li>Hospedagem em hotéis selecionados, com café da manhã incluído ({hotels.length} {hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)</li>}
-              {hasCityTax && <li>Taxas municipais (city tax) dos hotéis</li>}
-              {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => <li key={it.id}>{it.name}</li>)}
-              {tickets.map(it => <li key={it.id}>1x {it.name}</li>)}
-              <li>Assistência da nossa equipe durante toda a viagem</li>
+              {(offer.includedText || '').split('\n').filter(l => l.trim()).map((line, i) => <li key={i}>{line}</li>)}
             </ul>
             <h3>Não incluído</h3>
             <ul>
-              <li>Voos internacionais e taxas de embarque</li>
-              <li>Bebidas e refeições não mencionadas</li>
-              <li>Gorjetas e despesas de caráter pessoal</li>
-              <li>Maleteiros</li>
-              <li>Seguro viagem</li>
+              {(offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem').split('\n').filter(l => l.trim()).map((line, i) => <li key={i}>{line}</li>)}
             </ul>
           </div>
 
