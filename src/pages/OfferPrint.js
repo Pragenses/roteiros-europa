@@ -144,27 +144,36 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         @media print {
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
-          .app-main { padding: 0 !important; }
-          @page { size: A4; margin: 0; }
-          .op-cover { page-break-after: always; }
+          .app-main { padding: 0 !important; background: white !important; }
+          @page {
+            size: A4;
+            margin: 28mm 18mm 20mm 18mm;
+          }
+          .op-page-frame { display: none !important; }
+          .op-print-only { display: block !important; }
+          .op-cover-print { page-break-after: always; }
           .op-section { page-break-inside: avoid; }
-          .op-page-frame { box-shadow: none !important; margin: 0 !important; max-width: 100% !important; width: 100% !important; padding: 32mm 18mm 22mm 18mm !important; min-height: 297mm; }
+          .op-print-header { display: flex !important; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; margin-bottom: 12mm; }
+          .op-print-header img { height: 28px; opacity: 0.55; }
+          .op-print-footer { font-family: Arial, sans-serif; font-size: 9px; color: #999; text-align: center; margin-top: 10mm; border-top: 1px solid #eee; padding-top: 4px; }
         }
         @media screen {
+          .op-print-only { display: none !important; }
           .op-page-frame { max-width: 800px; margin: 0 auto 24px; background: #fff; box-shadow: 0 0 12px rgba(0,0,0,0.12); padding: 32mm 18mm 22mm 18mm; box-sizing: border-box; position: relative; min-height: 1000px; overflow: hidden; }
         }
+        /* Shared styles */
         .op-header { position: absolute; top: 8mm; left: 18mm; right: 18mm; display: flex; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; z-index: 1; }
         .op-header img { height: 32px; opacity: 0.55; }
         .op-footer { position: absolute; bottom: 8mm; left: 18mm; right: 18mm; text-align: center; font-family: Arial, sans-serif; font-size: 9px; color: #999; z-index: 1; }
-        .op-watermark { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; object-position: bottom right; pointer-events: none; z-index: 0; }
+        .op-watermark { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; object-position: bottom right; pointer-events: none; z-index: 0; opacity: 0.35; }
         .op-page-content { position: relative; z-index: 1; }
         .op-cover-img { width: 100%; }
-        .op-content h2 { color: #1a3a5c; font-size: 16px; border-bottom: 2px solid #c8a84b; padding-bottom: 4px; margin-top: 26px; }
-        .op-content h3 { color: #1a3a5c; font-size: 13px; margin: 14px 0 4px; }
-        .op-content p { font-size: 12px; line-height: 1.6; color: #222; margin: 4px 0 10px; }
-        .op-content ul { font-size: 12px; line-height: 1.5; padding-left: 18px; }
-        .op-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
-        .op-table th, .op-table td { border: 1px solid #ddd; padding: 5px 7px; text-align: right; }
+        .op-content h2, .op-print-only h2 { color: #1a3a5c; font-size: 15px; border-bottom: 2px solid #c8a84b; padding-bottom: 4px; margin-top: 20px; margin-bottom: 8px; }
+        .op-content h3, .op-print-only h3 { color: #1a3a5c; font-size: 12px; margin: 12px 0 4px; }
+        .op-content p, .op-print-only p { font-size: 11px; line-height: 1.6; color: #222; margin: 4px 0 8px; font-family: Arial, sans-serif; }
+        .op-content ul, .op-print-only ul { font-size: 11px; line-height: 1.6; padding-left: 16px; font-family: Arial, sans-serif; }
+        .op-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 6px; }
+        .op-table th, .op-table td { border: 1px solid #ddd; padding: 4px 6px; text-align: right; font-family: Arial, sans-serif; }
         .op-table th:first-child, .op-table td:first-child { text-align: left; }
         .op-table th { background: #1a3a5c; color: #fff; font-weight: 600; }
         .op-table tr:nth-child(even) td { background: #f7f6f3; }
@@ -177,6 +186,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         {createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
 
+      {/* SCREEN PREVIEW — shown on screen only */}
       {/* Cover page */}
       <div className="op-page-frame op-cover">
         <img className="op-cover-img op-page-content" src={`${ASSETS}/cover.png`} alt="Tour Pragenses — Seu parceiro na Europa" />
@@ -184,7 +194,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <PageChrome />
       </div>
 
-      {/* Content page(s) */}
+      {/* Content page screen preview */}
       <div className="op-page-frame op-content">
         <img className="op-watermark" src={`${ASSETS}/watermark.png`} alt="" />
         <PageChrome />
@@ -299,6 +309,96 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           <p style={{ fontWeight: 700 }}>Equipe Tour Pragenses</p>
           <p style={{ fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
         </div>
+        </div>
+      </div>
+
+      {/* PRINT-ONLY VERSION — hidden on screen, shown only when printing */}
+      <div className="op-print-only" style={{ fontFamily: 'Arial, sans-serif' }}>
+        {/* Cover page for print */}
+        <div className="op-cover-print">
+          <div className="op-print-header">
+            <div style={{ fontSize: 9, color: '#999', lineHeight: 1.5 }}>
+              TOUR PRAGENSES<br/>www.tour-pragenses.com<br/>+420 777 079 997<br/>info@tour-pragenses.com
+            </div>
+            <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" style={{ height: 28, opacity: 0.55 }} />
+          </div>
+          <img src={`${ASSETS}/cover.png`} alt="" style={{ width: '100%' }} />
+        </div>
+
+        {/* Content pages for print */}
+        <div>
+          <div className="op-print-header">
+            <div style={{ fontSize: 9, color: '#999', lineHeight: 1.5 }}>
+              TOUR PRAGENSES<br/>www.tour-pragenses.com<br/>+420 777 079 997<br/>info@tour-pragenses.com
+            </div>
+            <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" style={{ height: 28, opacity: 0.55 }} />
+          </div>
+
+          <h2 style={{ marginTop: 0 }}>{offer.name}</h2>
+          {createdDate && <p style={{ color: '#999' }}>Proposta elaborada em: {createdDate}</p>}
+          {offer.destinations && <p><b>Destinos:</b> {offer.destinations}</p>}
+          {(offer.startDate || offer.endDate) && <p><b>Período:</b> {fmtDate(offer.startDate)} {offer.endDate ? `a ${fmtDate(offer.endDate)}` : ''}</p>}
+
+          {hotels.length > 0 && (
+            <div className="op-section">
+              <h2>Hotéis</h2>
+              <ul>{hotels.map(h => <li key={h.id}><b>{h.city ? `${h.city}: ` : ''}{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}</li>)}</ul>
+            </div>
+          )}
+
+          <div className="op-section">
+            <h2>Investimento</h2>
+            <p>Valores por pessoa. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro.</p>
+            {hasSplit ? splitData.map(({ cur, rows: sRows }) => (
+              <div key={cur} style={{ marginBottom: 12 }}>
+                <p style={{ fontWeight: 700, marginBottom: 4 }}>{CUR_FLAG[cur]} Serviços faturados em {cur}</p>
+                <table className="op-table">
+                  <thead><tr><th>Participantes</th><th>Quarto duplo</th><th>Quarto individual</th></tr></thead>
+                  <tbody>{sRows.map(r => <tr key={r.pax}><td>{r.pax} + 1 cortesia</td><td className="op-final">{CUR_SYMBOL[cur]} {r.finalDbl.toFixed(2)}</td><td className="op-final">{CUR_SYMBOL[cur]} {r.finalSngl.toFixed(2)}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )) : (
+              <table className="op-table">
+                <thead><tr><th>Participantes</th><th>Quarto duplo</th><th>Quarto individual</th></tr></thead>
+                <tbody>{rows.map(r => <tr key={r.pax}><td>{r.pax} + 1 cortesia</td><td className="op-final">€ {r.finalDbl.toFixed(2)}</td><td className="op-final">€ {r.finalSngl.toFixed(2)}</td></tr>)}</tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="op-section">
+            <h2>Incluído no preço</h2>
+            <ul>
+              {hotels.length > 0 && <li>Hospedagem em hotéis selecionados, com café da manhã incluído ({hotels.length} {hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)</li>}
+              {hasCityTax && <li>Taxas municipais (city tax) dos hotéis</li>}
+              {groupServices.filter(it => it.subType !== 'guide_hotel').map(it => <li key={it.id}>{it.name}</li>)}
+              {tickets.map(it => <li key={it.id}>1x {it.name}</li>)}
+              <li>Assistência da nossa equipe durante toda a viagem</li>
+            </ul>
+            <h3>Não incluído</h3>
+            <ul>
+              <li>Voos internacionais e taxas de embarque</li>
+              <li>Bebidas e refeições não mencionadas</li>
+              <li>Gorjetas e despesas de caráter pessoal</li>
+              <li>Maleteiros</li>
+              <li>Seguro viagem</li>
+            </ul>
+          </div>
+
+          {programParagraphs.length > 0 && (
+            <div className="op-section">
+              <h2>Roteiro</h2>
+              {programParagraphs.map((p, i) => <p key={i} style={{ whiteSpace: 'pre-wrap' }}>{p}</p>)}
+            </div>
+          )}
+
+          <div style={{ marginTop: 24, textAlign: 'center' }}>
+            <p style={{ fontWeight: 700 }}>Equipe Tour Pragenses</p>
+            <p style={{ fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
+          </div>
+
+          <div className="op-print-footer">
+            <b>Pragenses s.r.o.</b> | Lipnická 688, Praha 9 - Kyje, Czech Republic | IČO: 284 45 961 | DIČ: CZ284 45 961
+          </div>
         </div>
       </div>
     </div>
