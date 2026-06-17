@@ -228,11 +228,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     // Split on newlines first, then also split lines that have multiple date patterns
     const rawLines = normalized.split('\n').map(l => l.trim()).filter(l => l);
 
-    // Further split lines that contain multiple date entries
-    // Only split when we see a date pattern (digit.digit.) preceded by whitespace
+    // Split only when we see a full new date entry: whitespace + digit.digit. NOT preceded by " -"
     const lines = [];
     for (const line of rawLines) {
-      const parts = line.split(/(?<=\S)\s+(?=\d{1,2}\.\d{1,2}\.)/g);
+      // Split only at positions where a NEW date range starts (not mid-range second date)
+      // A new entry starts when: there's whitespace before DD.MM. AND it's NOT immediately after " -"
+      const parts = line.split(/\s{2,}(?=\d{1,2}\.\d{1,2}\.)/g);
       if (parts.length > 1) {
         parts.forEach(p => { if (p.trim()) lines.push(p.trim()); });
       } else {
