@@ -176,6 +176,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     'HELSINKI': 'Helsinque', 'TALLINN': 'Tallinn', 'RIGA': 'Riga', 'VILNIUS': 'Vilnius',
     'ATHENS': 'Atenas', 'ATENAS': 'Atenas', 'SANTORINI': 'Santorini',
     'ISTANBUL': 'Istambul', 'DUBROVNIK': 'Dubrovnik', 'SPLIT': 'Split',
+    'BUDVA': 'Budva', 'TIRANA': 'Tirana', 'GJIROKASTER': 'Gjirokastra',
+    'GIROCASTRO': 'Gjirokastra', 'SARANDE': 'Sarandë', 'SARANDA': 'Sarandë',
+    'CORFU': 'Corfu', 'KERKYRA': 'Corfu',
     'BELGRADE': 'Belgrado', 'BEOGRAD': 'Belgrado', 'SOFIA': 'Sofia',
     'BUCHAREST': 'Bucareste', 'BUCURESTI': 'Bucareste', 'CZESTOCHOWA': 'Czestochowa',
     'VADUZ': 'Vaduz', 'LUXEMBOURG': 'Luxemburgo',
@@ -183,56 +186,73 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const handleParseItinerary = () => {
     setParseError('');
-    // Normalize: replace all dash variants, non-breaking spaces, etc.
+    // Normalize dashes and whitespace
     const normalized = itineraryText
       .replace(/[\u2013\u2014\u2012\u2015]/g, '-')
       .replace(/\u00a0/g, ' ')
       .replace(/\r/g, '');
-    const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
+
+    // Split on newlines first, then also split lines that have multiple date patterns
+    const rawLines = normalized.split('\n').map(l => l.trim()).filter(l => l);
+
+    // Further split lines that contain multiple date entries (e.g. "... SARANDE  24.5. - 26.5.2027 CORFU")
+    const lines = [];
+    for (const line of rawLines) {
+      // Find all positions where a new date entry starts (digit followed by . pattern mid-line)
+      const parts = line.split(/(?=\d{1,2}\.\d{1,2}\.)/g);
+      if (parts.length > 1) {
+        parts.forEach(p => { if (p.trim()) lines.push(p.trim()); });
+      } else {
+        lines.push(line);
+      }
+    }
+
     const newHotels = [];
+    let lastYear = new Date().getFullYear() + 1 + ''; // default next year
 
     for (const line of lines) {
-      // Remove trailing notes like "- obeslano", "- FD ...", "- June..."
+      // Remove trailing notes
       const cleanLine = line.replace(/\s*-\s*(obeslano|FD|June|July|Aug|Sep|Oct|Nov|Dec|Jan|Feb|Mar|Apr|objedn)[^\n]*/i, '').trim();
 
       let dateFrom = '', dateTo = '', cityRaw = '', hotelName = '';
 
-      // Format 1: DD/MM a DD/MM/YY – CITY: HOTEL
-      // or       DD/MM a DD/MM/YYYY – CITY: HOTEL
-      const fmt1 = cleanLine.match(/(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\s+a\s+(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s*-+\s*([^:]+)(?::\s*(.+))?/i);
-      if (fmt1) {
-        const [, d1, m1, y1raw, d2, m2, y2raw, city, hotel] = fmt1;
-        const y2 = y2raw.length === 2 ? '20' + y2raw : y2raw;
-        const y1 = y1raw ? (y1raw.length === 2 ? '20' + y1raw : y1raw) : y2;
+      // Format A: DD.MM. - DD.MM.YYYY CITY (year only on second date)
+      // or: DD.MM.YYYY - DD.MM.YYYY CITY
+      const fmtA = cleanLine.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})?\s*-+\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(.+)/);
+      if (fmtA) {
+        const [, d1, m1, y1raw, d2, m2, y2, rest] = fmtA;
+        const y1 = y1raw || y2;
+        lastYear = y2;
         dateFrom = `${y1}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
         dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
-        cityRaw = city.trim();
-        hotelName = hotel ? hotel.trim() : '';
+        const colonIdx = rest.indexOf(':');
+        if (colonIdx > 0) { cityRaw = rest.slice(0, colonIdx).trim(); hotelName = rest.slice(colonIdx + 1).trim(); }
+        else {
+          // Hotel name separated by multiple spaces or " - "
+          const hotelMatch = rest.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s./]+?)\s{2,}(.+)/) ||
+                             rest.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s./]+?)\s+-\s+(.+)/);
+          if (hotelMatch) { cityRaw = hotelMatch[1].trim(); hotelName = hotelMatch[2].trim(); }
+          else { cityRaw = rest.trim(); hotelName = ''; }
+        }
       } else {
-        // Format 2: DD.MM.YYYY - DD.MM.YYYY CITY (original format)
-        const fmt2 = cleanLine.match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s*-+\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})\s+(.+)/);
-        if (fmt2) {
-          const [, d1, mo1, y1, d2, mo2, y2, rest] = fmt2;
-          dateFrom = `${y1}-${mo1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
-          dateTo = `${y2}-${mo2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
-          // City is before double-space or colon, hotel is after
-          const colonIdx = rest.indexOf(':');
-          if (colonIdx > 0) {
-            cityRaw = rest.slice(0, colonIdx).trim();
-            hotelName = rest.slice(colonIdx + 1).trim();
-          } else {
-            cityRaw = rest.trim();
-            hotelName = '';
-          }
+        // Format B: DD/MM a DD/MM/YY – CITY: HOTEL (Portuguese style)
+        const fmtB = cleanLine.match(/(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\s+a\s+(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s*-+\s*([^:]+)(?::\s*(.+))?/i);
+        if (fmtB) {
+          const [, d1, m1, y1raw, d2, m2, y2raw, city, hotel] = fmtB;
+          const y2 = y2raw.length === 2 ? '20' + y2raw : y2raw;
+          const y1 = y1raw ? (y1raw.length === 2 ? '20' + y1raw : y1raw) : y2;
+          lastYear = y2;
+          dateFrom = `${y1}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          cityRaw = city.trim();
+          hotelName = hotel ? hotel.trim() : '';
         }
       }
 
       if (!dateFrom || !dateTo) continue;
-
       const nights = Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000);
       if (nights <= 0) continue;
 
-      // Remove country suffix like "/ITÁLIA", "/FRANCE" from city
       const cityClean = cityRaw.replace(/\/[A-ZÁÉÍÓÚÀÂÊÔÃÕ]+$/, '').trim().toUpperCase();
       const cityPT = CITY_PT[cityClean] || (cityClean.charAt(0) + cityClean.slice(1).toLowerCase());
 
@@ -241,8 +261,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         name: hotelName, city: cityPT,
         type: 'per_pax', subType: 'hotel', enabled: true,
         costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '',
-        nights: String(nights),
-        cityTax: '', cityTaxSngl: '', guideOverride: '',
+        nights: String(nights), cityTax: '', cityTaxSngl: '', guideOverride: '',
         dateFrom, dateTo, groupCost: '', currency: 'EUR'
       });
     }
