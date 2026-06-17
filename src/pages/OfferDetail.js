@@ -228,11 +228,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     // Split on newlines first, then also split lines that have multiple date patterns
     const rawLines = normalized.split('\n').map(l => l.trim()).filter(l => l);
 
-    // Further split lines that contain multiple date entries (e.g. "... SARANDE  24.5. - 26.5.2027 CORFU")
+    // Further split lines that contain multiple date entries
+    // Only split when we see a date pattern (digit.digit.) preceded by whitespace
     const lines = [];
     for (const line of rawLines) {
-      // Find all positions where a new date entry starts (digit followed by . pattern mid-line)
-      const parts = line.split(/(?=\d{1,2}\.\d{1,2}\.)/g);
+      const parts = line.split(/(?<=\S)\s+(?=\d{1,2}\.\d{1,2}\.)/g);
       if (parts.length > 1) {
         parts.forEach(p => { if (p.trim()) lines.push(p.trim()); });
       } else {
@@ -258,14 +258,20 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         lastYear = y2;
         dateFrom = `${y1}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
         dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
-        const colonIdx = rest.indexOf(':');
-        if (colonIdx > 0) { cityRaw = rest.slice(0, colonIdx).trim(); hotelName = rest.slice(colonIdx + 1).trim(); }
-        else {
-          // Hotel name separated by multiple spaces or " - "
-          const hotelMatch = rest.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s./]+?)\s{2,}(.+)/) ||
-                             rest.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s./]+?)\s+-\s+(.+)/);
-          if (hotelMatch) { cityRaw = hotelMatch[1].trim(); hotelName = hotelMatch[2].trim(); }
-          else { cityRaw = rest.trim(); hotelName = ''; }
+        // Clean trailing " -" with nothing after
+        const restClean = rest.replace(/\s*-\s*$/, '').trim();
+        const colonIdx = restClean.indexOf(':');
+        if (colonIdx > 0) {
+          cityRaw = restClean.slice(0, colonIdx).trim();
+          hotelName = restClean.slice(colonIdx + 1).trim();
+        } else {
+          // Hotel name after " - " separator
+          const dashMatch = restClean.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.\/]+?)\s+-\s+(.+)/);
+          // Hotel name after double space
+          const spaceMatch = restClean.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.\/]+?)\s{2,}(.+)/);
+          if (dashMatch) { cityRaw = dashMatch[1].trim(); hotelName = dashMatch[2].trim(); }
+          else if (spaceMatch) { cityRaw = spaceMatch[1].trim(); hotelName = spaceMatch[2].trim(); }
+          else { cityRaw = restClean.trim(); hotelName = ''; }
         }
       } else {
         // Format B: DD/MM a DD/MM/YY – CITY: HOTEL (Portuguese style)
