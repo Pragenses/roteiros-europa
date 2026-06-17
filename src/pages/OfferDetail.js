@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 
@@ -184,6 +184,17 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     setPinInput('');
     setPinError('');
   };
+
+  const handleEmergencyUnlock = async () => {
+    if (!window.confirm('Nouzové odemčení — PIN bude vymazán. Pokračovat?')) return;
+    await updateDoc(doc(db, 'offers', offerId), { locked: false, pinHash: null, updatedAt: new Date().toISOString() });
+    setIsLocked(false);
+    setShowUnlockDialog(false);
+    setPinInput('');
+    setPinError('');
+  };
+
+  const isOwner = auth.currentUser?.email === 'helena.maria.brito@gmail.com';
 
 
 
@@ -577,6 +588,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               <button onClick={handleUnlock} style={{ flex: 1, padding: '10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600 }}>Odemknout</button>
               <button onClick={() => setShowUnlockDialog(false)} style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>Zrušit</button>
             </div>
+            {isOwner && (
+              <button onClick={handleEmergencyUnlock} style={{ width: '100%', marginTop: 12, padding: '8px', background: 'transparent', color: '#dc2626', border: '1px solid #dc2626', borderRadius: 7, fontSize: 12, cursor: 'pointer' }}>
+                🔑 Nouzové odemčení (zapomenutý PIN)
+              </button>
+            )}
           </div>
         </div>
       )}
