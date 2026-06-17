@@ -146,7 +146,8 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
-      <aside style={{ width: 220, background: COLORS.primary, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+      <style>{`@media print { .app-sidebar { display: none !important; } .app-main { margin: 0 !important; padding: 0 !important; } }`}</style>
+      <aside className="app-sidebar" style={{ width: 220, background: COLORS.primary, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '1.5rem 1.25rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
           <div style={{ fontSize: 11, letterSpacing: '0.15em', color: COLORS.accent, textTransform: 'uppercase', marginBottom: 4 }}>Orbis Europa DMC</div>
           <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.white }}>Roteiros Europa</div>
@@ -167,7 +168,7 @@ export default function App() {
           </button>
         </div>
       </aside>
-      <main style={{ flex: 1, overflow: 'auto', padding: '2rem' }}>
+      <main className="app-main" style={{ flex: 1, overflow: 'auto', padding: '2rem' }}>
         {renderPage()}
       </main>
     </div>
