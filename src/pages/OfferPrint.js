@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
+import coverBase64 from '../lib/coverBase64';
 
 const ASSETS = process.env.PUBLIC_URL + '/offer-assets';
 
@@ -322,7 +323,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             </div>
             <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" style={{ height: 28, opacity: 0.55 }} />
           </div>
-          <img src={`${ASSETS}/cover.png`} alt="" style={{ width: '100%' }} />
+          <img src={coverBase64} alt="" style={{ width: '100%', display: 'block' }} />
         </div>
 
         {/* Content pages for print */}
