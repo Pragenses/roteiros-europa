@@ -214,19 +214,15 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           .op-page:last-child { page-break-after: auto; }
           .op-avoid-break { page-break-inside: avoid; }
           .op-watermark-print {
-            position: fixed !important;
-            top: 0 !important;
-            right: 0 !important;
-            width: 55% !important;
-            height: 100% !important;
-            opacity: 0.45 !important;
-            z-index: 0 !important;
+            display: none !important;
           }
         }
         @media screen {
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
         }
       `}</style>
+
+      <style>{`@media print { .op-page { background-image: url("${watermarkBase64}") !important; background-repeat: no-repeat !important; background-position: right top !important; background-size: 55% auto !important; } }`}</style>
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3' }}>
         <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>

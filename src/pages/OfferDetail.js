@@ -92,6 +92,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [pinError, setPinError] = useState('');
   const [margin, setMargin] = useState(15);
   const [paxList, setPaxList] = useState('15,20,25,30,35');
+  const [focCount, setFocCount] = useState(1);
+  const [focType, setFocType] = useState('dbl');
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -108,6 +110,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       setIsLocked(data.locked || false);
       setMargin(data.margin ?? 15);
       setPaxList(data.paxList || '15,20,25,30,35');
+      setFocCount(data.focCount ?? 1);
+      setFocType(data.focType || 'dbl');
     }
     const cliSnap = await getDocs(collection(db, 'clients'));
     setClients(cliSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -144,7 +148,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       if (loading || isLocked || items.length === 0) return;
       try {
         await updateDoc(doc(db, 'offers', offerId), {
-          items, margin: parseFloat(margin) || 0, paxList,
+          items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
           updatedAt: new Date().toISOString(),
         });
         setLastAutoSave(new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -153,7 +157,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       }
     }, 30000);
     return () => clearInterval(interval);
-  }, [loading, items, margin, paxList, offerId]);
+  }, [loading, items, margin, paxList, focCount, focType, offerId]);
 
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
@@ -411,7 +415,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     }
     setSaving(true);
     await updateDoc(doc(db, 'offers', offerId), {
-      items, margin: parseFloat(margin) || 0, paxList,
+      items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
       updatedAt: new Date().toISOString(),
     });
     setLastSavedItems(items);
@@ -468,9 +472,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const guideHotelTotalEUR = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
   const groupTotalEUR = regularGroupTotalEUR + guideHotelTotalEUR;
 
-  // FOC: the free person's cost is the sum of ALL per-pax items (hotels, meals, tickets, city tax, boats, trains...)
-  // on a DBL basis, divided across the paying pax. Group costs (bus, guide, flights) are NOT included.
-  const focPoolEUR = perPaxDblEUR;
+  // FOC pool: DBL = per-pax DBL cost, SNGL = per-pax SNGL cost
+  const focPoolEUR = focType === 'sngl' ? perPaxSnglEUR : perPaxDblEUR;
+  const focCountNum = parseInt(focCount) || 1;
 
   // Compute per-currency breakdown (only CHF, GBP — other currencies stay in EUR)
   const SPLIT_CURRENCIES = ['CHF', 'GBP'];
@@ -537,7 +541,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const costDbl = groupPerPax + perPaxDblEUR;
     const marginAmount = costDbl * (margin / 100);
     const sellingBeforeFoc = costDbl + marginAmount;
-    const focShare = focPoolEUR / pax;
+    const focShare = (focPoolEUR * focCountNum) / pax;
     const finalDbl = sellingBeforeFoc + focShare;
     const finalSngl = finalDbl + snglSupplementEUR;
     return { pax, groupPerPax, costDbl, marginAmount, sellingBeforeFoc, focShare, finalDbl, finalSngl };
@@ -774,8 +778,17 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Pricing settings</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr', gap: 12, marginBottom: 10 }}>
           <div>{lbl('Margin (%)')}<input type="text" inputMode="decimal" value={margin} onChange={e => setMargin(e.target.value)} onInput={decimalInput} style={iStyle} /></div>
+          <div>{lbl('FOC — počet volných osob')}
+            <input type="number" min="0" max="5" value={focCount} onChange={e => setFocCount(e.target.value)} style={iStyle} />
+          </div>
+          <div>{lbl('FOC typ')}
+            <select value={focType} onChange={e => setFocType(e.target.value)} style={iStyle}>
+              <option value="dbl">DBL (sdílí pokoj)</option>
+              <option value="sngl">SNGL (vlastní pokoj)</option>
+            </select>
+          </div>
           <div>{lbl('Pax sizes to calculate (comma-separated)')}<input type="text" value={paxList} onChange={e => setPaxList(e.target.value)} style={iStyle} /></div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -820,7 +833,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               <tbody>
                 {rows.map(r => (
                   <tr key={r.pax} style={{ borderBottom: `1px solid ${colors.border}` }}>
-                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.pax} + 1 FOC</td>
+                    <td style={{ padding: '6px 8px', fontWeight: 600 }}>{r.pax} + {focCountNum} FOC ({focType.toUpperCase()})</td>
                     <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.groupPerPax.toFixed(2)}</td>
                     <td style={{ padding: '6px 8px', textAlign: 'right' }}>{perPaxDblEUR.toFixed(2)}</td>
                     <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.costDbl.toFixed(2)}</td>
