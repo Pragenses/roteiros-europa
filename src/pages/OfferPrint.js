@@ -55,6 +55,9 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const activeItems = items.filter(it => it.enabled !== false);
   const { rows } = computeOfferPricing(items, margin, paxList, rates);
 
+  const focCountNum = parseInt(offer.focCount) || 1;
+  const focType = offer.focType || 'dbl';
+
   const activeCurrencies = [...new Set(activeItems.map(it => it.currency))].filter(c => SPLIT_CURRENCIES.includes(c));
   const hasSplit = activeCurrencies.length > 0;
   const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
@@ -72,10 +75,11 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       : (it.costSngl || it.costDbl)), 0);
     const groupTotal = curGroupItems.reduce((sum, it) => sum + evalAmount(it.groupCost), 0);
     const snglSupp = perPaxSngl - perPaxDbl;
+    const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
     const sRows = paxCounts.map(pax => {
       const costDbl = groupTotal / pax + perPaxDbl;
       const marginAmount = costDbl * (margin / 100);
-      const focShare = perPaxDbl / pax;
+      const focShare = (focPool * focCountNum) / pax;
       const finalDbl = costDbl + marginAmount + focShare;
       const finalSngl = finalDbl + snglSupp;
       return { pax, finalDbl, finalSngl };
@@ -97,10 +101,11 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       : (it.costSngl || it.costDbl)), it.currency), 0);
     const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
     const snglSupp = perPaxSngl - perPaxDbl;
+    const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
     const sRows = paxCounts.map(pax => {
       const costDbl = groupTotal / pax + perPaxDbl;
       const marginAmount = costDbl * (margin / 100);
-      const focShare = perPaxDbl / pax;
+      const focShare = (focPool * focCountNum) / pax;
       const finalDbl = costDbl + marginAmount + focShare;
       const finalSngl = finalDbl + snglSupp;
       return { pax, finalDbl, finalSngl };
@@ -169,7 +174,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <tbody>
           {tRows.map((r, i) => (
             <tr key={r.pax} style={{ background: i % 2 === 0 ? 'white' : '#f5f5f5' }}>
-              <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', fontSize: 12, fontFamily: 'Arial, sans-serif' }}>{r.pax} + 1 cortesia</td>
+              <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', fontSize: 12, fontFamily: 'Arial, sans-serif' }}>{r.pax} + {focCountNum} cortesia</td>
               <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', textAlign: 'right', fontWeight: 700, fontSize: 14, color: '#1a3a5c', fontFamily: 'Arial, sans-serif' }}>{symbol} {r.finalDbl.toFixed(2)}</td>
               <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', textAlign: 'right', fontWeight: 700, fontSize: 14, color: '#1a3a5c', fontFamily: 'Arial, sans-serif' }}>{symbol} {r.finalSngl.toFixed(2)}</td>
             </tr>
