@@ -140,17 +140,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
-  // Autosave every 30 seconds — only when data is loaded, not locked, and items are not fewer than last saved
+  // Autosave every 30 seconds — only when data is loaded and items exist
   const [lastAutoSave, setLastAutoSave] = useState(null);
   useEffect(() => {
     if (loading) return;
     const interval = setInterval(async () => {
       if (loading || isLocked || items.length === 0) return;
-      // Safety: never autosave fewer items than what was last saved from server
-      if (lastSavedItems && items.length < lastSavedItems.length) {
-        console.warn('Autosave blocked: items.length', items.length, '< lastSavedItems.length', lastSavedItems.length);
-        return;
-      }
       try {
         await updateDoc(doc(db, 'offers', offerId), {
           items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
@@ -162,7 +157,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       }
     }, 30000);
     return () => clearInterval(interval);
-  }, [loading, isLocked, items, margin, paxList, focCount, focType, offerId, lastSavedItems]);
+  }, [loading, items, margin, paxList, focCount, focType, offerId]);
 
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
@@ -453,8 +448,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     navigate('order-detail', { orderId: ref.id });
   };
 
-  if (loading) return <div style={{ padding: 20, color: colors.muted }}>Loading...</div>;
-  if (!offer) return <div style={{ padding: 20, color: colors.muted }}>Offer not found.</div>;
+  if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
+  if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
 
   const activeItems = items.filter(it => it.enabled !== false);
   const groupItems = activeItems.filter(it => it.type === 'group');
