@@ -52,10 +52,18 @@ const DateDMY = ({ value, onChange, colors, dateKey }) => {
     }
     return null;
   };
+  const inputRef = React.useRef(null);
+  const prevValue = React.useRef(value);
+  React.useEffect(() => {
+    if (prevValue.current !== value && inputRef.current && document.activeElement !== inputRef.current) {
+      inputRef.current.value = toDisplay(value);
+      prevValue.current = value;
+    }
+  }, [value]);
   return (
     <input
+      ref={inputRef}
       type="text"
-      key={dateKey}
       placeholder="DD.MM.RRRR"
       defaultValue={toDisplay(value)}
       onBlur={e => {
