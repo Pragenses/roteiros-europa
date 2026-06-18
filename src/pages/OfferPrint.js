@@ -115,6 +115,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const splitData = hasSplit
     ? [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()]
     : null;
+  const rows = computeEurOnly().rows;
 
   const hotels = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
   const programParagraphs = (offer.programText || '').split(/\n/).filter(p => p.trim());
