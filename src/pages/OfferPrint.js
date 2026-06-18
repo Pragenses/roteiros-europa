@@ -151,12 +151,20 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             margin: 35mm 18mm 25mm 18mm;
           }
           @page :first {
-            margin: 0;
+            margin: 0 !important;
           }
-          .op-page-frame { display: none !important; }
-          .op-print-only { display: block !important; }
-          .op-cover-print { page-break-after: always; width: 210mm; height: 297mm; overflow: hidden; margin: -35mm -18mm -25mm -18mm; }
+          .op-cover-print {
+            page-break-after: always;
+            position: relative;
+            width: 210mm;
+            height: 297mm;
+            margin: -35mm -18mm -25mm -18mm;
+            overflow: hidden;
+          }
           .op-cover-print img { width: 210mm; height: 297mm; object-fit: cover; display: block; }
+          /* Hide fixed header/footer on first page */
+          .op-print-header, .op-print-footer { display: none; }
+          .op-content-print .op-print-header, .op-content-print ~ .op-print-header { display: flex !important; }
           .op-content-print { }
           .op-section { page-break-inside: avoid; margin-top: 6px; }
           .op-print-header {
