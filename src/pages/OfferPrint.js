@@ -130,7 +130,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const UL = { fontSize: 11, lineHeight: 1.7, paddingLeft: 18, fontFamily: 'Arial, sans-serif', color: '#222' };
 
   const Watermark = () => (
-    <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.18, pointerEvents: 'none', zIndex: 0 }} />
+    <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.45, pointerEvents: 'none', zIndex: 0 }} />
   );
 
   const Header = () => (
@@ -284,19 +284,26 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         </Page>
       )}
 
-      {/* PAGE 3+ — Roteiro (split across pages) */}
-      {roteiroPages.map((paras, pageIdx) => (
-        <Page key={pageIdx}>
-          {pageIdx === 0 && <H2>Roteiro</H2>}
-          {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }}>{p}</p>)}
-          {pageIdx === roteiroPages.length - 1 && (
-            <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
-              <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
-              <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
-            </div>
-          )}
-        </Page>
-      ))}
+      {/* PAGE 4+ — Roteiro split into pages of 15 paragraphs */}
+      {roteiroParagraphs.length > 0 && (() => {
+        const CHUNK = 15;
+        const pages = [];
+        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
+          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
+        }
+        return pages.map((paras, pageIdx) => (
+          <Page key={pageIdx}>
+            {pageIdx === 0 && <H2>Roteiro</H2>}
+            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }}>{p}</p>)}
+            {pageIdx === pages.length - 1 && (
+              <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
+                <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
+                <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
+              </div>
+            )}
+          </Page>
+        ));
+      })()}
 
       {/* If no roteiro, add closing page */}
       {roteiroPages.length === 0 && (
