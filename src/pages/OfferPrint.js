@@ -228,7 +228,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       {/* PAGE 1 — Cover */}
       <div className="op-page" style={{ ...PAGE_FIXED }}>
         <Watermark />
-        <Header />
+        <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
         <div style={{ position: 'relative', zIndex: 1, padding: `2mm ${MARGIN_H} 0`, height: `calc(297mm - ${HEADER_H} - ${FOOTER_H})`, overflow: 'hidden' }}>
           <img src={coverBase64} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         </div>
@@ -266,14 +266,14 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         </div>
 
         {includedLines.length > 0 && (
-          <div className="op-avoid-break">
+          <div>
             <H2>Incluído no preço</H2>
             <ul style={UL}>{includedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
           </div>
         )}
 
         {notIncludedLines.length > 0 && (
-          <div className="op-avoid-break">
+          <div>
             <H2>Não incluído</H2>
             <ul style={UL}>{notIncludedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
           </div>
