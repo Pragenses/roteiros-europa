@@ -39,9 +39,9 @@ const NAV = [
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState('dashboard');
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [selectedOffer, setSelectedOffer] = useState(null);
+  const [selectedOffer, setSelectedOffer] = useState(() => sessionStorage.getItem('selectedOffer') || null);
+  const [page, setPage] = useState(() => sessionStorage.getItem('currentPage') || 'dashboard');
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -82,8 +82,9 @@ export default function App() {
 
   const navigate = (p, data) => {
     setPage(p);
+    sessionStorage.setItem('currentPage', p);
     if (data?.orderId) setSelectedOrder(data.orderId);
-    if (data?.offerId) setSelectedOffer(data.offerId);
+    if (data?.offerId) { setSelectedOffer(data.offerId); sessionStorage.setItem('selectedOffer', data.offerId); }
     setNavParams(data || {});
   };
 
