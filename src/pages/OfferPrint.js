@@ -235,7 +235,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <Footer />
       </div>
 
-      {/* PAGE 2 — Hotéis + Investimento + Incluído + Não incluído */}
+      {/* PAGE 2 — Hotéis + Investimento */}
       <Page>
         <H2 style={{ marginTop: 8 }}>{offer.name}</H2>
         {createdDate && <p style={{ ...P, color: '#999', fontSize: 10, marginTop: -4 }}>Proposta elaborada em: {createdDate}</p>}
@@ -264,21 +264,25 @@ export default function OfferPrint({ offerId, navigate, colors }) {
             <TableInvestimento symbol="€" tRows={rows} />
           )}
         </div>
-
-        {includedLines.length > 0 && (
-          <div>
-            <H2>Incluído no preço</H2>
-            <ul style={UL}>{includedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
-          </div>
-        )}
-
-        {notIncludedLines.length > 0 && (
-          <div>
-            <H2>Não incluído</H2>
-            <ul style={UL}>{notIncludedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
-          </div>
-        )}
       </Page>
+
+      {/* PAGE 3 — Incluído + Não incluído */}
+      {(includedLines.length > 0 || notIncludedLines.length > 0) && (
+        <Page>
+          {includedLines.length > 0 && (
+            <div>
+              <H2>Incluído no preço</H2>
+              <ul style={UL}>{includedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
+            </div>
+          )}
+          {notIncludedLines.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <H2>Não incluído</H2>
+              <ul style={UL}>{notIncludedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
+            </div>
+          )}
+        </Page>
+      )}
 
       {/* PAGE 3+ — Roteiro (split across pages) */}
       {roteiroPages.map((paras, pageIdx) => (
