@@ -120,13 +120,13 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const notIncludedLines = (offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem').split('\n').filter(l => l.trim());
 
   // Shared styles
+  const HEADER_H = '28mm';
+  const FOOTER_H = '16mm';
+  const MARGIN_H = '18mm';
   const PAGE = { fontFamily: 'Arial, sans-serif', position: 'relative', width: '210mm', minHeight: '297mm', boxSizing: 'border-box', overflow: 'hidden', background: 'white' };
   const CONTENT_STYLE = { padding: `4mm ${MARGIN_H} ${FOOTER_H}`, position: 'relative', zIndex: 1 };
   const P = { fontSize: 11, lineHeight: 1.6, color: '#222', margin: '4px 0 8px', fontFamily: 'Arial, sans-serif' };
   const UL = { fontSize: 11, lineHeight: 1.7, paddingLeft: 18, fontFamily: 'Arial, sans-serif', color: '#222' };
-  const HEADER_H = '28mm';
-  const FOOTER_H = '16mm';
-  const MARGIN_H = '18mm';
 
   const Watermark = () => (
     <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.18, pointerEvents: 'none', zIndex: 0 }} />
