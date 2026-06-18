@@ -177,9 +177,25 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     </div>
   );
 
-  const CONTENT_STYLE = { padding: `4mm ${MARGIN_H} ${FOOTER_H}`, position: 'relative', zIndex: 1 };
-  const P = { fontSize: 11, lineHeight: 1.6, color: '#222', margin: '4px 0 8px', fontFamily: 'Arial, sans-serif' };
-  const UL = { fontSize: 11, lineHeight: 1.7, paddingLeft: 18, fontFamily: 'Arial, sans-serif', color: '#222' };
+  // Helper to create a full A4 page with header/footer
+  const Page = ({ children, isLast }) => (
+    <div className="op-page" style={{ ...PAGE }}>
+      <Watermark />
+      <Header />
+      <div style={CONTENT_STYLE}>
+        {children}
+      </div>
+      <Footer />
+    </div>
+  );
+
+  // Split roteiro paragraphs into chunks that fit on a page (~25 paragraphs per page)
+  const PARAS_PER_PAGE = 20;
+  const roteiroParagraphs = programParagraphs;
+  const roteiroPagesCount = Math.ceil(roteiroParagraphs.length / PARAS_PER_PAGE);
+  const roteiroPages = Array.from({ length: roteiroPagesCount }, (_, i) =>
+    roteiroParagraphs.slice(i * PARAS_PER_PAGE, (i + 1) * PARAS_PER_PAGE)
+  );
 
   return (
     <div>
@@ -214,67 +230,74 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         <Footer />
       </div>
 
-      {/* PAGE 2+ — Content */}
-      <div className="op-page" style={{ ...PAGE }}>
-        <Watermark />
-        <Header />
-        <div style={CONTENT_STYLE}>
-          <H2 style={{ marginTop: 8 }}>{offer.name}</H2>
-          {createdDate && <p style={{ ...P, color: '#999', fontSize: 10, marginTop: -4 }}>Proposta elaborada em: {createdDate}</p>}
-          {offer.destinations && <p style={P}><b>Destinos:</b> {offer.destinations}</p>}
-          {(offer.startDate || offer.endDate) && <p style={P}><b>Período:</b> {fmtDate(offer.startDate)}{offer.endDate ? ` a ${fmtDate(offer.endDate)}` : ''}</p>}
+      {/* PAGE 2 — Hotéis + Investimento + Incluído + Não incluído */}
+      <Page>
+        <H2 style={{ marginTop: 8 }}>{offer.name}</H2>
+        {createdDate && <p style={{ ...P, color: '#999', fontSize: 10, marginTop: -4 }}>Proposta elaborada em: {createdDate}</p>}
+        {offer.destinations && <p style={P}><b>Destinos:</b> {offer.destinations}</p>}
+        {(offer.startDate || offer.endDate) && <p style={P}><b>Período:</b> {fmtDate(offer.startDate)}{offer.endDate ? ` a ${fmtDate(offer.endDate)}` : ''}</p>}
 
-          {hotels.length > 0 && (
-            <div className="op-avoid-break">
-              <H2>Hotéis</H2>
-              <ul style={UL}>
-                {hotels.map(h => (
-                  <li key={h.id}><b>{h.city ? `${h.city}: ` : ''}{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
+        {hotels.length > 0 && (
           <div className="op-avoid-break">
-            <H2>Investimento</H2>
-            <p style={{ ...P, fontSize: 13, lineHeight: 1.4, marginBottom: 10 }}>
-              Valores por pessoa. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro. Pax gratis no quarto DBL.
-            </p>
-            {hasSplit ? splitData.map(({ cur, rows: sRows }) => (
-              <TableInvestimento key={cur} curLabel={`${CUR_FLAG[cur]} Serviços faturados em ${cur}`} symbol={CUR_SYMBOL[cur]} tRows={sRows} />
-            )) : (
-              <TableInvestimento symbol="€" tRows={rows} />
-            )}
+            <H2>Hotéis</H2>
+            <ul style={UL}>
+              {hotels.map(h => (
+                <li key={h.id}><b>{h.city ? `${h.city}: ` : ''}{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}</li>
+              ))}
+            </ul>
           </div>
+        )}
 
-          {includedLines.length > 0 && (
-            <div className="op-avoid-break">
-              <H2>Incluído no preço</H2>
-              <ul style={UL}>{includedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
+        <div className="op-avoid-break">
+          <H2>Investimento</H2>
+          <p style={{ ...P, fontSize: 13, lineHeight: 1.4, marginBottom: 10 }}>
+            Valores por pessoa. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro. Pax gratis no quarto DBL.
+          </p>
+          {hasSplit ? splitData.map(({ cur, rows: sRows }) => (
+            <TableInvestimento key={cur} curLabel={`${CUR_FLAG[cur]} Serviços faturados em ${cur}`} symbol={CUR_SYMBOL[cur]} tRows={sRows} />
+          )) : (
+            <TableInvestimento symbol="€" tRows={rows} />
+          )}
+        </div>
+
+        {includedLines.length > 0 && (
+          <div className="op-avoid-break">
+            <H2>Incluído no preço</H2>
+            <ul style={UL}>{includedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
+          </div>
+        )}
+
+        {notIncludedLines.length > 0 && (
+          <div className="op-avoid-break">
+            <H2>Não incluído</H2>
+            <ul style={UL}>{notIncludedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
+          </div>
+        )}
+      </Page>
+
+      {/* PAGE 3+ — Roteiro (split across pages) */}
+      {roteiroPages.map((paras, pageIdx) => (
+        <Page key={pageIdx}>
+          {pageIdx === 0 && <H2>Roteiro</H2>}
+          {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }}>{p}</p>)}
+          {pageIdx === roteiroPages.length - 1 && (
+            <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
+              <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
+              <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
             </div>
           )}
+        </Page>
+      ))}
 
-          {notIncludedLines.length > 0 && (
-            <div className="op-avoid-break">
-              <H2>Não incluído</H2>
-              <ul style={UL}>{notIncludedLines.map((line, i) => <li key={i}>{line}</li>)}</ul>
-            </div>
-          )}
-
-          {programParagraphs.length > 0 && (
-            <div>
-              <H2>Roteiro</H2>
-              {programParagraphs.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }}>{p}</p>)}
-            </div>
-          )}
-
+      {/* If no roteiro, add closing page */}
+      {roteiroPages.length === 0 && (
+        <Page>
           <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
             <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
             <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
           </div>
-        </div>
-        <Footer />
-      </div>
+        </Page>
+      )}
     </div>
   );
 }
