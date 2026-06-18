@@ -139,7 +139,12 @@ export default function App() {
   const renderPage = () => {
     if (page === 'order-detail') return <OrderDetail orderId={selectedOrder} navigate={navigate} colors={COLORS} />;
     if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} />;
-    if (page === 'offer-detail') return selectedOffer ? <OfferDetail offerId={selectedOffer} navigate={navigate} colors={COLORS} /> : <div style={{ padding: 40, color: COLORS.muted }}>Vyberte nabídku ze seznamu. <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button></div>;
+    if (page === 'offer-detail') return selectedOffer
+      ? <OfferDetail offerId={selectedOffer} navigate={navigate} colors={COLORS} />
+      : <div style={{ padding: 40 }}>
+          <div style={{ color: 'red', marginBottom: 10 }}>Debug: selectedOffer = {String(selectedOffer)}, page = {page}</div>
+          <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
+        </div>;
     if (page === 'offer-print') return <OfferPrint offerId={selectedOffer} navigate={navigate} colors={COLORS} />;
     if (page === 'dashboard') return <Dashboard navigate={navigate} colors={COLORS} />;
     if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} />;
