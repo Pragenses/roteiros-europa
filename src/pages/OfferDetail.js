@@ -37,49 +37,39 @@ const FormulaField = ({ value, onChange, placeholder, colors }) => {
 
 // Date input in DD.MM.YYYY order — always consistent regardless of browser/OS locale
 const DateDMY = ({ value, onChange, colors }) => {
-  const parse = (v) => {
-    if (v && v.length === 10) { const [y, m, d] = v.split('-'); return [d || '', m || '', y || '']; }
-    return ['', '', ''];
+  const toDisplay = (v) => {
+    if (v && v.length === 10) {
+      const [y, m, d] = v.split('-');
+      return `${d}.${m}.${y}`;
+    }
+    return '';
   };
-  const [dd, setDd] = React.useState(() => parse(value)[0]);
-  const [mm, setMm] = React.useState(() => parse(value)[1]);
-  const [yyyy, setYyyy] = React.useState(() => parse(value)[2]);
-
-  // Sync if parent value changes (e.g. after save/load) - only when value is valid
-  React.useEffect(() => {
-    if (value && value.length === 10) {
-      const [d, m, y] = parse(value);
-      if (d && m && y) { setDd(d); setMm(m); setYyyy(y); }
+  const toISO = (v) => {
+    const clean = v.replace(/[^\d]/g, '');
+    if (clean.length === 8) {
+      const d = clean.slice(0, 2);
+      const m = clean.slice(2, 4);
+      const y = clean.slice(4, 8);
+      const date = new Date(`${y}-${m}-${d}`);
+      if (!isNaN(date)) return `${y}-${m}-${d}`;
     }
-  }, [value]);
-
-  const emit = (newDd, newMm, newYyyy) => {
-    const d = newDd.padStart(2, '0');
-    const m = newMm.padStart(2, '0');
-    const y = newYyyy;
-    if (d.length === 2 && m.length === 2 && y.length === 4 && !isNaN(new Date(`${y}-${m}-${d}`))) {
-      onChange(`${y}-${m}-${d}`);
-    }
+    return '';
   };
 
-  const iStyle = { padding: '6px 4px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', textAlign: 'center' };
+  const iStyle = { padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', width: 100 };
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-      <input type="text" inputMode="numeric" maxLength={2} placeholder="DD" value={dd}
-        onChange={e => setDd(e.target.value)}
-        onBlur={e => { const v = e.target.value.padStart(2, '0'); setDd(v); emit(v, mm, yyyy); }}
-        style={{ ...iStyle, width: 34 }} />
-      <span style={{ color: colors.muted, fontSize: 12 }}>.</span>
-      <input type="text" inputMode="numeric" maxLength={2} placeholder="MM" value={mm}
-        onChange={e => setMm(e.target.value)}
-        onBlur={e => { const v = e.target.value.padStart(2, '0'); setMm(v); emit(dd, v, yyyy); }}
-        style={{ ...iStyle, width: 34 }} />
-      <span style={{ color: colors.muted, fontSize: 12 }}>.</span>
-      <input type="text" inputMode="numeric" maxLength={4} placeholder="RRRR" value={yyyy}
-        onChange={e => setYyyy(e.target.value)}
-        onBlur={e => { emit(dd, mm, e.target.value); }}
-        style={{ ...iStyle, width: 48 }} />
-    </div>
+    <input
+      type="text"
+      placeholder="DD.MM.RRRR"
+      defaultValue={toDisplay(value)}
+      key={value}
+      onBlur={e => {
+        const iso = toISO(e.target.value);
+        if (iso) { e.target.value = toDisplay(iso); onChange(iso); }
+      }}
+      style={iStyle}
+    />
   );
 };
 
