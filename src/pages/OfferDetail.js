@@ -700,14 +700,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     )}
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                        <DateDMY value={it.dateFrom || ''} colors={colors} onChange={v => {
+                        <DateDMY key={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateFrom', v);
                           if (v && it.dateTo && v.length === 10 && it.dateTo.length === 10) {
                             const n = Math.round((new Date(it.dateTo) - new Date(v)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} />
-                        <DateDMY value={it.dateTo || ''} colors={colors} onChange={v => {
+                        <DateDMY key={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateTo', v);
                           if (v && it.dateFrom && v.length === 10 && it.dateFrom.length === 10) {
                             const n = Math.round((new Date(v) - new Date(it.dateFrom)) / 86400000);
@@ -919,14 +919,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ↻ Gerar automaticamente
           </button>
         </div>
-        <textarea value={offer.includedText || ''} onChange={e => handleHeaderChange('includedText', e.target.value)} rows={6}
+        <textarea key={offer.includedText} defaultValue={offer.includedText || ''} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
           placeholder={'Hospedagem em hotéis selecionados...\nTransporte por ônibus panorâmico...\n1x Visita ao Coliseu...'}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Não incluído</div>
-        <textarea value={offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem'} onChange={e => handleHeaderChange('notIncludedText', e.target.value)} rows={5}
+        <textarea key={offer.notIncludedText} defaultValue={offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem'} onBlur={e => handleHeaderChange('notIncludedText', e.target.value)} rows={5}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
 
