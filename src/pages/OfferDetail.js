@@ -45,10 +45,12 @@ const DateDMY = ({ value, onChange, colors }) => {
   const [mm, setMm] = React.useState(() => parse(value)[1]);
   const [yyyy, setYyyy] = React.useState(() => parse(value)[2]);
 
-  // Sync if parent value changes (e.g. after save/load)
+  // Sync if parent value changes (e.g. after save/load) - only when value is valid
   React.useEffect(() => {
-    const [d, m, y] = parse(value);
-    setDd(d); setMm(m); setYyyy(y);
+    if (value && value.length === 10) {
+      const [d, m, y] = parse(value);
+      if (d && m && y) { setDd(d); setMm(m); setYyyy(y); }
+    }
   }, [value]);
 
   const emit = (newDd, newMm, newYyyy) => {
