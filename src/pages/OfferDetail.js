@@ -919,14 +919,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ↻ Gerar automaticamente
           </button>
         </div>
-        <textarea defaultValue={offer.includedText} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
+        <textarea value={offer.includedText || ''} onChange={e => handleHeaderChange('includedText', e.target.value)} rows={6}
           placeholder={'Hospedagem em hotéis selecionados...\nTransporte por ônibus panorâmico...\n1x Visita ao Coliseu...'}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Não incluído</div>
-        <textarea defaultValue={offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem'} onBlur={e => handleHeaderChange('notIncludedText', e.target.value)} rows={5}
+        <textarea value={offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem'} onChange={e => handleHeaderChange('notIncludedText', e.target.value)} rows={5}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
 
