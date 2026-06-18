@@ -185,7 +185,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   );
 
   const ScreenWatermark = () => (
-    <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.45, pointerEvents: 'none', zIndex: 0 }} />
+    <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.65, pointerEvents: 'none', zIndex: 0 }} />
   );
 
   // Helper to create a full A4 page with header/footer
@@ -231,7 +231,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
 
       <style>{`
         @media print {
-          .op-wm { display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important; object-position: center !important; opacity: 0.45 !important; z-index: -1 !important; pointer-events: none !important; }
+          .op-wm { display: block !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important; object-position: center !important; opacity: 0.65 !important; z-index: -1 !important; pointer-events: none !important; }
           .op-wm-screen { display: none !important; }
         }
         @media screen {
