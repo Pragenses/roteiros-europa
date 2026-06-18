@@ -40,13 +40,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [selectedOffer, setSelectedOffer] = useState(() => sessionStorage.getItem('selectedOffer') || null);
-  const [page, setPage] = useState(() => {
-    const p = sessionStorage.getItem('currentPage') || 'dashboard';
-    const o = sessionStorage.getItem('selectedOffer');
-    if ((p === 'offer-detail' || p === 'offer-print') && !o) return 'offers';
-    return p;
-  });
+  const [selectedOffer, setSelectedOffer] = useState(null);
+  const [page, setPage] = useState('dashboard');
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
