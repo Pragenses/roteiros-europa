@@ -453,8 +453,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     navigate('order-detail', { orderId: ref.id });
   };
 
-  if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
-  if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
+  if (loading) return <div style={{ padding: 20, color: colors.muted }}>Loading...</div>;
+  if (!offer) return <div style={{ padding: 20, color: colors.muted }}>Offer not found.</div>;
+
+  try {
 
   const activeItems = items.filter(it => it.enabled !== false);
   const groupItems = activeItems.filter(it => it.type === 'group');
@@ -942,4 +944,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       </div>
     </div>
   );
+  } catch(err) {
+    return <div style={{ padding: 40, color: 'red', fontFamily: 'sans-serif' }}>
+      <b>Chyba při zobrazení nabídky:</b><br/>{err.message}<br/><br/>
+      <button onClick={() => navigate('offers')}>← Zpět na nabídky</button>
+    </div>;
+  }
 }
