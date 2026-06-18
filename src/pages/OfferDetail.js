@@ -409,6 +409,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
     if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
+    // Wait for any pending onBlur state updates (e.g. DateDMY)
+    await new Promise(r => setTimeout(r, 150));
     // Safety: warn if saving empty items when we had items before
     if (items.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
       if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) return;
