@@ -41,7 +41,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(() => sessionStorage.getItem('selectedOffer') || null);
-  const [page, setPage] = useState(() => sessionStorage.getItem('currentPage') || 'dashboard');
+  const [page, setPage] = useState(() => {
+    const p = sessionStorage.getItem('currentPage') || 'dashboard';
+    const o = sessionStorage.getItem('selectedOffer');
+    if ((p === 'offer-detail' || p === 'offer-print') && !o) return 'offers';
+    return p;
+  });
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -155,7 +160,7 @@ export default function App() {
         </div>
         <nav style={{ flex: 1, padding: '1rem 0' }}>
           {NAV.map(n => (
-            <button key={n.id} onClick={() => setPage(n.id)}
+            <button key={n.id} onClick={() => navigate(n.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 1.25rem', background: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail')) ? 'rgba(200,168,75,0.15)' : 'transparent', border: 'none', borderLeft: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail')) ? `3px solid ${COLORS.accent}` : '3px solid transparent', color: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail')) ? COLORS.accent : 'rgba(255,255,255,0.65)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
               <span style={{ fontSize: 16 }}>{n.icon}</span>
               {n.label}
