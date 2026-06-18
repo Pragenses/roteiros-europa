@@ -56,6 +56,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedOffer, setSelectedOffer] = useState(null);
+  const selectedOfferRef = React.useRef(null);
   const [page, setPage] = useState('dashboard');
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
@@ -99,7 +100,11 @@ export default function App() {
     setPage(p);
     sessionStorage.setItem('currentPage', p);
     if (data?.orderId) setSelectedOrder(data.orderId);
-    if (data?.offerId) { setSelectedOffer(data.offerId); sessionStorage.setItem('selectedOffer', data.offerId); }
+    if (data?.offerId) { 
+      selectedOfferRef.current = data.offerId;
+      setSelectedOffer(data.offerId); 
+      sessionStorage.setItem('selectedOffer', data.offerId); 
+    }
     setNavParams(data || {});
   };
 
@@ -149,12 +154,14 @@ export default function App() {
   const renderPage = () => {
     if (page === 'order-detail') return <OrderDetail orderId={selectedOrder} navigate={navigate} colors={COLORS} />;
     if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} />;
-    if (page === 'offer-detail') return selectedOffer
-      ? <OfferDetail offerId={selectedOffer} navigate={navigate} colors={COLORS} />
-      : <div style={{ padding: 40, background: 'red', minHeight: '100vh' }}>
-          <div style={{ color: 'white', fontSize: 20, marginBottom: 10 }}>CHYBA: selectedOffer = {String(selectedOffer)}</div>
-          <button onClick={() => navigate('offers')} style={{ color: 'white', background: 'none', border: '2px solid white', padding: 10, cursor: 'pointer' }}>← Zpět na nabídky</button>
-        </div>;
+    if (page === 'offer-detail') {
+      const oid = selectedOfferRef.current || selectedOffer;
+      return oid
+        ? <OfferDetail offerId={oid} navigate={navigate} colors={COLORS} />
+        : <div style={{ padding: 40, color: COLORS.muted }}>
+            <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
+          </div>;
+    }
     if (page === 'offer-print') return <OfferPrint offerId={selectedOffer} navigate={navigate} colors={COLORS} />;
     if (page === 'dashboard') return <Dashboard navigate={navigate} colors={COLORS} />;
     if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} />;
