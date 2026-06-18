@@ -140,12 +140,17 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
-  // Autosave every 30 seconds — only when data is loaded and items exist
+  // Autosave every 30 seconds — only when data is loaded, not locked, and items are not fewer than last saved
   const [lastAutoSave, setLastAutoSave] = useState(null);
   useEffect(() => {
     if (loading) return;
     const interval = setInterval(async () => {
       if (loading || isLocked || items.length === 0) return;
+      // Safety: never autosave fewer items than what was last saved from server
+      if (lastSavedItems && items.length < lastSavedItems.length) {
+        console.warn('Autosave blocked: items.length', items.length, '< lastSavedItems.length', lastSavedItems.length);
+        return;
+      }
       try {
         await updateDoc(doc(db, 'offers', offerId), {
           items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
@@ -157,7 +162,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       }
     }, 30000);
     return () => clearInterval(interval);
-  }, [loading, items, margin, paxList, focCount, focType, offerId]);
+  }, [loading, isLocked, items, margin, paxList, focCount, focType, offerId, lastSavedItems]);
 
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
