@@ -36,48 +36,34 @@ const FormulaField = ({ value, onChange, placeholder, colors }) => {
 };
 
 // Date input in DD.MM.YYYY order — always consistent regardless of browser/OS locale
-const DateDMY = ({ value, onChange, colors }) => {
-  const parse = (v) => {
-    if (v && v.length === 10) { const [y, m, d] = v.split('-'); return [d || '', m || '', y || '']; }
-    return ['', '', ''];
-  };
-  const [dd, setDd] = React.useState(() => parse(value)[0]);
-  const [mm, setMm] = React.useState(() => parse(value)[1]);
-  const [yyyy, setYyyy] = React.useState(() => parse(value)[2]);
-
-  // Sync if parent value changes (e.g. after save/load)
-  React.useEffect(() => {
-    const [d, m, y] = parse(value);
-    setDd(d); setMm(m); setYyyy(y);
-  }, [value]);
-
-  const emit = (newDd, newMm, newYyyy) => {
-    const d = newDd.padStart(2, '0');
-    const m = newMm.padStart(2, '0');
-    const y = newYyyy;
-    if (d.length === 2 && m.length === 2 && y.length === 4 && !isNaN(new Date(`${y}-${m}-${d}`))) {
-      onChange(`${y}-${m}-${d}`);
+const DateDMY = ({ value, onChange, colors, dateKey }) => {
+  const toDisplay = (v) => {
+    if (v && v.length === 10) {
+      const [y, m, d] = v.split('-');
+      return `${d}.${m}.${y}`;
     }
+    return '';
   };
-
-  const iStyle = { padding: '6px 4px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', textAlign: 'center' };
+  const toISO = (v) => {
+    const clean = v.replace(/[^\d]/g, '');
+    if (clean.length === 8) {
+      const d = clean.slice(0, 2), m = clean.slice(2, 4), y = clean.slice(4, 8);
+      if (!isNaN(new Date(`${y}-${m}-${d}`))) return `${y}-${m}-${d}`;
+    }
+    return null;
+  };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-      <input type="text" inputMode="numeric" maxLength={2} placeholder="DD" value={dd}
-        onChange={e => setDd(e.target.value)}
-        onBlur={e => { const v = e.target.value.padStart(2, '0'); setDd(v); emit(v, mm, yyyy); }}
-        style={{ ...iStyle, width: 34 }} />
-      <span style={{ color: colors.muted, fontSize: 12 }}>.</span>
-      <input type="text" inputMode="numeric" maxLength={2} placeholder="MM" value={mm}
-        onChange={e => setMm(e.target.value)}
-        onBlur={e => { const v = e.target.value.padStart(2, '0'); setMm(v); emit(dd, v, yyyy); }}
-        style={{ ...iStyle, width: 34 }} />
-      <span style={{ color: colors.muted, fontSize: 12 }}>.</span>
-      <input type="text" inputMode="numeric" maxLength={4} placeholder="RRRR" value={yyyy}
-        onChange={e => setYyyy(e.target.value)}
-        onBlur={e => { emit(dd, mm, e.target.value); }}
-        style={{ ...iStyle, width: 48 }} />
-    </div>
+    <input
+      type="text"
+      key={dateKey}
+      placeholder="DD.MM.RRRR"
+      defaultValue={toDisplay(value)}
+      onBlur={e => {
+        const iso = toISO(e.target.value);
+        if (iso) { e.target.value = toDisplay(iso); onChange(iso); }
+      }}
+      style={{ padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', width: 100, boxSizing: 'border-box' }}
+    />
   );
 };
 
@@ -624,8 +610,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
-          <div>{lbl('Start date')}<DateDMY value={offer.startDate || ''} onChange={v => handleHeaderChange('startDate', v)} colors={colors} /></div>
-          <div>{lbl('End date')}<DateDMY value={offer.endDate || ''} onChange={v => handleHeaderChange('endDate', v)} colors={colors} /></div>
+          <div>{lbl('Start date')}<DateDMY dateKey="startDate" value={offer.startDate || ''} onChange={v => handleHeaderChange('startDate', v)} colors={colors} /></div>
+          <div>{lbl('End date')}<DateDMY dateKey="endDate" value={offer.endDate || ''} onChange={v => handleHeaderChange('endDate', v)} colors={colors} /></div>
           <div>{lbl('Status')}
             <select defaultValue={offer.status || 'draft'} onChange={e => handleHeaderChange('status', e.target.value)} style={iStyle}>
               {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -700,14 +686,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     )}
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                        <DateDMY value={it.dateFrom || ''} colors={colors} onChange={v => {
+                        <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateFrom', v);
                           if (v && it.dateTo && v.length === 10 && it.dateTo.length === 10) {
                             const n = Math.round((new Date(it.dateTo) - new Date(v)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} />
-                        <DateDMY value={it.dateTo || ''} colors={colors} onChange={v => {
+                        <DateDMY dateKey={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateTo', v);
                           if (v && it.dateFrom && v.length === 10 && it.dateFrom.length === 10) {
                             const n = Math.round((new Date(v) - new Date(it.dateFrom)) / 86400000);
