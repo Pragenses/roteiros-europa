@@ -146,17 +146,41 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
           .app-main { padding: 0 !important; background: white !important; }
-          @page { size: A4; margin: 0; }
-          @page :first { margin: 0; }
+          @page {
+            size: A4;
+            margin: 35mm 18mm 25mm 18mm;
+          }
+          @page :first {
+            margin: 0;
+          }
           .op-page-frame { display: none !important; }
           .op-print-only { display: block !important; }
-          .op-cover-print { page-break-after: always; width: 210mm; height: 297mm; overflow: hidden; }
+          .op-cover-print { page-break-after: always; width: 210mm; height: 297mm; overflow: hidden; margin: -35mm -18mm -25mm -18mm; }
           .op-cover-print img { width: 210mm; height: 297mm; object-fit: cover; display: block; }
-          .op-content-print { padding: 22mm 18mm 20mm 18mm; }
-          .op-section { page-break-inside: avoid; }
-          .op-print-header { display: flex !important; justify-content: space-between; align-items: flex-start; font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5; margin-bottom: 10mm; }
+          .op-content-print { }
+          .op-section { page-break-inside: avoid; margin-top: 6px; }
+          .op-print-header {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 25mm;
+            display: flex !important;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6mm 18mm 0 18mm;
+            font-family: Arial, sans-serif; font-size: 9px; color: #999; line-height: 1.5;
+            background: white;
+            border-bottom: 1px solid #eee;
+          }
           .op-print-header img { height: 28px; opacity: 0.55; }
-          .op-print-footer { font-family: Arial, sans-serif; font-size: 9px; color: #999; text-align: center; margin-top: 8mm; border-top: 1px solid #eee; padding-top: 3px; }
+          .op-print-footer {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            height: 18mm;
+            font-family: Arial, sans-serif; font-size: 9px; color: #999;
+            text-align: center;
+            padding: 4mm 18mm 0 18mm;
+            background: white;
+            border-top: 1px solid #eee;
+          }
+          .op-no-cover-header { display: none; }
         }
         @media screen {
           .op-print-only { display: none !important; }
@@ -297,22 +321,29 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         </div>
       </div>
 
-      {/* PRINT-ONLY VERSION — hidden on screen, shown only when printing */}
+      {/* PRINT-ONLY VERSION */}
       <div className="op-print-only" style={{ fontFamily: 'Arial, sans-serif' }}>
-        {/* Cover page for print — full page image only */}
+
+        {/* Fixed header — shows on every page except cover */}
+        <div className="op-print-header">
+          <div style={{ fontSize: 9, color: '#999', lineHeight: 1.5 }}>
+            TOUR PRAGENSES&nbsp;&nbsp;www.tour-pragenses.com&nbsp;&nbsp;+420 777 079 997&nbsp;&nbsp;info@tour-pragenses.com
+          </div>
+          <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" />
+        </div>
+
+        {/* Fixed footer — shows on every page */}
+        <div className="op-print-footer">
+          <b>Pragenses s.r.o.</b> | Lipnická 688, Praha 9 - Kyje, Czech Republic | IČO: 284 45 961 | DIČ: CZ284 45 961
+        </div>
+
+        {/* Cover page — full bleed, first page has margin: 0 */}
         <div className="op-cover-print">
           <img src={coverBase64} alt="" />
         </div>
 
-        {/* Content pages for print */}
+        {/* Content */}
         <div className="op-content-print">
-          <div className="op-print-header">
-            <div style={{ fontSize: 9, color: '#999', lineHeight: 1.5 }}>
-              TOUR PRAGENSES<br/>www.tour-pragenses.com<br/>+420 777 079 997<br/>info@tour-pragenses.com
-            </div>
-            <img src={`${ASSETS}/logo.png`} alt="Tour Pragenses" style={{ height: 28, opacity: 0.55 }} />
-          </div>
-
           <h2 style={{ marginTop: 0 }}>{offer.name}</h2>
           {createdDate && <p style={{ color: '#999' }}>Proposta elaborada em: {createdDate}</p>}
           {offer.destinations && <p><b>Destinos:</b> {offer.destinations}</p>}
@@ -365,10 +396,6 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           <div style={{ marginTop: 24, textAlign: 'center' }}>
             <p style={{ fontWeight: 700 }}>Equipe Tour Pragenses</p>
             <p style={{ fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
-          </div>
-
-          <div className="op-print-footer">
-            <b>Pragenses s.r.o.</b> | Lipnická 688, Praha 9 - Kyje, Czech Republic | IČO: 284 45 961 | DIČ: CZ284 45 961
           </div>
         </div>
       </div>
