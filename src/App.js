@@ -136,9 +136,9 @@ export default function App() {
     if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} />;
     if (page === 'offer-detail') return selectedOffer
       ? <OfferDetail offerId={selectedOffer} navigate={navigate} colors={COLORS} />
-      : <div style={{ padding: 40 }}>
-          <div style={{ color: 'red', marginBottom: 10 }}>Debug: selectedOffer = {String(selectedOffer)}, page = {page}</div>
-          <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
+      : <div style={{ padding: 40, background: 'red', minHeight: '100vh' }}>
+          <div style={{ color: 'white', fontSize: 20, marginBottom: 10 }}>CHYBA: selectedOffer = {String(selectedOffer)}</div>
+          <button onClick={() => navigate('offers')} style={{ color: 'white', background: 'none', border: '2px solid white', padding: 10, cursor: 'pointer' }}>← Zpět na nabídky</button>
         </div>;
     if (page === 'offer-print') return <OfferPrint offerId={selectedOffer} navigate={navigate} colors={COLORS} />;
     if (page === 'dashboard') return <Dashboard navigate={navigate} colors={COLORS} />;
