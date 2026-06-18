@@ -53,7 +53,8 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const margin = offer.margin || 15;
   const paxList = offer.paxList || '15,20,25,30,35';
   const activeItems = items.filter(it => it.enabled !== false);
-  const { rows } = computeOfferPricing(items, margin, paxList, rates);
+  const eurData = computeEurOnly();
+  const rows = eurData.rows;
 
   const focCountNum = parseInt(offer.focCount) || 1;
   const focType = offer.focType || 'dbl';
