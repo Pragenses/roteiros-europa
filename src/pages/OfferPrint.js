@@ -129,9 +129,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const P = { fontSize: 11, lineHeight: 1.6, color: '#222', margin: '4px 0 8px', fontFamily: 'Arial, sans-serif' };
   const UL = { fontSize: 11, lineHeight: 1.7, paddingLeft: 18, fontFamily: 'Arial, sans-serif', color: '#222' };
 
-  const Watermark = () => (
-    <img src={watermarkBase64} alt="" className="op-watermark-print" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.45, pointerEvents: 'none', zIndex: 0 }} />
-  );
+  const Watermark = () => null; // screen watermark handled per-page below
 
   const Header = () => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: `8mm ${MARGIN_H} 0`, height: HEADER_H, boxSizing: 'border-box', position: 'relative', zIndex: 1 }}>
@@ -181,11 +179,15 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     </div>
   );
 
+  const ScreenWatermark = () => (
+    <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.45, pointerEvents: 'none', zIndex: 0 }} />
+  );
+
   // Helper to create a full A4 page with header/footer
   const Page = ({ children }) => (
-    <div className="op-page" style={{ ...PAGE, minHeight: '297mm' }}>
-      <Watermark />
-      <Header />
+    <div className="op-page" style={{ ...PAGE, minHeight: '297mm', position: 'relative', overflow: 'hidden' }}>
+      <ScreenWatermark />
+      <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
       <div style={CONTENT_STYLE}>
         {children}
       </div>
@@ -222,7 +224,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         }
       `}</style>
 
-      <style>{`@media print { .op-page { background-image: url("${watermarkBase64}") !important; background-repeat: no-repeat !important; background-position: right top !important; background-size: 55% auto !important; } }`}</style>
+      <style>{`@media print { .op-wm { position: fixed !important; top: 0 !important; right: 0 !important; width: 55% !important; height: 100vh !important; object-fit: cover !important; object-position: top right !important; opacity: 0.45 !important; z-index: 0 !important; pointer-events: none !important; } }`}</style>
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3' }}>
         <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
@@ -230,9 +232,12 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         {createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
 
+      {/* Fixed watermark for print — shows on every page */}
+      <img src={watermarkBase64} alt="" className="op-wm" style={{ display: 'none' }} />
+
       {/* PAGE 1 — Cover */}
       <div className="op-page" style={{ ...PAGE_FIXED }}>
-        <Watermark />
+        <ScreenWatermark />
         <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
         <div style={{ position: 'relative', zIndex: 1, padding: `2mm ${MARGIN_H} 0`, height: `calc(297mm - ${HEADER_H} - ${FOOTER_H})`, overflow: 'hidden' }}>
           <img src={coverBase64} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
