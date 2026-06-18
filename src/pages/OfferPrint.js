@@ -123,8 +123,9 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const HEADER_H = '28mm';
   const FOOTER_H = '16mm';
   const MARGIN_H = '18mm';
-  const PAGE = { fontFamily: 'Arial, sans-serif', position: 'relative', width: '210mm', minHeight: '297mm', boxSizing: 'border-box', overflow: 'hidden', background: 'white' };
-  const CONTENT_STYLE = { padding: `4mm ${MARGIN_H} ${FOOTER_H}`, position: 'relative', zIndex: 1 };
+  const PAGE = { fontFamily: 'Arial, sans-serif', position: 'relative', width: '210mm', boxSizing: 'border-box', overflow: 'hidden', background: 'white' };
+  const PAGE_FIXED = { ...PAGE, height: '297mm' };
+  const CONTENT_STYLE = { padding: `4mm ${MARGIN_H} 0`, position: 'relative', zIndex: 1 };
   const P = { fontSize: 11, lineHeight: 1.6, color: '#222', margin: '4px 0 8px', fontFamily: 'Arial, sans-serif' };
   const UL = { fontSize: 11, lineHeight: 1.7, paddingLeft: 18, fontFamily: 'Arial, sans-serif', color: '#222' };
 
@@ -181,13 +182,14 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   );
 
   // Helper to create a full A4 page with header/footer
-  const Page = ({ children, isLast }) => (
-    <div className="op-page" style={{ ...PAGE }}>
+  const Page = ({ children }) => (
+    <div className="op-page" style={{ ...PAGE, minHeight: '297mm' }}>
       <Watermark />
       <Header />
       <div style={CONTENT_STYLE}>
         {children}
       </div>
+      <div style={{ height: FOOTER_H }} />
       <Footer />
     </div>
   );
@@ -224,11 +226,11 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       </div>
 
       {/* PAGE 1 — Cover */}
-      <div className="op-page" style={{ ...PAGE }}>
+      <div className="op-page" style={{ ...PAGE_FIXED }}>
         <Watermark />
         <Header />
-        <div style={{ position: 'relative', zIndex: 1, padding: `0 ${MARGIN_H}` }}>
-          <img src={coverBase64} alt="" style={{ width: '100%', display: 'block', marginTop: 4 }} />
+        <div style={{ position: 'relative', zIndex: 1, padding: `2mm ${MARGIN_H} 0`, height: `calc(297mm - ${HEADER_H} - ${FOOTER_H})`, overflow: 'hidden' }}>
+          <img src={coverBase64} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         </div>
         <Footer />
       </div>
