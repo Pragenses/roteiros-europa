@@ -130,7 +130,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const UL = { fontSize: 11, lineHeight: 1.7, paddingLeft: 18, fontFamily: 'Arial, sans-serif', color: '#222' };
 
   const Watermark = () => (
-    <img src={watermarkBase64} alt="" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.45, pointerEvents: 'none', zIndex: 0 }} />
+    <img src={watermarkBase64} alt="" className="op-watermark-print" style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', objectFit: 'cover', objectPosition: 'top right', opacity: 0.45, pointerEvents: 'none', zIndex: 0 }} />
   );
 
   const Header = () => (
@@ -213,6 +213,15 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           .op-page { page-break-after: always; }
           .op-page:last-child { page-break-after: auto; }
           .op-avoid-break { page-break-inside: avoid; }
+          .op-watermark-print {
+            position: fixed !important;
+            top: 0 !important;
+            right: 0 !important;
+            width: 55% !important;
+            height: 100% !important;
+            opacity: 0.45 !important;
+            z-index: 0 !important;
+          }
         }
         @media screen {
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
