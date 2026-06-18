@@ -224,7 +224,15 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         }
       `}</style>
 
-      <style>{`@media print { .op-wm { position: fixed !important; top: 0 !important; right: 0 !important; width: 55% !important; height: 100vh !important; object-fit: cover !important; object-position: top right !important; opacity: 0.45 !important; z-index: 0 !important; pointer-events: none !important; } }`}</style>
+      <style>{`
+        @media print {
+          .op-wm { display: block !important; position: fixed !important; top: 0 !important; right: 0 !important; width: 55% !important; height: 100% !important; object-fit: cover !important; object-position: top right !important; opacity: 0.45 !important; z-index: 9999 !important; pointer-events: none !important; }
+          .op-wm-screen { display: none !important; }
+        }
+        @media screen {
+          .op-wm { display: none !important; }
+        }
+      `}</style>
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3' }}>
         <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
