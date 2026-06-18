@@ -99,10 +99,21 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       ? ((evalAmount(it.pricePerNightSngl) + evalAmount(it.cityTaxSngl || it.cityTax)) * (parseFloat(it.nights) || 0))
       : (it.costSngl || it.costDbl)), it.currency), 0);
     const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
+    // Add guide hotel costs (auto-calculated from SNGL hotel sum)
+    const guideHotelItems = activeItems.filter(it => it.type === 'group' && it.subType === 'guide_hotel');
+    const getGuideHotelCost = (it) => {
+      if (it.guideOverride !== '' && it.guideOverride !== undefined && it.guideOverride !== null) return evalAmount(it.guideOverride);
+      return activeItems.filter(h => h.type === 'per_pax' && h.subType === 'hotel' && h.enabled !== false)
+        .reduce((sum, h) => sum + toEUR(evalAmount(h.subType === 'hotel'
+          ? ((evalAmount(h.pricePerNightSngl) + evalAmount(h.cityTaxSngl || h.cityTax)) * (parseFloat(h.nights) || 0))
+          : (h.costSngl || h.costDbl)), h.currency), 0);
+    };
+    const guideHotelTotal = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
+    const totalGroupCost = groupTotal + guideHotelTotal;
     const snglSupp = perPaxSngl - perPaxDbl;
     const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
     const sRows = paxCounts.map(pax => {
-      const costDbl = groupTotal / pax + perPaxDbl;
+      const costDbl = totalGroupCost / pax + perPaxDbl;
       const marginAmount = costDbl * (margin / 100);
       const focShare = (focPool * focCountNum) / pax;
       const finalDbl = costDbl + marginAmount + focShare;
