@@ -1,4 +1,19 @@
 import React, { useState, useEffect } from 'react';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(err) { return { error: err }; }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding: 40, fontFamily: 'sans-serif' }}>
+        <h2 style={{ color: 'red' }}>Chyba v aplikaci:</h2>
+        <pre style={{ background: '#fee', padding: 20, borderRadius: 8, fontSize: 12, whiteSpace: 'pre-wrap' }}>{this.state.error.message}{'\n'}{this.state.error.stack}</pre>
+        <button onClick={() => this.setState({ error: null })} style={{ marginTop: 16, padding: '8px 16px', cursor: 'pointer' }}>← Zpět</button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import Dashboard from './pages/Dashboard';
@@ -175,7 +190,9 @@ export default function App() {
         </div>
       </aside>
       <main className="app-main" style={{ flex: 1, overflow: 'auto', padding: '2rem' }}>
-        {renderPage()}
+        <ErrorBoundary>
+          {renderPage()}
+        </ErrorBoundary>
       </main>
     </div>
   );
