@@ -55,15 +55,16 @@ const DateDMY = ({ value, onChange, colors }) => {
     }
     return '';
   };
-
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (ref.current && value && value.length === 10) {
+      ref.current.value = toDisplay(value);
+    }
+  }, [value]);
   const iStyle = { padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', width: 100 };
-
   return (
-    <input
-      type="text"
-      placeholder="DD.MM.RRRR"
+    <input ref={ref} type="text" placeholder="DD.MM.RRRR"
       defaultValue={toDisplay(value)}
-      key={value}
       onBlur={e => {
         const iso = toISO(e.target.value);
         if (iso) { e.target.value = toDisplay(iso); onChange(iso); }
