@@ -140,10 +140,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   useEffect(() => {
     if (loading) return;
     const interval = setInterval(async () => {
-      if (loading || isLocked || items.length === 0) return;
+      if (loading || isLocked) return;
+      let currentItems;
+      await new Promise(resolve => {
+        setItems(prev => { currentItems = prev; resolve(); return prev; });
+      });
+      if (currentItems.length === 0) return;
       try {
         await updateDoc(doc(db, 'offers', offerId), {
-          items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
+          items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
           updatedAt: new Date().toISOString(),
         });
         setLastAutoSave(new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -152,7 +157,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       }
     }, 30000);
     return () => clearInterval(interval);
-  }, [loading, items, margin, paxList, focCount, focType, offerId]);
+  }, [loading, isLocked, margin, paxList, focCount, focType, offerId]);
 
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
@@ -429,17 +434,26 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
     if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
     await new Promise(r => setTimeout(r, 300));
-    if (items.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
-      if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) return;
-    }
     setSaving(true);
     setSaveStatus('saving');
     try {
+      // Read the truly current items via functional update to avoid stale closure
+      let currentItems;
+      await new Promise(resolve => {
+        setItems(prev => { currentItems = prev; resolve(); return prev; });
+      });
+      if (currentItems.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
+        if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) {
+          setSaving(false);
+          setSaveStatus('');
+          return;
+        }
+      }
       await updateDoc(doc(db, 'offers', offerId), {
-        items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
+        items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
         updatedAt: new Date().toISOString(),
       });
-      setLastSavedItems(items);
+      setLastSavedItems(currentItems);
       setSaveStatus('ok');
       setTimeout(() => setSaveStatus(''), 5000);
     } catch (err) {
