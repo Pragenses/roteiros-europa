@@ -391,7 +391,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   };
 
   const updateItem = (id, field, value) => {
-    setItems(items.map(it => it.id === id ? { ...it, [field]: value } : it));
+    const newItems = items.map(it => it.id === id ? { ...it, [field]: value } : it);
+    setItems(newItems);
+    // For date fields, save immediately to Firestore
+    if (field === 'dateTo' || field === 'dateFrom') {
+      updateDoc(doc(db, 'offers', offerId), {
+        items: newItems,
+        updatedAt: new Date().toISOString(),
+      }).catch(err => console.error('Auto-save date failed:', err));
+    }
   };
 
   const removeItem = (id) => {
