@@ -409,22 +409,29 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   };
 
   const [lastSavedItems, setLastSavedItems] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'ok', 'error'
 
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
     if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
-    // Wait for any pending onBlur state updates (e.g. DateDMY)
-    await new Promise(r => setTimeout(r, 150));
-    // Safety: warn if saving empty items when we had items before
+    await new Promise(r => setTimeout(r, 300));
     if (items.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
       if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) return;
     }
     setSaving(true);
-    await updateDoc(doc(db, 'offers', offerId), {
-      items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
-      updatedAt: new Date().toISOString(),
-    });
-    setLastSavedItems(items);
+    setSaveStatus('saving');
+    try {
+      await updateDoc(doc(db, 'offers', offerId), {
+        items, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
+        updatedAt: new Date().toISOString(),
+      });
+      setLastSavedItems(items);
+      setSaveStatus('ok');
+      setTimeout(() => setSaveStatus(''), 5000);
+    } catch (err) {
+      setSaveStatus('error');
+      alert('❌ Chyba při ukládání: ' + err.message);
+    }
     setSaving(false);
   };
 
@@ -799,8 +806,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button onClick={handleSave} disabled={saving || loading} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: (saving || loading) ? 0.6 : 1 }}>
-            {saving ? 'Saving...' : '💾 Save offer'}
+            {saving ? 'Ukládám...' : '💾 Save offer'}
           </button>
+          {saveStatus === 'ok' && <div style={{ fontSize: 13, color: 'green', fontWeight: 600 }}>✓ Uloženo v {new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>}
+          {saveStatus === 'error' && <div style={{ fontSize: 13, color: 'red', fontWeight: 600 }}>❌ Chyba uložení!</div>}
           {lastAutoSave && <div style={{ fontSize: 11, color: colors.muted }}>✓ Automaticky uloženo v {lastAutoSave}</div>}
           <div style={{ fontSize: 12, color: colors.muted }}>
             Exchange rates (→ EUR){ratesUpdatedAt ? ` · ECB ${ratesUpdatedAt}` : ''}: {Object.entries(rates).map(([c, r]) => `${c} ${r.toFixed(4)}`).join(' · ')}
