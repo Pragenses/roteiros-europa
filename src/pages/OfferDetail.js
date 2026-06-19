@@ -453,7 +453,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   };
 
   const handleConvertToOrder = async () => {
-    if (!window.confirm('Create a new Order from this offer? You can fill in services and details afterwards.')) return;
+    if (!window.confirm('Create a new Order from this offer? Hotels and tickets will be copied as services.')) return;
     const data = {
       name: offer.name,
       clientId: offer.clientId || '',
@@ -469,6 +469,81 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       createdAt: new Date().toISOString(),
     };
     const ref = await addDoc(collection(db, 'orders'), data);
+
+    // Copy hotels as hotel services
+    const currentItems = itemsRef.current;
+    const hotelItems = currentItems.filter(it => it.enabled !== false && it.subType === 'hotel');
+    for (const h of hotelItems) {
+      const nights = parseFloat(h.nights) || '';
+      await addDoc(collection(db, 'orders', ref.id, 'services'), {
+        type: 'hotel',
+        name: h.name || '',
+        providerName: h.name || '',
+        providerEmail: '', providerEmail2: '', providerWebsite: '', providerPhone: '',
+        city: h.city || '',
+        dateFrom: h.dateFrom || '',
+        dateTo: h.dateTo || '',
+        ticketCount: '',
+        nights,
+        currency: h.currency || 'EUR',
+        status: 'enquired',
+        optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
+        notes: '',
+        dblRooms: '', snglRooms: '', twnRooms: '', trplRooms: '',
+        pricePerDblRoom: h.pricePerNightDbl || '',
+        pricePerSnglRoom: h.pricePerNightSngl || '',
+        pricePerTwnRoom: '', pricePerTrplRoom: '',
+        cityTax: h.cityTax || '',
+        cityTaxIncluded: 'separate', cityTaxType: 'per_person',
+        dinners: '', dinnerPrice: '', lunches: '', lunchPrice: '',
+        guideRoom: '', guideRoomPrice: '',
+        driverAccom: 'none', driverRoomPrice: '', driverNights: '',
+        hotelFoc: 'none', hotelFocOccupancy: 'dbl',
+        cancellationDays: '', cancellationDate: '',
+        pricePerPax: '', totalPrice: '',
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // Copy tickets/meals as ticket services
+    const ticketItems = currentItems.filter(it => it.enabled !== false && it.subType === 'ticket');
+    for (const t of ticketItems) {
+      await addDoc(collection(db, 'orders', ref.id, 'services'), {
+        type: 'ticket',
+        name: t.name || '',
+        providerName: '', providerEmail: '', providerEmail2: '', providerWebsite: '', providerPhone: '',
+        dateFrom: t.dateFrom || '', dateTo: t.dateTo || '',
+        currency: t.currency || 'EUR',
+        status: 'enquired',
+        optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
+        notes: '',
+        pricePerPax: t.costDbl || '',
+        ticketCount: '',
+        totalPrice: '',
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // Copy group costs (bus, guide etc.) as "other" services if that type exists, else as notes
+    const groupSvcItems = currentItems.filter(it => it.enabled !== false && it.type === 'group' && it.subType !== 'guide_hotel');
+    for (const g of groupSvcItems) {
+      await addDoc(collection(db, 'orders', ref.id, 'services'), {
+        type: 'other',
+        name: g.name || '',
+        providerName: '', providerEmail: '', providerEmail2: '', providerWebsite: '', providerPhone: '',
+        dateFrom: g.dateFrom || '', dateTo: g.dateTo || '',
+        currency: g.currency || 'EUR',
+        status: 'enquired',
+        optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
+        notes: '',
+        totalPrice: g.groupCost || '',
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      });
+    }
+
     await handleHeaderChange('status', 'won');
     navigate('order-detail', { orderId: ref.id });
   };
