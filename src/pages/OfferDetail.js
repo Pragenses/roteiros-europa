@@ -927,11 +927,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                 currentCity = h.city;
                 data.push([`${h.city} ${fmtDate(h.dateFrom)} - ${fmtDate(h.dateTo)}`]);
               }
-              const dbl = parseFloat(h.pricePerNightDbl) || 0;
-              const sngl = parseFloat(h.pricePerNightSngl) || 0;
+              const dbl = evalAmount(h.pricePerNightDbl);
+              const sngl = evalAmount(h.pricePerNightSngl);
               const nights = parseFloat(h.nights) || 0;
-              const tax = parseFloat(h.cityTax) || 0;
-              const taxSngl = parseFloat(h.cityTaxSngl) || parseFloat(h.cityTax) || 0;
+              const tax = evalAmount(h.cityTax);
+              const taxSngl = (h.cityTaxSngl !== '' && h.cityTaxSngl !== undefined && h.cityTaxSngl !== null) ? evalAmount(h.cityTaxSngl) : evalAmount(h.cityTax);
               const totalDbl = ((dbl + tax) * nights) / 2;
               const totalSngl = (sngl + taxSngl) * nights;
               data.push([h.name || '', '', '', '', dbl, sngl, totalDbl, totalSngl]);
@@ -944,7 +944,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               data.push([]);
               data.push(['INGRESSOS']);
               tickets.forEach(t => {
-                const v = parseFloat(t.costDbl) || 0;
+                const v = evalAmount(t.costDbl);
                 data.push([t.name || '', '', '', '', v, '', v, v]);
               });
             }
@@ -958,7 +958,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             // Group costs
             data.push([]);
             groupItems.filter(it => it.subType !== 'guide_hotel').forEach(g => {
-              data.push([g.name || '', '', parseFloat(g.groupCost) || 0]);
+              data.push([g.name || '', '', evalAmount(g.groupCost)]);
             });
             data.push(['TOTAL group', '', groupTotalEUR.toFixed(2)]);
 
