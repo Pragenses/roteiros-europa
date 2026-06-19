@@ -1146,7 +1146,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ↻ Gerar automaticamente
           </button>
         </div>
-        <textarea defaultValue={offer.includedText} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
+        <textarea key={offer.includedText} defaultValue={offer.includedText} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
           placeholder={'Hospedagem em hotéis selecionados...\nTransporte por ônibus panorâmico...\n1x Visita ao Coliseu...'}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
