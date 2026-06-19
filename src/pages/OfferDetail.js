@@ -79,6 +79,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
   const [items, setItems] = useState([]);
+  const itemsRef = React.useRef(items);
+  const [lastSavedItems, setLastSavedItems] = useState(null);
   const [isLocked, setIsLocked] = useState(false);
   const [showLockDialog, setShowLockDialog] = useState(false);
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
@@ -100,6 +102,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       const data = snap.data();
       setOffer({ id: snap.id, ...data });
       setItems(data.items || []);
+      itemsRef.current = data.items || [];
       setLastSavedItems(data.items || []);
       setIsLocked(data.locked || false);
       setMargin(data.margin ?? 15);
@@ -135,29 +138,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
-  // Autosave every 30 seconds — only when data is loaded and items exist
-  const [lastAutoSave, setLastAutoSave] = useState(null);
-  useEffect(() => {
-    if (loading) return;
-    const interval = setInterval(async () => {
-      if (loading || isLocked) return;
-      let currentItems;
-      await new Promise(resolve => {
-        setItems(prev => { currentItems = prev; resolve(); return prev; });
-      });
-      if (currentItems.length === 0) return;
-      try {
-        await updateDoc(doc(db, 'offers', offerId), {
-          items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
-          updatedAt: new Date().toISOString(),
-        });
-        setLastAutoSave(new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-      } catch (err) {
-        console.error('Autosave failed:', err);
-      }
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [loading, isLocked, margin, paxList, focCount, focType, offerId]);
+  // 30-second interval autosave DISABLED — debounced per-field auto-save (updateItem) now handles this more reliably
+  const [lastAutoSave] = useState(null);
 
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
@@ -347,6 +329,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     }
   }, [items]);
 
+  const saveTimeoutRef = React.useRef(null);
   const addItem = (type, subType) => {
     const newItem = { id: Date.now() + Math.random(), name: '', city: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' };
     setNewItemId(newItem.id);
@@ -366,7 +349,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       } else {
         newItems.push(newItem);
       }
-      // Save immediately to Firestore so new item is never lost
+      itemsRef.current = newItems;
+      // Cancel any pending debounced save (it has stale data) and save immediately
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       updateDoc(doc(db, 'offers', offerId), {
         items: newItems,
         updatedAt: new Date().toISOString(),
@@ -400,15 +385,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     dragOverItem.current = null;
   };
 
-  const saveTimeoutRef = React.useRef(null);
   const updateItem = (id, field, value) => {
     setItems(prev => {
       const newItems = prev.map(it => it.id === id ? { ...it, [field]: value } : it);
+      itemsRef.current = newItems;
       // Debounced auto-save for any field change (prevents data loss like the Munich nights bug)
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
         updateDoc(doc(db, 'offers', offerId), {
-          items: newItems,
+          items: itemsRef.current,
           updatedAt: new Date().toISOString(),
         }).catch(err => console.error('Auto-save item field failed:', err));
       }, 800);
@@ -419,6 +404,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const removeItem = (id) => {
     setItems(prev => {
       const newItems = prev.filter(it => it.id !== id);
+      itemsRef.current = newItems;
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       updateDoc(doc(db, 'offers', offerId), {
         items: newItems,
         updatedAt: new Date().toISOString(),
@@ -427,21 +414,18 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     });
   };
 
-  const [lastSavedItems, setLastSavedItems] = useState(null);
   const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'ok', 'error'
 
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
     if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
+    // Cancel any pending debounced auto-save — we'll save the current state right now instead
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     await new Promise(r => setTimeout(r, 300));
     setSaving(true);
     setSaveStatus('saving');
     try {
-      // Read the truly current items via functional update to avoid stale closure
-      let currentItems;
-      await new Promise(resolve => {
-        setItems(prev => { currentItems = prev; resolve(); return prev; });
-      });
+      const currentItems = itemsRef.current;
       if (currentItems.length === 0 && lastSavedItems && lastSavedItems.length > 0) {
         if (!window.confirm('POZOR: Seznam položek je prázdný! Uložením smažete všechny hotely a položky. Opravdu chcete uložit?')) {
           setSaving(false);
