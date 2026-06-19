@@ -58,7 +58,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const focType = offer.focType || 'dbl';
 
   const activeCurrencies = [...new Set(activeItems.map(it => it.currency))].filter(c => SPLIT_CURRENCIES.includes(c));
-  const hasSplit = activeCurrencies.length > 0;
+  const hasSplit = activeCurrencies.length > 0 && (offer.showSplit ?? false);
   const paxCounts = paxList.split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
 
   const computeByCurrency = (cur) => {

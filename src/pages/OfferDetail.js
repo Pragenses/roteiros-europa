@@ -106,6 +106,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       setPaxList(data.paxList || '15,20,25,30,35');
       setFocCount(data.focCount ?? 1);
       setFocType(data.focType || 'dbl');
+      setShowSplit(data.showSplit ?? false);
     }
     const cliSnap = await getDocs(collection(db, 'clients'));
     setClients(cliSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -821,7 +822,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>💰 Selling price per pax</div>
           {hasSplit && (
-            <button onClick={() => setShowSplit(s => !s)} style={{ padding: '5px 12px', background: showSplit ? colors.primary : colors.white, color: showSplit ? colors.white : colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            <button onClick={() => { const newVal = !showSplit; setShowSplit(newVal); updateDoc(doc(db, 'offers', offerId), { showSplit: newVal }).catch(()=>{}); }} style={{ padding: '5px 12px', background: showSplit ? colors.primary : colors.white, color: showSplit ? colors.white : colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
               {showSplit ? '📊 Zobrazit celkem (EUR)' : `📊 Rozdělit podle měn (${activeCurrencies.join(' + ')} + EUR)`}
             </button>
           )}
