@@ -669,10 +669,20 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         {(() => {
           const totalNights = offer.startDate && offer.endDate && offer.startDate.length === 10 && offer.endDate.length === 10
             ? Math.round((new Date(offer.endDate) - new Date(offer.startDate)) / 86400000)
-            : activeItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
-          return totalNights > 0 ? (
-            <div style={{ fontSize: 13, color: colors.primary, fontWeight: 600, marginBottom: 10, padding: '6px 10px', background: '#FFFDE7', borderRadius: 7, display: 'inline-block' }}>
-              🏨 Celkem nocí: {totalNights}
+            : null;
+          const hotelNightsSum = activeItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
+          const displayNights = totalNights ?? hotelNightsSum;
+          const mismatch = totalNights !== null && hotelNightsSum > 0 && totalNights !== hotelNightsSum;
+          return displayNights > 0 ? (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 13, color: colors.primary, fontWeight: 600, padding: '6px 10px', background: '#FFFDE7', borderRadius: 7, display: 'inline-block' }}>
+                🏨 Celkem nocí: {displayNights}
+              </div>
+              {mismatch && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Datum nabídky ukazuje {totalNights} nocí, ale součet nocí u hotelů je {hotelNightsSum}. Zkontrolujte prosím počet nocí u hotelů — chybí nebo přebývá {Math.abs(totalNights - hotelNightsSum)} {Math.abs(totalNights - hotelNightsSum) === 1 ? 'noc' : 'noci'}.
+                </div>
+              )}
             </div>
           ) : null;
         })()}
