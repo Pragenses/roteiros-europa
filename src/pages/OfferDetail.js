@@ -832,6 +832,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <>
             <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
               Hotels/tickets per pax (DBL): {perPaxDblEUR.toFixed(2)} EUR · (SNGL): {perPaxSnglEUR.toFixed(2)} EUR · SNGL supplement: {snglSupplementEUR.toFixed(2)} EUR · Group costs total: {groupTotalEUR.toFixed(2)} EUR
+              <br/>
+              <b>↳ Apenas hotéis (DBL): {paxItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + toEURWithRates(getEffectiveCostDbl(it), it.currency), 0).toFixed(2)} EUR</b>
+              {' · '}
+              <b>Apenas ingressos/outros (DBL): {paxItems.filter(it => it.subType !== 'hotel').reduce((sum, it) => sum + toEURWithRates(getEffectiveCostDbl(it), it.currency), 0).toFixed(2)} EUR</b>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
