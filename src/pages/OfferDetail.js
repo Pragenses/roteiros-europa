@@ -345,25 +345,29 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const addItem = (type, subType) => {
     const newItem = { id: Date.now() + Math.random(), name: '', city: '', type, subType: subType || '', enabled: true, costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '', nights: '', cityTax: '', cityTaxSngl: '', guideOverride: '', dateFrom: '', dateTo: '', groupCost: '', currency: 'EUR' };
     setNewItemId(newItem.id);
-    const newItems = [...items];
-    if (type === 'per_pax' && subType === 'hotel') {
-      // Insert after last hotel
-      const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
-      newItems.splice(lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0, 0, newItem);
-    } else if (type === 'per_pax' && subType === 'ticket') {
-      // Insert after last ticket/meal (or after last hotel if no tickets yet)
-      const lastTicketIdx = newItems.map((it, i) => it.subType === 'ticket' ? i : -1).filter(i => i >= 0).pop();
-      if (lastTicketIdx !== undefined) {
-        newItems.splice(lastTicketIdx + 1, 0, newItem);
-      } else {
+    setItems(prev => {
+      const newItems = [...prev];
+      if (type === 'per_pax' && subType === 'hotel') {
         const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
         newItems.splice(lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0, 0, newItem);
+      } else if (type === 'per_pax' && subType === 'ticket') {
+        const lastTicketIdx = newItems.map((it, i) => it.subType === 'ticket' ? i : -1).filter(i => i >= 0).pop();
+        if (lastTicketIdx !== undefined) {
+          newItems.splice(lastTicketIdx + 1, 0, newItem);
+        } else {
+          const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+          newItems.splice(lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0, 0, newItem);
+        }
+      } else {
+        newItems.push(newItem);
       }
-    } else {
-      // Group costs go to the end
-      newItems.push(newItem);
-    }
-    setItems(newItems);
+      // Save immediately to Firestore so new item is never lost
+      updateDoc(doc(db, 'offers', offerId), {
+        items: newItems,
+        updatedAt: new Date().toISOString(),
+      }).catch(err => console.error('Auto-save new item failed:', err));
+      return newItems;
+    });
   };
 
   const moveItem = (index, direction) => {
@@ -391,22 +395,31 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     dragOverItem.current = null;
   };
 
+  const saveTimeoutRef = React.useRef(null);
   const updateItem = (id, field, value) => {
     setItems(prev => {
       const newItems = prev.map(it => it.id === id ? { ...it, [field]: value } : it);
-      // For date fields, save immediately to Firestore
-      if (field === 'dateTo' || field === 'dateFrom') {
+      // Debounced auto-save for any field change (prevents data loss like the Munich nights bug)
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
         updateDoc(doc(db, 'offers', offerId), {
           items: newItems,
           updatedAt: new Date().toISOString(),
-        }).catch(err => console.error('Auto-save date failed:', err));
-      }
+        }).catch(err => console.error('Auto-save item field failed:', err));
+      }, 800);
       return newItems;
     });
   };
 
   const removeItem = (id) => {
-    setItems(items.filter(it => it.id !== id));
+    setItems(prev => {
+      const newItems = prev.filter(it => it.id !== id);
+      updateDoc(doc(db, 'offers', offerId), {
+        items: newItems,
+        updatedAt: new Date().toISOString(),
+      }).catch(err => console.error('Auto-save remove failed:', err));
+      return newItems;
+    });
   };
 
   const [lastSavedItems, setLastSavedItems] = useState(null);
