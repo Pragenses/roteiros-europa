@@ -936,10 +936,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             style={{ width: 32, height: 32, fontWeight: 700, background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer', fontFamily: 'Georgia, serif' }}>
             B
           </button>
-          {['#c0392b', '#1a3a5c', '#27500A', '#000000'].map(c => (
-            <button key={c} type="button" onMouseDown={e => e.preventDefault()} onClick={() => document.execCommand('foreColor', false, c)}
+          {[
+            { c: '#FFF59D', label: 'Amarelo' },
+            { c: '#F8BBD0', label: 'Rosa claro' },
+            { c: '#B2EBF2', label: 'Turquesa claro' },
+            { c: '#E0E0E0', label: 'Cinza' },
+          ].map(({ c, label }) => (
+            <button key={c} type="button" onMouseDown={e => e.preventDefault()} onClick={() => document.execCommand('hiliteColor', false, c)}
               style={{ width: 32, height: 32, background: c, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer' }}
-              title={`Cor: ${c}`} />
+              title={label} />
           ))}
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => document.execCommand('removeFormat')}
             style={{ padding: '0 10px', height: 32, background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>
