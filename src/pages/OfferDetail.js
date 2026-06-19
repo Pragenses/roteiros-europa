@@ -897,9 +897,95 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           Cole aqui o texto do roteiro dia-a-dia (em português). Este texto será usado na proposta gerada para o cliente.
         </div>
         <textarea defaultValue={offer.programText} onBlur={e => handleHeaderChange('programText', e.target.value)} rows={10} placeholder={"📅 07/04/2027 • QUARTA-FEIRA • DIA 1: BRASIL / LISBOA / BERLIM (AÉREO)\nApresentação no aeroporto para embarque...\n\n📅 08/04/2027 • QUINTA-FEIRA • DIA 2: BERLIM • CITY TOUR\n..."} style={{ ...iStyle, resize: 'vertical', fontFamily: 'Georgia, serif', lineHeight: 1.5 }} />
-        <div style={{ marginTop: 14 }}>
+        <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
           <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             📄 Gerar oferta (PDF)
+          </button>
+          <button onClick={() => {
+            // Build Excel data
+            const fmtDate = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}.${m}.${y}`; };
+            const data = [];
+            data.push([`${offer.name || ''} | ${fmtDate(offer.startDate)} - ${fmtDate(offer.endDate)}`]);
+            data.push([offer.clientName || '', '', '', '', 'DBL', 'SNGL', 'DBL total', 'SNGL total']);
+            data.push([]);
+
+            // Hotels
+            const hotels = activeItems.filter(it => it.subType === 'hotel');
+            let currentCity = '';
+            hotels.forEach(h => {
+              if (h.city && h.city !== currentCity) {
+                currentCity = h.city;
+                data.push([`${h.city} ${fmtDate(h.dateFrom)} - ${fmtDate(h.dateTo)}`]);
+              }
+              const dbl = parseFloat(h.pricePerNightDbl) || 0;
+              const sngl = parseFloat(h.pricePerNightSngl) || 0;
+              const nights = parseFloat(h.nights) || 0;
+              const tax = parseFloat(h.cityTax) || 0;
+              const taxSngl = parseFloat(h.cityTaxSngl) || parseFloat(h.cityTax) || 0;
+              const totalDbl = ((dbl + tax) * nights) / 2;
+              const totalSngl = (sngl + taxSngl) * nights;
+              data.push([h.name || '', '', '', '', dbl, sngl, totalDbl, totalSngl]);
+              if (tax > 0) data.push(['TAX', '', '', '', tax, taxSngl, tax * nights / 2, taxSngl * nights]);
+            });
+
+            // Tickets
+            const tickets = activeItems.filter(it => it.subType === 'ticket');
+            if (tickets.length > 0) {
+              data.push([]);
+              data.push(['INGRESSOS']);
+              tickets.forEach(t => {
+                const v = parseFloat(t.costDbl) || 0;
+                data.push([t.name || '', '', '', '', v, '', v, v]);
+              });
+            }
+
+            // Totals per pax
+            data.push([]);
+            const perPaxDbl = perPaxDblEUR;
+            const perPaxSngl = perPaxSnglEUR;
+            data.push(['TOTAL per pax', '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2)]);
+
+            // Group costs
+            data.push([]);
+            groupItems.filter(it => it.subType !== 'guide_hotel').forEach(g => {
+              data.push([g.name || '', '', parseFloat(g.groupCost) || 0]);
+            });
+            data.push(['TOTAL group', '', groupTotalEUR.toFixed(2)]);
+
+            // Pricing table
+            data.push([]);
+            data.push(['Pax', 'Group/pax', '+ Hotels (DBL)', '= Cost DBL', `+ Margin ${margin}%`, '+ FOC', '= Price DBL', 'Price SNGL']);
+            rows.forEach(r => {
+              data.push([
+                `${r.pax} + ${focCountNum} FOC`,
+                r.groupPerPax.toFixed(2),
+                perPaxDblEUR.toFixed(2),
+                r.costDbl.toFixed(2),
+                r.marginAmount.toFixed(2),
+                r.focShare.toFixed(2),
+                r.finalDbl.toFixed(2),
+                r.finalSngl.toFixed(2)
+              ]);
+            });
+
+            // Load SheetJS and create Excel
+            const loadXLSX = () => new Promise((resolve, reject) => {
+              if (window.XLSX) { resolve(window.XLSX); return; }
+              const s = document.createElement('script');
+              s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+              s.onload = () => resolve(window.XLSX);
+              s.onerror = reject;
+              document.head.appendChild(s);
+            });
+            loadXLSX().then(XLSX => {
+              const ws = XLSX.utils.aoa_to_sheet(data);
+              ws['!cols'] = [{ wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }];
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, 'Kalkulace');
+              XLSX.writeFile(wb, `${offer.name || 'kalkulace'}.xlsx`);
+            }).catch(() => alert('Chyba při generování Excelu.'));
+          }} style={{ padding: '9px 20px', background: '#27500A', color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            📥 Export Excel
           </button>
         </div>
       </div>
