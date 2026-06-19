@@ -222,6 +222,64 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       .replace(/\u00a0/g, ' ')
       .replace(/\r/g, '');
 
+    // --- Format C: flag-emoji block style ---
+    // 🇬🇧 Londres 23.04. – 28.04.2027
+    // • Hotel: DoubleTree by Hilton London - Hyde Park
+    // • Morada: 150 Bayswater Road, London W2 4RT, Reino Unido
+    // • Telefone: +44 20 7229 1212
+    const blockPattern = /(?:[\u{1F1E6}-\u{1F1FF}]{2}\s*)?([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚa-záéíóúàâêôãõüöäčšžřýůě]+)\s+(\d{1,2})\.(\d{1,2})\.\s*-+\s*(\d{1,2})\.(\d{1,2})\.(\d{4})/gu;
+    const blockMatches = [...normalized.matchAll(blockPattern)];
+    if (blockMatches.length > 0) {
+      const lines = normalized.split('\n');
+      const newHotelsBlock = [];
+      blockMatches.forEach((m, idx) => {
+        const [full, cityRaw, d1, m1, d2, m2, y2] = m;
+        const dateFrom = `${y2}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+        const dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+        const nights = Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000);
+        if (nights <= 0) return;
+
+        // Find the line index where this match occurred, then look at subsequent lines for Hotel:
+        const matchLineIdx = lines.findIndex(l => l.includes(full));
+        let hotelName = '';
+        if (matchLineIdx >= 0) {
+          for (let i = matchLineIdx + 1; i < Math.min(matchLineIdx + 6, lines.length); i++) {
+            const hotelMatch = lines[i].match(/Hotel:\s*(.+)/i);
+            if (hotelMatch) { hotelName = hotelMatch[1].trim(); break; }
+            // Stop if we hit the next block (another flag/date line)
+            if (/\d{1,2}\.\d{1,2}\.\s*-/.test(lines[i])) break;
+          }
+        }
+
+        const cityClean = cityRaw.trim().toUpperCase();
+        const cityPT = CITY_PT[cityClean] || (cityRaw.charAt(0).toUpperCase() + cityRaw.slice(1).toLowerCase());
+
+        newHotelsBlock.push({
+          id: Date.now() + Math.random() + idx,
+          name: hotelName, city: cityPT,
+          type: 'per_pax', subType: 'hotel', enabled: true,
+          costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '',
+          nights: String(nights), cityTax: '', cityTaxSngl: '', guideOverride: '',
+          dateFrom, dateTo, groupCost: '', currency: 'EUR'
+        });
+      });
+
+      if (newHotelsBlock.length > 0) {
+        setItems(prev => {
+          const newItems = [...prev];
+          const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+          const insertAt = lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0;
+          newItems.splice(insertAt, 0, ...newHotelsBlock);
+          itemsRef.current = newItems;
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          updateDoc(doc(db, 'offers', offerId), { items: newItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
+          return newItems;
+        });
+        setItineraryText('');
+        return;
+      }
+    }
+
     // Split on newlines first, then also split lines that have multiple date patterns
     const rawLines = normalized.split('\n').map(l => l.trim()).filter(l => l);
 
