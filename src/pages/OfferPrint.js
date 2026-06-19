@@ -129,7 +129,17 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const rows = computeEurOnly().rows;
 
   const hotels = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
-  const programParagraphs = (offer.programText || '').split(/\n/).filter(p => p.trim());
+  // programText now contains HTML (from rich text editor) — split into paragraph blocks
+  const programParagraphs = (() => {
+    const html = offer.programText || '';
+    if (!html.trim()) return [];
+    // Split on <div> or <br> or double newlines (contentEditable creates <div> per line in most browsers)
+    const parts = html
+      .split(/<div>|<\/div>|<br\s*\/?>/i)
+      .map(p => p.trim())
+      .filter(p => p && p !== '&nbsp;');
+    return parts.length > 0 ? parts : [html];
+  })();
   const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
 
   const includedLines = (offer.includedText || '').split('\n').filter(l => l.trim());
@@ -328,7 +338,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
-            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }}>{p}</p>)}
+            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: p }} />)}
             {pageIdx === pages.length - 1 && (
               <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
                 <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>

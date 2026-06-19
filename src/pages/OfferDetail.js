@@ -929,9 +929,31 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Programa da viagem (PT-BR)</div>
         <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
-          Cole aqui o texto do roteiro dia-a-dia (em português). Este texto será usado na proposta gerada para o cliente.
+          Cole aqui o texto do roteiro dia-a-dia (em português). Selecione o texto e use os botões para formatar. Este texto será usado na proposta gerada para o cliente.
         </div>
-        <textarea defaultValue={offer.programText} onBlur={e => handleHeaderChange('programText', e.target.value)} rows={10} placeholder={"📅 07/04/2027 • QUARTA-FEIRA • DIA 1: BRASIL / LISBOA / BERLIM (AÉREO)\nApresentação no aeroporto para embarque...\n\n📅 08/04/2027 • QUINTA-FEIRA • DIA 2: BERLIM • CITY TOUR\n..."} style={{ ...iStyle, resize: 'vertical', fontFamily: 'Georgia, serif', lineHeight: 1.5 }} />
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => document.execCommand('bold')}
+            style={{ width: 32, height: 32, fontWeight: 700, background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer', fontFamily: 'Georgia, serif' }}>
+            B
+          </button>
+          {['#c0392b', '#1a3a5c', '#27500A', '#000000'].map(c => (
+            <button key={c} type="button" onMouseDown={e => e.preventDefault()} onClick={() => document.execCommand('foreColor', false, c)}
+              style={{ width: 32, height: 32, background: c, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer' }}
+              title={`Cor: ${c}`} />
+          ))}
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => document.execCommand('removeFormat')}
+            style={{ padding: '0 10px', height: 32, background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>
+            ✕ Limpar
+          </button>
+        </div>
+        <div
+          contentEditable
+          suppressContentEditableWarning
+          onBlur={e => handleHeaderChange('programText', e.currentTarget.innerHTML)}
+          dangerouslySetInnerHTML={{ __html: offer.programText || '' }}
+          data-placeholder="📅 07/04/2027 • QUARTA-FEIRA • DIA 1: BRASIL / LISBOA / BERLIM (AÉREO)&#10;Apresentação no aeroporto para embarque..."
+          style={{ ...iStyle, minHeight: 220, resize: 'vertical', fontFamily: 'Georgia, serif', lineHeight: 1.5, overflowY: 'auto', whiteSpace: 'pre-wrap' }}
+        />
         <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
           <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             📄 Gerar oferta (PDF)
