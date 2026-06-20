@@ -37,11 +37,111 @@ export default function Settings({ colors }) {
         document.head.appendChild(s);
       });
       const XLSX = await loadXLSX();
-
-      const collections = ['offers', 'orders', 'clients', 'providers'];
       const wb = XLSX.utils.book_new();
 
-      for (const colName of collections) {
+      // --- OFFERS: split into a summary sheet + a detailed items sheet (readable, not raw JSON) ---
+      setBackupStatus('Carregando offers...');
+      const offersSnap = await getDocs(collection(db, 'offers'));
+      const offerSummaryRows = [];
+      const offerItemRows = [];
+      offersSnap.forEach(d => {
+        const o = d.data();
+        offerSummaryRows.push({
+          id: d.id,
+          nome: o.name || '',
+          cliente: o.clientName || '',
+          destinos: o.destinations || '',
+          status: o.status || '',
+          dataInicio: o.startDate || '',
+          dataFim: o.endDate || '',
+          margem: o.margin || '',
+          focCount: o.focCount || '',
+          focType: o.focType || '',
+          paxList: o.paxList || '',
+          criadoEm: o.createdAt || '',
+          atualizadoEm: o.updatedAt || '',
+          notas: o.notes || '',
+        });
+        const items = Array.isArray(o.items) ? o.items : [];
+        items.forEach(it => {
+          offerItemRows.push({
+            ofertaNome: o.name || '',
+            ofertaId: d.id,
+            tipo: it.subType === 'hotel' ? 'Hotel' : it.subType === 'ticket' ? 'Ingresso/Refeição' : it.subType === 'guide_hotel' ? 'Hotel guia/motorista' : it.type === 'group' ? 'Custo de grupo' : (it.subType || it.type || ''),
+            nome: it.name || '',
+            cidade: it.city || '',
+            moeda: it.currency || '',
+            dataDe: it.dateFrom || '',
+            dataAte: it.dateTo || '',
+            noites: it.nights || '',
+            precoNoiteDBL: it.pricePerNightDbl || '',
+            precoNoiteSNGL: it.pricePerNightSngl || '',
+            cityTaxDBL: it.cityTax || '',
+            cityTaxSNGL: it.cityTaxSngl || '',
+            precoPorPax: it.costDbl || '',
+            custoGrupoTotal: it.groupCost || '',
+            valorManual: it.guideOverride || '',
+            ativo: it.enabled !== false ? 'Sim' : 'Não',
+          });
+        });
+      });
+      const wsOffersSummary = offerSummaryRows.length > 0 ? XLSX.utils.json_to_sheet(offerSummaryRows) : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
+      XLSX.utils.book_append_sheet(wb, wsOffersSummary, 'Offers');
+      const wsOffersItems = offerItemRows.length > 0 ? XLSX.utils.json_to_sheet(offerItemRows) : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
+      XLSX.utils.book_append_sheet(wb, wsOffersItems, 'Offers_Hoteis_Servicos');
+
+      // --- ORDERS: summary sheet + services subcollection sheet ---
+      setBackupStatus('Carregando orders...');
+      const ordersSnap = await getDocs(collection(db, 'orders'));
+      const orderSummaryRows = [];
+      const orderServiceRows = [];
+      for (const d of ordersSnap.docs) {
+        const o = d.data();
+        orderSummaryRows.push({
+          id: d.id,
+          nome: o.name || '',
+          cliente: o.clientName || '',
+          destinos: o.destinations || '',
+          status: o.status || '',
+          dataInicio: o.startDate || '',
+          dataFim: o.endDate || '',
+          paxCount: o.paxCount || '',
+          margem: o.margin || '',
+          criadoEm: o.createdAt || '',
+          notas: o.notes || '',
+        });
+        try {
+          const svcSnap = await getDocs(collection(db, 'orders', d.id, 'services'));
+          svcSnap.forEach(s => {
+            const sv = s.data();
+            orderServiceRows.push({
+              objednavkaNome: o.name || '',
+              objednavkaId: d.id,
+              tipo: sv.type || '',
+              nome: sv.name || sv.providerName || '',
+              cidade: sv.city || '',
+              dataDe: sv.dateFrom || '',
+              dataAte: sv.dateTo || '',
+              noites: sv.nights || '',
+              moeda: sv.currency || '',
+              status: sv.status || '',
+              precoPorPax: sv.pricePerPax || '',
+              precoTotal: sv.totalPrice || '',
+              precoQuartoDBL: sv.pricePerDblRoom || '',
+              precoQuartoSNGL: sv.pricePerSnglRoom || '',
+              cityTax: sv.cityTax || '',
+              contato: sv.providerPhone || sv.providerEmail || '',
+            });
+          });
+        } catch (e) { /* ignore missing subcollection */ }
+      }
+      const wsOrdersSummary = orderSummaryRows.length > 0 ? XLSX.utils.json_to_sheet(orderSummaryRows) : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
+      XLSX.utils.book_append_sheet(wb, wsOrdersSummary, 'Orders');
+      const wsOrderServices = orderServiceRows.length > 0 ? XLSX.utils.json_to_sheet(orderServiceRows) : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
+      XLSX.utils.book_append_sheet(wb, wsOrderServices, 'Orders_Servicos');
+
+      // --- CLIENTS and PROVIDERS: simple flat sheets (no nested arrays expected) ---
+      for (const colName of ['clients', 'providers']) {
         setBackupStatus(`Carregando ${colName}...`);
         const snap = await getDocs(collection(db, colName));
         const rows = [];
@@ -55,9 +155,7 @@ export default function Settings({ colors }) {
           });
           rows.push(flat);
         });
-        const ws = rows.length > 0
-          ? XLSX.utils.json_to_sheet(rows)
-          : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
+        const ws = rows.length > 0 ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
         XLSX.utils.book_append_sheet(wb, ws, colName.charAt(0).toUpperCase() + colName.slice(1));
       }
 
@@ -130,7 +228,7 @@ export default function Settings({ colors }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.5rem', maxWidth: 600, marginTop: '1.5rem' }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>💾 Backup de segurança</div>
         <div style={{ fontSize: 13, color: colors.muted, marginBottom: '1.25rem', lineHeight: 1.5 }}>
-          Baixa um arquivo Excel com todas as suas nabídky, objednávky, clientes e fornecedores — uma cópia de segurança independente do sistema. Recomendado fazer regularmente (ex: uma vez por semana).
+          Baixa um arquivo Excel com várias planilhas legíveis: Offers (resumo), Offers_Hoteis_Servicos (cada hotel/ingresso em sua própria linha), Orders, Orders_Servicos, Clients e Providers. Cópia de segurança independente do sistema. Recomendado fazer regularmente (ex: uma vez por semana).
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button onClick={handleBackup} disabled={backingUp} style={{ padding: '9px 20px', background: '#27500A', color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: backingUp ? 0.6 : 1 }}>
