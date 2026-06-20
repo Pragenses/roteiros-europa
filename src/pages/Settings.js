@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 export default function Settings({ colors }) {
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupStatus, setBackupStatus] = useState('');
   const formRef = useRef(null);
 
   useEffect(() => {
@@ -21,6 +23,55 @@ export default function Settings({ colors }) {
     };
     fetchKeys();
   }, []);
+
+  const handleBackup = async () => {
+    setBackingUp(true);
+    setBackupStatus('Carregando dados...');
+    try {
+      const loadXLSX = () => new Promise((resolve, reject) => {
+        if (window.XLSX) { resolve(window.XLSX); return; }
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        s.onload = () => resolve(window.XLSX);
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      const XLSX = await loadXLSX();
+
+      const collections = ['offers', 'orders', 'clients', 'providers'];
+      const wb = XLSX.utils.book_new();
+
+      for (const colName of collections) {
+        setBackupStatus(`Carregando ${colName}...`);
+        const snap = await getDocs(collection(db, colName));
+        const rows = [];
+        snap.forEach(d => {
+          const data = d.data();
+          const flat = { id: d.id };
+          Object.entries(data).forEach(([k, v]) => {
+            if (v === null || v === undefined) { flat[k] = ''; }
+            else if (typeof v === 'object') { flat[k] = JSON.stringify(v); }
+            else { flat[k] = v; }
+          });
+          rows.push(flat);
+        });
+        const ws = rows.length > 0
+          ? XLSX.utils.json_to_sheet(rows)
+          : XLSX.utils.aoa_to_sheet([['(sem dados)']]);
+        XLSX.utils.book_append_sheet(wb, ws, colName.charAt(0).toUpperCase() + colName.slice(1));
+      }
+
+      setBackupStatus('Gerando arquivo...');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `Backup_Roteiros_Europa_${dateStr}.xlsx`);
+      setBackupStatus('✓ Backup concluído!');
+      setTimeout(() => setBackupStatus(''), 5000);
+    } catch (err) {
+      console.error(err);
+      setBackupStatus('❌ Erro ao gerar backup: ' + err.message);
+    }
+    setBackingUp(false);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -75,6 +126,19 @@ export default function Settings({ colors }) {
           </form>
         </div>
       )}
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.5rem', maxWidth: 600, marginTop: '1.5rem' }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>💾 Backup de segurança</div>
+        <div style={{ fontSize: 13, color: colors.muted, marginBottom: '1.25rem', lineHeight: 1.5 }}>
+          Baixa um arquivo Excel com todas as suas nabídky, objednávky, clientes e fornecedores — uma cópia de segurança independente do sistema. Recomendado fazer regularmente (ex: uma vez por semana).
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button onClick={handleBackup} disabled={backingUp} style={{ padding: '9px 20px', background: '#27500A', color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: backingUp ? 0.6 : 1 }}>
+            {backingUp ? 'Gerando...' : '💾 Baixar backup completo'}
+          </button>
+          {backupStatus && <span style={{ fontSize: 13, color: backupStatus.startsWith('❌') ? '#dc2626' : '#27500A' }}>{backupStatus}</span>}
+        </div>
+      </div>
     </div>
   );
 }
