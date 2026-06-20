@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '../lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { db, storage } from '../lib/firebase';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
 import coverBase64 from '../lib/coverBase64';
 import watermarkBase64 from '../lib/watermarkBase64';
@@ -22,6 +23,10 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [rates, setRates] = useState(DEFAULT_RATES);
+  const [showVersionDialog, setShowVersionDialog] = useState(false);
+  const [versionLabel, setVersionLabel] = useState('');
+  const [savingVersion, setSavingVersion] = useState(false);
+  const [versionError, setVersionError] = useState('');
 
   const fetchData = useCallback(async () => {
     const snap = await getDoc(doc(db, 'offers', offerId));
@@ -176,6 +181,59 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     return parts.length > 0 ? parts : [html];
   })();
   const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  const versions = offer.pdfVersions || [];
+
+  const loadHtml2Pdf = () => new Promise((resolve, reject) => {
+    if (window.html2pdf) { resolve(window.html2pdf); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    s.onload = () => resolve(window.html2pdf);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+
+  const handleSaveVersion = async () => {
+    if (!versionLabel.trim()) { setVersionError('Digite um número/label para esta versão (ex: NR 3).'); return; }
+    setSavingVersion(true);
+    setVersionError('');
+    try {
+      const html2pdf = await loadHtml2Pdf();
+      // Find the print-only content element to render
+      const printEl = document.querySelector('.op-print-only') || document.querySelector('.op-page');
+      const opt = {
+        margin: 0,
+        filename: `${(offer.name || 'oferta').replace(/[^a-z0-9]/gi, '_')}_${versionLabel.replace(/[^a-z0-9]/gi, '_')}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+      const worker = html2pdf().set(opt).from(printEl);
+      const pdfBlob = await worker.outputPdf('blob');
+
+      const fileName = `offers/${offerId}/${Date.now()}_${versionLabel.replace(/[^a-z0-9]/gi, '_')}.pdf`;
+      const fileRef = storageRef(storage, fileName);
+      await uploadBytes(fileRef, pdfBlob, { contentType: 'application/pdf' });
+      const url = await getDownloadURL(fileRef);
+
+      const newVersion = {
+        label: versionLabel.trim(),
+        url,
+        path: fileName,
+        savedAt: new Date().toISOString(),
+      };
+      const newVersions = [...versions, newVersion];
+      await updateDoc(doc(db, 'offers', offerId), { pdfVersions: newVersions });
+      setOffer(prev => ({ ...prev, pdfVersions: newVersions }));
+      setShowVersionDialog(false);
+      setVersionLabel('');
+    } catch (err) {
+      console.error(err);
+      setVersionError('Erro ao salvar versão: ' + err.message);
+    }
+    setSavingVersion(false);
+  };
+
 
   const includedLines = (offer.includedText || '').split('\n').filter(l => l.trim());
   const notIncludedLines = (offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem').split('\n').filter(l => l.trim());
@@ -295,11 +353,44 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         }
       `}</style>
 
-      <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3' }}>
+      <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3', flexWrap: 'wrap' }}>
         <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
         <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir / Salvar PDF</button>
+        <button onClick={() => { setVersionLabel(''); setVersionError(''); setShowVersionDialog(true); }} style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>📌 Salvar versão (NR)</button>
         {createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
+
+      {versions.length > 0 && (
+        <div className="op-no-print" style={{ margin: '0 16px 16px', padding: '14px 16px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>📁 Versões salvas</div>
+          {versions.slice().reverse().map((v, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: i < versions.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{v.label}</span>
+              <span style={{ fontSize: 12, color: colors.muted }}>{new Date(v.savedAt).toLocaleString('pt-BR')}</span>
+              <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', fontSize: 12, color: colors.primary, textDecoration: 'underline' }}>📥 Abrir / Baixar</a>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showVersionDialog && (
+        <div className="op-no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '2rem', width: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📌 Salvar esta versão do PDF</div>
+            <div style={{ fontSize: 13, color: colors.muted, marginBottom: 16 }}>Digite o número/identificação desta proposta (ex: NR 3, v2, Final). O PDF exato será salvo e poderá ser reaberto depois.</div>
+            <input type="text" value={versionLabel} onChange={e => { setVersionLabel(e.target.value); setVersionError(''); }}
+              placeholder="ex: NR 3" autoFocus
+              style={{ width: '100%', padding: '10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 15, boxSizing: 'border-box', marginBottom: 8, fontFamily: 'inherit' }} />
+            {versionError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{versionError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleSaveVersion} disabled={savingVersion} style={{ flex: 1, padding: '10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600, opacity: savingVersion ? 0.6 : 1 }}>
+                {savingVersion ? 'Salvando...' : 'Salvar'}
+              </button>
+              <button onClick={() => setShowVersionDialog(false)} disabled={savingVersion} style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Fixed watermark for print — shows on every page */}
       <img src={watermarkBase64} alt="" className="op-wm" style={{ display: 'none' }} />
