@@ -868,15 +868,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
                         <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateFrom', v);
-                          if (v && it.dateTo && v.length === 10 && it.dateTo.length === 10) {
-                            const n = Math.round((new Date(it.dateTo) - new Date(v)) / 86400000);
+                          const current = itemsRef.current.find(x => x.id === it.id);
+                          const dTo = current ? current.dateTo : it.dateTo;
+                          if (v && dTo && v.length === 10 && dTo.length === 10) {
+                            const n = Math.round((new Date(dTo) - new Date(v)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} />
                         <DateDMY dateKey={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateTo', v);
-                          if (v && it.dateFrom && v.length === 10 && it.dateFrom.length === 10) {
-                            const n = Math.round((new Date(v) - new Date(it.dateFrom)) / 86400000);
+                          const current = itemsRef.current.find(x => x.id === it.id);
+                          const dFrom = current ? current.dateFrom : it.dateFrom;
+                          if (v && dFrom && v.length === 10 && dFrom.length === 10) {
+                            const n = Math.round((new Date(v) - new Date(dFrom)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                         }} />
