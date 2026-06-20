@@ -280,6 +280,63 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       }
     }
 
+    // --- Format D: flag-emoji block style with DD/MM (year) in parentheses ---
+    // 🇳🇱 Amsterdã (15/04 – 18/04/2027)
+    // • Hotel: Mövenpick Hotel Amsterdam City Centre 4*
+    // • Endereço: Piet Heinkade 11, 1019 BR Amsterdam, Países Baixos
+    const blockPatternD = /(?:[\u{1F1E6}-\u{1F1FF}]{2}\s*)?([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚa-záéíóúàâêôãõüöäčšžřýůě]+)\s*\((\d{1,2})\/(\d{1,2})\s*-+\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\)/gu;
+    const blockMatchesD = [...normalized.matchAll(blockPatternD)];
+    if (blockMatchesD.length > 0) {
+      const lines = normalized.split('\n');
+      const newHotelsBlockD = [];
+      blockMatchesD.forEach((m, idx) => {
+        const [full, cityRaw, d1, m1, d2, m2, y2] = m;
+        const dateFrom = `${y2}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+        const dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+        const nights = Math.round((new Date(dateTo) - new Date(dateFrom)) / 86400000);
+        if (nights <= 0) return;
+
+        const matchLineIdx = lines.findIndex(l => l.includes(full));
+        let hotelName = '';
+        if (matchLineIdx >= 0) {
+          for (let i = matchLineIdx + 1; i < Math.min(matchLineIdx + 8, lines.length); i++) {
+            // Match "Hotel:" or "Opção A:" / "Opção B:" style labels
+            const hotelMatch = lines[i].match(/(?:Hotel|Op[çc][ãa]o\s*[A-Z]):\s*(.+)/i);
+            if (hotelMatch) { hotelName = hotelMatch[1].trim(); break; }
+            // Stop if we hit the next block (another flag/date line)
+            if (/\(\d{1,2}\/\d{1,2}\s*-/.test(lines[i])) break;
+          }
+        }
+
+        const cityClean = cityRaw.trim().toUpperCase();
+        const cityPT = CITY_PT[cityClean] || (cityRaw.charAt(0).toUpperCase() + cityRaw.slice(1).toLowerCase());
+
+        newHotelsBlockD.push({
+          id: Date.now() + Math.random() + idx,
+          name: hotelName, city: cityPT,
+          type: 'per_pax', subType: 'hotel', enabled: true,
+          costDbl: '', costSngl: '', pricePerNightDbl: '', pricePerNightSngl: '',
+          nights: String(nights), cityTax: '', cityTaxSngl: '', guideOverride: '',
+          dateFrom, dateTo, groupCost: '', currency: 'EUR'
+        });
+      });
+
+      if (newHotelsBlockD.length > 0) {
+        setItems(prev => {
+          const newItems = [...prev];
+          const lastHotelIdx = newItems.map((it, i) => it.subType === 'hotel' ? i : -1).filter(i => i >= 0).pop();
+          const insertAt = lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0;
+          newItems.splice(insertAt, 0, ...newHotelsBlockD);
+          itemsRef.current = newItems;
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          updateDoc(doc(db, 'offers', offerId), { items: newItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
+          return newItems;
+        });
+        setItineraryText('');
+        return;
+      }
+    }
+
     // Split on newlines first, then also split lines that have multiple date patterns
     const rawLines = normalized.split('\n').map(l => l.trim()).filter(l => l);
 
