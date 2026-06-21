@@ -54,26 +54,38 @@ const DateDMY = ({ value, onChange, colors, dateKey }) => {
     }
     return null;
   };
+  const getWeekday = (v) => {
+    if (v && v.length === 10) {
+      const d = new Date(v + 'T00:00:00');
+      if (!isNaN(d)) return d.toLocaleDateString('en-US', { weekday: 'short' });
+    }
+    return '';
+  };
+  const [weekday, setWeekday] = React.useState(() => getWeekday(value));
   const inputRef = React.useRef(null);
   const prevValue = React.useRef(value);
   React.useEffect(() => {
     if (prevValue.current !== value && inputRef.current && document.activeElement !== inputRef.current) {
       inputRef.current.value = toDisplay(value);
       prevValue.current = value;
+      setWeekday(getWeekday(value));
     }
   }, [value]);
   return (
-    <input
-      ref={inputRef}
-      type="text"
-      placeholder="DD.MM.RRRR"
-      defaultValue={toDisplay(value)}
-      onBlur={e => {
-        const iso = toISO(e.target.value);
-        if (iso) { e.target.value = toDisplay(iso); onChange(iso); }
-      }}
-      style={{ padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', width: 100, boxSizing: 'border-box' }}
-    />
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <input
+        ref={inputRef}
+        type="text"
+        placeholder="DD.MM.RRRR"
+        defaultValue={toDisplay(value)}
+        onBlur={e => {
+          const iso = toISO(e.target.value);
+          if (iso) { e.target.value = toDisplay(iso); onChange(iso); setWeekday(getWeekday(iso)); }
+        }}
+        style={{ padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', width: 100, boxSizing: 'border-box' }}
+      />
+      {weekday && <span style={{ fontSize: 11, color: colors.muted, fontWeight: 600, whiteSpace: 'nowrap' }}>{weekday}</span>}
+    </span>
   );
 };
 
