@@ -1020,6 +1020,25 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                             const n = Math.round((new Date(dTo) - new Date(v)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
+                          // Chain: if THIS hotel's dateFrom is set, auto-fill the PREVIOUS hotel's dateTo if empty
+                          // (departure from previous hotel = arrival at this one)
+                          if (isHotel && v && v.length === 10) {
+                            const allItems = itemsRef.current;
+                            const myIdx = allItems.findIndex(x => x.id === it.id);
+                            for (let i = myIdx - 1; i >= 0; i--) {
+                              if (allItems[i].subType === 'hotel') {
+                                if (!allItems[i].dateTo || allItems[i].dateTo === '') {
+                                  updateItem(allItems[i].id, 'dateTo', v);
+                                  const prevFrom = allItems[i].dateFrom;
+                                  if (prevFrom && prevFrom.length === 10) {
+                                    const n2 = Math.round((new Date(v) - new Date(prevFrom)) / 86400000);
+                                    if (n2 > 0) updateItem(allItems[i].id, 'nights', String(n2));
+                                  }
+                                }
+                                break;
+                              }
+                            }
+                          }
                         }} />
                         <DateDMY dateKey={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={v => {
                           updateItem(it.id, 'dateTo', v);
@@ -1028,6 +1047,24 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                           if (v && dFrom && v.length === 10 && dFrom.length === 10) {
                             const n = Math.round((new Date(v) - new Date(dFrom)) / 86400000);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
+                          }
+                          // Chain: if THIS hotel's dateTo is set, auto-fill the NEXT hotel's dateFrom if empty
+                          if (isHotel && v && v.length === 10) {
+                            const allItems = itemsRef.current;
+                            const myIdx = allItems.findIndex(x => x.id === it.id);
+                            for (let i = myIdx + 1; i < allItems.length; i++) {
+                              if (allItems[i].subType === 'hotel') {
+                                if (!allItems[i].dateFrom || allItems[i].dateFrom === '') {
+                                  updateItem(allItems[i].id, 'dateFrom', v);
+                                  const nextTo = allItems[i].dateTo;
+                                  if (nextTo && nextTo.length === 10) {
+                                    const n2 = Math.round((new Date(nextTo) - new Date(v)) / 86400000);
+                                    if (n2 > 0) updateItem(allItems[i].id, 'nights', String(n2));
+                                  }
+                                }
+                                break;
+                              }
+                            }
                           }
                         }} />
                         {it.dateFrom && it.dateTo && (() => {
