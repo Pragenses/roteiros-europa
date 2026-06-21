@@ -8,26 +8,39 @@ const CLIENT_TEXT_PALETTE = ['#0C447C','#633806','#27500A','#534AB7','#791F1F','
 
 export default function Calendar({ navigate, colors }) {
   const [orders, setOrders] = useState([]);
+  const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState(2027);
   const [clientColors, setClientColors] = useState({});
 
   useEffect(() => {
-    const fetchOrders = async () => {
-      const snap = await getDocs(collection(db, 'orders'));
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setOrders(all);
+    const fetchData = async () => {
+      const [ordersSnap, offersSnap] = await Promise.all([
+        getDocs(collection(db, 'orders')),
+        getDocs(collection(db, 'offers')),
+      ]);
+      const allOrders = ordersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const allOffers = offersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setOrders(allOrders);
+      setOffers(allOffers);
       const cc = {};
       let idx = 0;
-      all.forEach(o => { if (o.clientName && !cc[o.clientName]) cc[o.clientName] = idx++ % CLIENT_PALETTE.length; });
+      allOrders.forEach(o => { if (o.clientName && !cc[o.clientName]) cc[o.clientName] = idx++ % CLIENT_PALETTE.length; });
       setClientColors(cc);
       setLoading(false);
     };
-    fetchOrders();
+    fetchData();
   }, []);
 
   const getOrdersForMonth = (month) =>
     orders.filter(o => {
+      if (!o.startDate) return false;
+      const d = new Date(o.startDate);
+      return d.getFullYear() === year && d.getMonth() === month;
+    }).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+
+  const getOffersForMonth = (month) =>
+    offers.filter(o => {
       if (!o.startDate) return false;
       const d = new Date(o.startDate);
       return d.getFullYear() === year && d.getMonth() === month;
@@ -51,40 +64,54 @@ export default function Calendar({ navigate, colors }) {
         </div>
       </div>
 
-      {uniqueClients.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: colors.muted }}>Clients:</span>
-          {uniqueClients.map(c => {
-            const idx = clientColors[c] || 0;
-            return <span key={c} style={{ background: CLIENT_PALETTE[idx], color: CLIENT_TEXT_PALETTE[idx], fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }}>{c}</span>;
-          })}
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 8, marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ background: '#FCEBF3', color: '#9D2466', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }}>📋 Offers</span>
+        {uniqueClients.length > 0 && <span style={{ fontSize: 12, color: colors.muted }}>Clients:</span>}
+        {uniqueClients.map(c => {
+          const idx = clientColors[c] || 0;
+          return <span key={c} style={{ background: CLIENT_PALETTE[idx], color: CLIENT_TEXT_PALETTE[idx], fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }}>{c}</span>;
+        })}
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {MONTHS.map((month, mi) => {
           const monthOrders = getOrdersForMonth(mi);
+          const monthOffers = getOffersForMonth(mi);
+          const totalCount = monthOrders.length + monthOffers.length;
           return (
             <div key={mi} style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0.875rem 1.25rem', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
               <div style={{ width: 90, flexShrink: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary }}>{month}</div>
-                <div style={{ fontSize: 11, color: colors.muted }}>{monthOrders.length} {monthOrders.length === 1 ? 'group' : 'groups'}</div>
+                <div style={{ fontSize: 11, color: colors.muted }}>{totalCount} {totalCount === 1 ? 'item' : 'items'}</div>
               </div>
               <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {monthOrders.length === 0 ? (
+                {totalCount === 0 ? (
                   <div style={{ fontSize: 12, color: colors.border, paddingTop: 2 }}>—</div>
-                ) : monthOrders.map(o => {
-                  const idx = clientColors[o.clientName] || 0;
-                  return (
-                    <div key={o.id} onClick={() => navigate('order-detail', { orderId: o.id })}
-                      style={{ background: CLIENT_PALETTE[idx], color: CLIENT_TEXT_PALETTE[idx], fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: `1px solid ${CLIENT_TEXT_PALETTE[idx]}22` }}>
-                      <div style={{ fontWeight: 700 }}>
-                        {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.name}
+                ) : (
+                  <>
+                    {monthOffers.map(o => (
+                      <div key={`offer-${o.id}`} onClick={() => navigate('offer-detail', { offerId: o.id })}
+                        style={{ background: '#FCEBF3', color: '#9D2466', fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: '1px solid #9D246622' }}>
+                        <div style={{ fontWeight: 700 }}>
+                          📋 {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.name}
+                        </div>
+                        <div style={{ opacity: 0.75 }}>{o.clientName}{o.status ? ` · ${o.status}` : ''}</div>
                       </div>
-                      <div style={{ opacity: 0.75 }}>{o.clientName}{o.paxCount ? ` · ${o.paxCount} pax` : ''}</div>
-                    </div>
-                  );
-                })}
+                    ))}
+                    {monthOrders.map(o => {
+                      const idx = clientColors[o.clientName] || 0;
+                      return (
+                        <div key={`order-${o.id}`} onClick={() => navigate('order-detail', { orderId: o.id })}
+                          style={{ background: CLIENT_PALETTE[idx], color: CLIENT_TEXT_PALETTE[idx], fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: `1px solid ${CLIENT_TEXT_PALETTE[idx]}22` }}>
+                          <div style={{ fontWeight: 700 }}>
+                            {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.name}
+                          </div>
+                          <div style={{ opacity: 0.75 }}>{o.clientName}{o.paxCount ? ` · ${o.paxCount} pax` : ''}</div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             </div>
           );
