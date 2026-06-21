@@ -35,6 +35,8 @@ const FormulaField = ({ value, onChange, placeholder, colors }) => {
   );
 };
 
+const fmtDateBR = (d) => { if (!d || d.length < 10) return d; const [y, m, day] = d.split('-'); return `${day}/${m}/${y}`; };
+
 // Date input in DD.MM.YYYY order — always consistent regardless of browser/OS locale
 const DateDMY = ({ value, onChange, colors, dateKey }) => {
   const toDisplay = (v) => {
@@ -871,17 +873,75 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           const totalNights = offer.startDate && offer.endDate && offer.startDate.length === 10 && offer.endDate.length === 10
             ? Math.round((new Date(offer.endDate) - new Date(offer.startDate)) / 86400000)
             : null;
-          const hotelNightsSum = activeItems.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
+          const hotels = activeItems.filter(it => it.subType === 'hotel');
+          const hotelNightsSum = hotels.reduce((sum, it) => sum + (parseFloat(it.nights) || 0), 0);
           const displayNights = totalNights ?? hotelNightsSum;
           const mismatch = totalNights !== null && hotelNightsSum > 0 && totalNights !== hotelNightsSum;
-          return displayNights > 0 ? (
+
+          // Check 1: empty DBL/SNGL prices
+          const hotelsWithEmptyPrices = hotels.filter(h => !h.pricePerNightDbl || h.pricePerNightDbl === '' || !h.pricePerNightSngl || h.pricePerNightSngl === '');
+
+          // Check 2: date gaps between consecutive hotels (sorted by dateFrom)
+          const hotelsSorted = [...hotels].filter(h => h.dateFrom && h.dateTo && h.dateFrom.length === 10 && h.dateTo.length === 10)
+            .sort((a, b) => a.dateFrom.localeCompare(b.dateFrom));
+          const dateGaps = [];
+          for (let i = 0; i < hotelsSorted.length - 1; i++) {
+            const curr = hotelsSorted[i], next = hotelsSorted[i + 1];
+            if (curr.dateTo !== next.dateFrom) {
+              const gapDays = Math.round((new Date(next.dateFrom) - new Date(curr.dateTo)) / 86400000);
+              if (gapDays !== 0) {
+                dateGaps.push({ from: curr.city || curr.name || '?', to: next.city || next.name || '?', days: gapDays, dateTo: curr.dateTo, dateFrom: next.dateFrom });
+              }
+            }
+          }
+
+          // Check 3: duplicate hotels (same city + same name)
+          const seenHotels = {};
+          const duplicateHotels = [];
+          hotels.forEach(h => {
+            const key = `${(h.city || '').toLowerCase().trim()}|${(h.name || '').toLowerCase().trim()}`;
+            if (key !== '|' && seenHotels[key]) {
+              duplicateHotels.push(h.city ? `${h.city}: ${h.name}` : h.name);
+            }
+            seenHotels[key] = true;
+          });
+
+          // Check 4: margin issues
+          const marginNum = parseFloat(margin);
+          const marginIssue = isNaN(marginNum) || marginNum <= 0;
+
+          const hasAnyWarning = mismatch || hotelsWithEmptyPrices.length > 0 || dateGaps.length > 0 || duplicateHotels.length > 0 || marginIssue;
+
+          return displayNights > 0 || hasAnyWarning ? (
             <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 13, color: colors.primary, fontWeight: 600, padding: '6px 10px', background: '#FFFDE7', borderRadius: 7, display: 'inline-block' }}>
-                🏨 Celkem nocí: {displayNights}
-              </div>
+              {displayNights > 0 && (
+                <div style={{ fontSize: 13, color: colors.primary, fontWeight: 600, padding: '6px 10px', background: '#FFFDE7', borderRadius: 7, display: 'inline-block', marginBottom: 6 }}>
+                  🏨 Celkem nocí: {displayNights}
+                </div>
+              )}
               {mismatch && (
                 <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
                   ⚠️ POZOR: Datum nabídky ukazuje {totalNights} nocí, ale součet nocí u hotelů je {hotelNightsSum}. Zkontrolujte prosím počet nocí u hotelů — chybí nebo přebývá {Math.abs(totalNights - hotelNightsSum)} {Math.abs(totalNights - hotelNightsSum) === 1 ? 'noc' : 'noci'}.
+                </div>
+              )}
+              {hotelsWithEmptyPrices.length > 0 && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Tyto hotely nemají vyplněnou cenu DBL nebo SNGL: {hotelsWithEmptyPrices.map(h => h.city ? `${h.city} (${h.name || 'bez názvu'})` : (h.name || 'bez názvu')).join(', ')}.
+                </div>
+              )}
+              {dateGaps.length > 0 && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Mezera nebo přesah v datech mezi hotely: {dateGaps.map((g, i) => `${g.from} (até ${fmtDateBR(g.dateTo)}) → ${g.to} (desde ${fmtDateBR(g.dateFrom)}) — ${g.days > 0 ? `falta ${g.days} dia(s)` : `sobrepõe ${Math.abs(g.days)} dia(s)`}`).join('; ')}.
+                </div>
+              )}
+              {duplicateHotels.length > 0 && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Hotel duplicado detectado: {duplicateHotels.join(', ')}. Verifique se não foi adicionado por engano.
+                </div>
+              )}
+              {marginIssue && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Margem está zerada, vazia ou inválida ({margin === '' ? 'vazia' : margin}). A oferta pode estar sendo calculada sem lucro.
                 </div>
               )}
             </div>
