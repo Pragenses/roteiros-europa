@@ -644,7 +644,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     }
 
     // Copy group costs (bus, guide etc.) as "other" services if that type exists, else as notes
-    const groupSvcItems = currentItems.filter(it => it.enabled !== false && it.type === 'group' && it.subType !== 'guide_hotel');
+    const groupSvcItems = currentItems.filter(it => it.enabled !== false && it.type === 'group' && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
     for (const g of groupSvcItems) {
       await addDoc(collection(db, 'orders', ref.id, 'services'), {
         type: 'other',
@@ -676,18 +676,34 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const perPaxSnglEUR = paxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostSngl(it), it.currency), 0);
   const snglSupplementEUR = perPaxSnglEUR - perPaxDblEUR;
 
-  // Hotel guide cost = sum of SNGL-room cost across ALL hotels in this offer (the guide travels with
-  // the group, occupying a SNGL room at every hotel) — computed automatically, no manual input.
-  const regularGroupItems = groupItems.filter(it => it.subType !== 'guide_hotel');
+  // Hotel guide cost = sum of SNGL-room cost across ALL hotels AND tickets/meals in this offer
+  // (the guide travels with the group, occupying a SNGL room at every hotel) — computed automatically.
+  const regularGroupItems = groupItems.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
   const guideHotelItems = groupItems.filter(it => it.subType === 'guide_hotel');
+  const driverHotelItems = groupItems.filter(it => it.subType === 'driver_hotel');
   const regularGroupTotalEUR = regularGroupItems.reduce((sum, it) => sum + toEURWithRates(evalAmount(it.groupCost), it.currency), 0);
+
+  // Hotel-only SNGL total (no tickets/meals) — for the driver, who only needs lodging, not activities
+  const hotelOnlyItems = paxItems.filter(it => it.subType === 'hotel');
+  const hotelOnlySnglEUR = hotelOnlyItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostSngl(it), it.currency), 0);
+
   const getGuideHotelCost = (it) => {
     const override = it.guideOverride;
-    if (override !== '' && override !== undefined && override !== null) return evalAmount(override);
-    return perPaxSnglEUR;
+    if (override !== '' && override !== undefined && override !== null) {
+      return toEURWithRates(evalAmount(override), it.currency || 'EUR');
+    }
+    return perPaxSnglEUR; // hotels + tickets/meals
+  };
+  const getDriverHotelCost = (it) => {
+    const override = it.guideOverride;
+    if (override !== '' && override !== undefined && override !== null) {
+      return toEURWithRates(evalAmount(override), it.currency || 'EUR');
+    }
+    return hotelOnlySnglEUR; // hotels only, no tickets
   };
   const guideHotelTotalEUR = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
-  const groupTotalEUR = regularGroupTotalEUR + guideHotelTotalEUR;
+  const driverHotelTotalEUR = driverHotelItems.reduce((sum, it) => sum + getDriverHotelCost(it), 0);
+  const groupTotalEUR = regularGroupTotalEUR + guideHotelTotalEUR + driverHotelTotalEUR;
 
   // FOC pool: DBL = per-pax DBL cost, SNGL = per-pax SNGL cost
   const focPoolEUR = focType === 'sngl' ? perPaxSnglEUR : perPaxDblEUR;
@@ -703,7 +719,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   // Per-currency per-pax and group costs (in original currency, no conversion)
   const computeByCurrency = (cur) => {
     const curPaxItems = paxItems.filter(it => it.currency === cur);
-    const curGroupItems = groupItems.filter(it => it.currency === cur && it.subType !== 'guide_hotel');
+    const curGroupItems = groupItems.filter(it => it.currency === cur && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
     const perPaxDbl = curPaxItems.reduce((sum, it) => sum + evalAmount(it.subType === 'hotel'
       ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
       : it.costDbl), 0);
@@ -729,11 +745,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   // EUR-only items (currency === EUR or not in SPLIT_CURRENCIES)
   const computeEurOnly = () => {
     const eurPaxItems = paxItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency));
-    const eurGroupItems = groupItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency) && it.subType !== 'guide_hotel');
+    const eurGroupItems = groupItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency) && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
     const perPaxDbl = eurPaxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostDbl(it), it.currency), 0);
     const perPaxSngl = eurPaxItems.reduce((sum, it) => sum + toEURWithRates(getEffectiveCostSngl(it), it.currency), 0);
     const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEURWithRates(evalAmount(it.groupCost), it.currency), 0)
-      + guideHotelTotalEUR;
+      + guideHotelTotalEUR + driverHotelTotalEUR;
     const snglSupp = perPaxSngl - perPaxDbl;
     const focPool = perPaxDbl;
     const rows = paxCounts.map(pax => {
@@ -880,6 +896,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
           // Check 1: empty DBL/SNGL prices
           const hotelsWithEmptyPrices = hotels.filter(h => !h.pricePerNightDbl || h.pricePerNightDbl === '' || !h.pricePerNightSngl || h.pricePerNightSngl === '');
+          const ticketsWithEmptyPrice = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'ticket' && (!it.costDbl || it.costDbl === ''));
+          const groupCostsWithEmptyPrice = activeItems.filter(it => it.type === 'group' && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel' && (!it.groupCost || it.groupCost === ''));
 
           // Check 2: date gaps between consecutive hotels (sorted by dateFrom)
           const hotelsSorted = [...hotels].filter(h => h.dateFrom && h.dateTo && h.dateFrom.length === 10 && h.dateTo.length === 10)
@@ -910,7 +928,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           const marginNum = parseFloat(margin);
           const marginIssue = isNaN(marginNum) || marginNum <= 0;
 
-          const hasAnyWarning = mismatch || hotelsWithEmptyPrices.length > 0 || dateGaps.length > 0 || duplicateHotels.length > 0 || marginIssue;
+          const hasAnyWarning = mismatch || hotelsWithEmptyPrices.length > 0 || ticketsWithEmptyPrice.length > 0 || groupCostsWithEmptyPrice.length > 0 || dateGaps.length > 0 || duplicateHotels.length > 0 || marginIssue;
 
           return displayNights > 0 || hasAnyWarning ? (
             <div style={{ marginBottom: 10 }}>
@@ -927,6 +945,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               {hotelsWithEmptyPrices.length > 0 && (
                 <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
                   ⚠️ POZOR: Tyto hotely nemají vyplněnou cenu DBL nebo SNGL: {hotelsWithEmptyPrices.map(h => h.city ? `${h.city} (${h.name || 'bez názvu'})` : (h.name || 'bez názvu')).join(', ')}.
+                </div>
+              )}
+              {ticketsWithEmptyPrice.length > 0 && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Estas vstupenky/refeições não têm preço preenchido: {ticketsWithEmptyPrice.map(t => t.name || 'sem nome').join(', ')}.
+                </div>
+              )}
+              {groupCostsWithEmptyPrice.length > 0 && (
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
+                  ⚠️ POZOR: Estes custos de grupo não têm preço preenchido: {groupCostsWithEmptyPrice.map(g => g.name || 'sem nome').join(', ')}.
                 </div>
               )}
               {dateGaps.length > 0 && (
@@ -956,10 +984,11 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             {items.map((it, idx) => {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
               const isGuideHotel = it.type === 'group' && it.subType === 'guide_hotel';
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : isGuideHotel ? '60px 2fr 1fr 1fr 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
+              const isDriverHotel = it.type === 'group' && it.subType === 'driver_hotel';
+              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : (isGuideHotel || isDriverHotel) ? '60px 2fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               const isEnabled = it.enabled !== false;
-              const rowBg = isGuideHotel ? '#FCE4EC' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
+              const rowBg = isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               return (
                 <div key={it.id} ref={it.id === newItemId ? newItemRef : null}
                   draggable
@@ -979,7 +1008,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                         <input key={`name-${it.id}`} type="text" placeholder="Název hotelu" value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={{ ...iStyle, flex: 1 }} />
                       </div>
                     ) : (
-                      <input key={`name-${it.id}`} type="text" placeholder={isGuideHotel ? 'e.g. Guide hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
+                      <input key={`name-${it.id}`} type="text" placeholder={isGuideHotel ? 'e.g. Guide hotel (auto)' : isDriverHotel ? 'e.g. Driver hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
                     )}
                     {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
                       <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
@@ -1025,9 +1054,22 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   ) : isGuideHotel ? (
                     <>
                       <div style={{ fontSize: 11, color: colors.muted }}>
-                        Auto: {perPaxSnglEUR.toFixed(2)} EUR<br />(sum of all hotels' SNGL cost)
+                        Auto: {perPaxSnglEUR.toFixed(2)} EUR<br />(hotéis + ingressos/refeições, SNGL)
                       </div>
                       <FormulaField placeholder={`Override, default ${perPaxSnglEUR.toFixed(2)}`} value={it.guideOverride} onChange={e => updateItem(it.id, 'guideOverride', e.target.value)} colors={colors} />
+                      <select value={it.currency || 'EUR'} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
+                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </>
+                  ) : isDriverHotel ? (
+                    <>
+                      <div style={{ fontSize: 11, color: colors.muted }}>
+                        Auto: {hotelOnlySnglEUR.toFixed(2)} EUR<br />(somente hotéis, SNGL)
+                      </div>
+                      <FormulaField placeholder={`Override, default ${hotelOnlySnglEUR.toFixed(2)}`} value={it.guideOverride} onChange={e => updateItem(it.id, 'guideOverride', e.target.value)} colors={colors} />
+                      <select value={it.currency || 'EUR'} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
+                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     </>
                   ) : (
                     <>
@@ -1037,7 +1079,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       </select>
                     </>
                   )}
-                  {!isGuideHotel && (isHotel || it.type === 'per_pax') && (
+                  {!isGuideHotel && !isDriverHotel && (isHotel || it.type === 'per_pax') && (
                     <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
@@ -1060,7 +1102,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             + Group cost (bus, flight)
           </button>
           <button onClick={() => addItem('group', 'guide_hotel')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-            + Hotel guide (SNGL room × nights ÷ pax)
+            + Hotel guide (hotéis + ingressos)
+          </button>
+          <button onClick={() => addItem('group', 'driver_hotel')} style={{ padding: '7px 14px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            + Hotel driver (somente hotéis)
           </button>
         </div>
       </div>
@@ -1263,7 +1308,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
             // Group costs
             data.push([]);
-            groupItems.filter(it => it.subType !== 'guide_hotel').forEach(g => {
+            groupItems.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel').forEach(g => {
               data.push([g.name || '', '', evalAmount(g.groupCost)]);
             });
             data.push(['TOTAL group', '', groupTotalEUR.toFixed(2)]);
@@ -1312,7 +1357,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           <button onClick={() => {
             const hotelItems = activeItems.filter(it => it.subType === 'hotel');
             const ticketItems = activeItems.filter(it => it.subType === 'ticket' && it.name);
-            const groupSvcs = activeItems.filter(it => it.type === 'group' && it.name && it.subType !== 'guide_hotel');
+            const groupSvcs = activeItems.filter(it => it.type === 'group' && it.name && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
             const hasTax = hotelItems.some(h => evalAmount(h.cityTax) > 0);
             const lines = [];
             if (hotelItems.length > 0) lines.push(`Hospedagem em hotéis selecionados, com café da manhã incluído (${hotelItems.length} ${hotelItems.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)`);
