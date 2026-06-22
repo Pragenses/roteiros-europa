@@ -117,6 +117,21 @@ export default function Calendar({ navigate, colors }) {
           );
         })}
       </div>
+
+      {offers.filter(o => !o.startDate).length > 0 && (
+        <div style={{ marginTop: 16, background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0.875rem 1.25rem' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: colors.muted, marginBottom: 8 }}>📋 Offers without date</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {offers.filter(o => !o.startDate).map(o => (
+              <div key={`offer-nodate-${o.id}`} onClick={() => navigate('offer-detail', { offerId: o.id })}
+                style={{ background: '#FCEBF3', color: '#9D2466', fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: '1px solid #9D246622' }}>
+                <div style={{ fontWeight: 700 }}>📋 {o.name}</div>
+                <div style={{ opacity: 0.75 }}>{o.clientName || ''}{o.status ? ` · ${o.status}` : ''}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
