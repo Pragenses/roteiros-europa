@@ -70,7 +70,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     const paxItems = activeItems.filter(it => it.type === 'per_pax');
     const groupItems = activeItems.filter(it => it.type === 'group');
     const curPaxItems = paxItems.filter(it => it.currency === cur);
-    const curGroupItems = groupItems.filter(it => it.currency === cur && it.subType !== 'guide_hotel');
+    const curGroupItems = groupItems.filter(it => it.currency === cur && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
     const perPaxDbl = curPaxItems.reduce((sum, it) => sum + evalAmount(it.subType === 'hotel'
       ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
       : it.costDbl), 0);
@@ -95,7 +95,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     const paxItems = activeItems.filter(it => it.type === 'per_pax');
     const groupItems = activeItems.filter(it => it.type === 'group');
     const eurPaxItems = paxItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency));
-    const eurGroupItems = groupItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency) && it.subType !== 'guide_hotel');
+    const eurGroupItems = groupItems.filter(it => !SPLIT_CURRENCIES.includes(it.currency) && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
     const toEUR = (v, c) => c === 'EUR' ? v : v * (rates[c] || 1);
     const perPaxDbl = eurPaxItems.reduce((sum, it) => sum + toEUR(evalAmount(it.subType === 'hotel'
       ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
@@ -106,6 +106,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
     // Add guide hotel costs (auto-calculated from SNGL hotel sum)
     const guideHotelItems = activeItems.filter(it => it.type === 'group' && it.subType === 'guide_hotel');
+    const driverHotelItems1 = activeItems.filter(it => it.type === 'group' && it.subType === 'driver_hotel');
     const getGuideHotelCost = (it) => {
       if (it.guideOverride !== '' && it.guideOverride !== undefined && it.guideOverride !== null) return evalAmount(it.guideOverride);
       return activeItems.filter(h => h.type === 'per_pax' && h.subType === 'hotel' && h.enabled !== false)
@@ -113,43 +114,14 @@ export default function OfferPrint({ offerId, navigate, colors }) {
           ? ((evalAmount(h.pricePerNightSngl) + evalAmount(h.cityTaxSngl || h.cityTax)) * (parseFloat(h.nights) || 0))
           : (h.costSngl || h.costDbl)), h.currency), 0);
     };
-    const guideHotelTotal = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
-    const totalGroupCost = groupTotal + guideHotelTotal;
-    const snglSupp = perPaxSngl - perPaxDbl;
-    const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
-    const sRows = paxCounts.map(pax => {
-      const costDbl = totalGroupCost / pax + perPaxDbl;
-      const marginAmount = costDbl * (margin / 100);
-      const focShare = (focPool * focCountNum) / pax;
-      const finalDbl = costDbl + marginAmount + focShare;
-      const finalSngl = finalDbl + snglSupp;
-      return { pax, finalDbl, finalSngl };
-    });
-    return { cur: 'EUR', rows: sRows };
-  };
-
-  // Used when showSplit is OFF — converts ALL items (any currency) to EUR and sums together
-  const computeAllCombinedEUR = () => {
-    const paxItems = activeItems.filter(it => it.type === 'per_pax');
-    const groupItems = activeItems.filter(it => it.type === 'group' && it.subType !== 'guide_hotel');
-    const toEUR = (v, c) => c === 'EUR' ? v : v * (rates[c] || 1);
-    const perPaxDbl = paxItems.reduce((sum, it) => sum + toEUR(evalAmount(it.subType === 'hotel'
-      ? (((evalAmount(it.pricePerNightDbl) + evalAmount(it.cityTax)) * (parseFloat(it.nights) || 0)) / 2)
-      : it.costDbl), it.currency), 0);
-    const perPaxSngl = paxItems.reduce((sum, it) => sum + toEUR(evalAmount(it.subType === 'hotel'
-      ? ((evalAmount(it.pricePerNightSngl) + evalAmount(it.cityTaxSngl || it.cityTax)) * (parseFloat(it.nights) || 0))
-      : (it.costSngl || it.costDbl)), it.currency), 0);
-    const groupTotal = groupItems.reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
-    const guideHotelItems = activeItems.filter(it => it.type === 'group' && it.subType === 'guide_hotel');
-    const getGuideHotelCost = (it) => {
+    const getDriverHotelCost1 = (it) => {
       if (it.guideOverride !== '' && it.guideOverride !== undefined && it.guideOverride !== null) return evalAmount(it.guideOverride);
       return activeItems.filter(h => h.type === 'per_pax' && h.subType === 'hotel' && h.enabled !== false)
-        .reduce((sum, h) => sum + toEUR(evalAmount(h.subType === 'hotel'
-          ? ((evalAmount(h.pricePerNightSngl) + evalAmount(h.cityTaxSngl || h.cityTax)) * (parseFloat(h.nights) || 0))
-          : (h.costSngl || h.costDbl)), h.currency), 0);
+        .reduce((sum, h) => sum + toEUR((evalAmount(h.pricePerNightSngl) + evalAmount(h.cityTaxSngl || h.cityTax)) * (parseFloat(h.nights) || 0), h.currency), 0);
     };
     const guideHotelTotal = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
-    const totalGroupCost = groupTotal + guideHotelTotal;
+    const driverHotelTotal1 = driverHotelItems1.reduce((sum, it) => sum + getDriverHotelCost1(it), 0);
+    const totalGroupCost = groupTotal + guideHotelTotal + driverHotelTotal1;
     const snglSupp = perPaxSngl - perPaxDbl;
     const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
     const sRows = paxCounts.map(pax => {
