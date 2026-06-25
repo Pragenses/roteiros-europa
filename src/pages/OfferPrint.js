@@ -170,16 +170,23 @@ export default function OfferPrint({ offerId, navigate, colors }) {
   const rows = computeAllCombinedEUR().rows;
 
   const hotels = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
-  // programText now contains HTML (from rich text editor) — split into paragraph blocks
+  // programText may contain HTML (rich text editor) or plain text with \n
   const programParagraphs = (() => {
     const html = offer.programText || '';
     if (!html.trim()) return [];
-    // Split on <div> or <br> or double newlines (contentEditable creates <div> per line in most browsers)
-    const parts = html
+    // First try HTML splitting (contentEditable creates <div> per line in Chrome)
+    const htmlParts = html
       .split(/<div>|<\/div>|<br\s*\/?>/i)
       .map(p => p.trim())
       .filter(p => p && p !== '&nbsp;');
-    return parts.length > 0 ? parts : [html];
+    if (htmlParts.length > 3) return htmlParts;
+    // Fallback: plain text with \n (Safari/Firefox contentEditable or copy-pasted text)
+    const plainParts = html
+      .replace(/<[^>]+>/g, '') // strip HTML tags
+      .split(/\n/)
+      .map(p => p.trim())
+      .filter(p => p);
+    return plainParts.length > 0 ? plainParts : [html];
   })();
   const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
   const versions = offer.pdfVersions || [];
