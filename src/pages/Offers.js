@@ -145,18 +145,24 @@ export default function Offers({ navigate, colors }) {
             No offers found.
           </div>
         ) : (() => {
-          // Build client → color index map
+          // Build client → color map using saved color from Firestore, fallback to palette
           const clientColorMap = {};
           let idx = 0;
+          const autoIdx = {};
           offers.forEach(o => {
             if (o.clientName && !clientColorMap[o.clientName]) {
-              clientColorMap[o.clientName] = idx++ % CLIENT_PALETTE.length;
+              const client = clients.find(c => c.name === o.clientName);
+              if (client?.color) {
+                clientColorMap[o.clientName] = client.color;
+              } else {
+                clientColorMap[o.clientName] = CLIENT_PALETTE[idx++ % CLIENT_PALETTE.length];
+              }
             }
           });
           return (
             <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
               {filtered.map((o, i) => {
-                const clientBg = o.clientName ? CLIENT_PALETTE[clientColorMap[o.clientName] || 0] : colors.white;
+                const clientBg = o.clientName ? (clientColorMap[o.clientName] || colors.white) : colors.white;
                 return (
                   <div key={o.id}
                     style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 1.25rem', borderBottom: i < filtered.length - 1 ? `1px solid ${colors.border}` : 'none', cursor: 'pointer', background: clientBg }}

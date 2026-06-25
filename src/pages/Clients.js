@@ -14,6 +14,7 @@ export default function Clients({ navigate, colors }) {
   const [editingId, setEditingId] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [contacts, setContacts] = useState([{ name: '', role: '', email: '', phone: '' }]);
+  const [clientColor, setClientColor] = useState('#FAEEDA');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiName, setAiName] = useState('');
   const [parseLoading, setParseLoading] = useState(false);
@@ -88,7 +89,7 @@ export default function Clients({ navigate, colors }) {
     const f = formRef.current;
     const data = {
       name: f.cname.value, country: f.country.value, state: f.state.value, notes: f.notes.value,
-      contacts,
+      contacts, color: clientColor,
       billing: {
         company: f.billingCompany.value, address: f.billingAddress.value,
         city: f.billingCity.value, zip: f.billingZip.value,
@@ -111,6 +112,7 @@ export default function Clients({ navigate, colors }) {
   const handleEdit = (c) => {
     setEditingId(c.id);
     setContacts(c.contacts?.length ? c.contacts : [{ name: '', role: '', email: '', phone: '' }]);
+    setClientColor(c.color || '#FAEEDA');
     setShowForm(true);
     setParseText('');
     setTimeout(() => {
@@ -187,6 +189,15 @@ export default function Clients({ navigate, colors }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>Basic info</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
               <div>{lbl('Agency name *')}<input name="cname" type="text" placeholder="e.g. UNEWORLD" required style={iStyle} /></div>
+              <div>
+                {lbl('Cor do cliente (para lista de ofertas)')}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  {['#FAEEDA','#E6F1FB','#EAF3DE','#EEEDFE','#FCEBEB','#FCE4EC','#E0F7FA','#FFF8E7','#F3E5F5','#E8EAF6'].map(c => (
+                    <div key={c} onClick={() => setClientColor(c)}
+                      style={{ width: 28, height: 28, borderRadius: 6, background: c, cursor: 'pointer', border: clientColor === c ? '3px solid #333' : '2px solid #ccc' }} />
+                  ))}
+                </div>
+              </div>
               <div>{lbl('Country')}<input name="country" type="text" defaultValue="Brazil" style={iStyle} /></div>
               <div>{lbl('State / Province (Estado)')}<input name="state" type="text" placeholder="e.g. SP, RJ" style={iStyle} /></div>
               <div style={{ gridColumn: '1 / -1' }}>{lbl('Notes')}<textarea name="notes" rows={2} style={{ ...iStyle, resize: 'vertical' }} /></div>
