@@ -152,8 +152,9 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     return { cur: 'EUR', rows: sRows };
   };
 
-  // Used when showSplit is OFF — converts ALL items (any currency) to EUR and sums together
+  // v191: fix computeAllCombinedEUR missing + driver_hotel in split EUR table
   const computeAllCombinedEUR = () => {
+    console.debug('computeAllCombinedEUR v191');
     const paxItems = activeItems.filter(it => it.type === 'per_pax');
     const groupItems = activeItems.filter(it => it.type === 'group' && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
     const toEUR = (v, c) => c === 'EUR' ? v : v * (rates[c] || 1);
@@ -516,3 +517,4 @@ export default function OfferPrint({ offerId, navigate, colors }) {
     </div>
   );
 }
+// BUILD_1782348416
