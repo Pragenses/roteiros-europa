@@ -16,6 +16,11 @@ const STATUS_STYLE = {
   lost: { bg: '#FCEBEB', color: '#791F1F' },
 };
 
+const CLIENT_PALETTE = [
+  '#FFF8E7', '#E8F5E9', '#E3F2FD', '#FCE4EC', '#F3E5F5',
+  '#E0F7FA', '#FFF3E0', '#F9FBE7', '#EDE7F6', '#E8EAF6',
+];
+
 export default function Offers({ navigate, colors }) {
   const [offers, setOffers] = useState([]);
   const [clients, setClients] = useState([]);
@@ -139,25 +144,38 @@ export default function Offers({ navigate, colors }) {
           <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '3rem', textAlign: 'center', color: colors.muted, fontSize: 14 }}>
             No offers found.
           </div>
-        ) : (
-          <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            {filtered.map((o, i) => (
-              <div key={o.id}
-                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 1.25rem', borderBottom: i < filtered.length - 1 ? `1px solid ${colors.border}` : 'none', cursor: 'pointer' }}
-                onClick={() => navigate('offer-detail', { offerId: o.id })}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{o.name}</div>
-                  <div style={{ fontSize: 12, color: colors.muted }}>{o.clientName || 'No client yet'}{o.destinations ? ` · ${o.destinations}` : ''}{o.startDate ? ` · ${o.startDate}` : ''} · {o.items?.length || 0} item(s) · margin {o.margin || 15}%</div>
-                </div>
-                <Badge status={o.status} />
-                <button onClick={e => { e.stopPropagation(); handleDelete(o.id); }}
-                  style={{ padding: '4px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.muted }}>
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        )
+        ) : (() => {
+          // Build client → color index map
+          const clientColorMap = {};
+          let idx = 0;
+          offers.forEach(o => {
+            if (o.clientName && !clientColorMap[o.clientName]) {
+              clientColorMap[o.clientName] = idx++ % CLIENT_PALETTE.length;
+            }
+          });
+          return (
+            <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
+              {filtered.map((o, i) => {
+                const clientBg = o.clientName ? CLIENT_PALETTE[clientColorMap[o.clientName] || 0] : colors.white;
+                return (
+                  <div key={o.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 1.25rem', borderBottom: i < filtered.length - 1 ? `1px solid ${colors.border}` : 'none', cursor: 'pointer', background: clientBg }}
+                    onClick={() => navigate('offer-detail', { offerId: o.id })}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{o.name}</div>
+                      <div style={{ fontSize: 12, color: colors.muted }}>{o.clientName || 'No client yet'}{o.destinations ? ` · ${o.destinations}` : ''}{o.startDate ? ` · ${o.startDate}` : ''} · {o.items?.length || 0} item(s) · margin {o.margin || 15}%</div>
+                    </div>
+                    <Badge status={o.status} />
+                    <button onClick={e => { e.stopPropagation(); handleDelete(o.id); }}
+                      style={{ padding: '4px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.muted }}>
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()
       }
     </div>
   );
