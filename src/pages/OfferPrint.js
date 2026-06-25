@@ -462,9 +462,9 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro split into pages of 15 paragraphs */}
+      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
       {roteiroParagraphs.length > 0 && (() => {
-        const CHUNK = 15;
+        const CHUNK = 25;
         const pages = [];
         for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
           pages.push(roteiroParagraphs.slice(i, i + CHUNK));
