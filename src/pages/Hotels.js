@@ -311,6 +311,15 @@ export default function Hotels({ navigate, colors, navParams }) {
               {cities.map(c => <option key={c} value={c}>{c} ({hotels.filter(h=>h.city===c).length})</option>)}
             </select>
             <button onClick={() => { setShowAdd(true); setNewHotel({ city: cityFilter, name: '', email: '' }); }} style={btn(C.primary)}>+ Přidat ručně</button>
+            {cityFilter && (
+              <button onClick={async () => {
+                if (!window.confirm('Smazat všechny hotely města ' + cityFilter + '?')) return;
+                const toDelete = hotels.filter(h => h.city === cityFilter);
+                for (const h of toDelete) await deleteDoc(doc(db, 'hotels', h.id));
+                setCityFilter('');
+                fetchHotels();
+              }} style={btn(C.danger)}>🗑 Smazat město</button>
+            )}
           </div>
 
           {showAdd && (
