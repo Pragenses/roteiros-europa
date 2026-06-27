@@ -82,34 +82,34 @@ function parseHotelTextV2(text) {
   return results.filter(r => r.email);
 }
 
-// Nejjednodušší parser — funguje pro oba formáty
+// Parser — město je řádek s HOTELY/HOTELS/HOTEIS nebo první text před prvním emailem
+// Název hotelu = řádek těsně před emailem
 function parseSimple(text) {
-  const lines = text.split('\n').map(l => {
-    // odstraní markdown links [text](url)
-    return l.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim();
-  }).filter(Boolean);
+  const lines = text.split('\n').map(l =>
+    l.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim()
+  ).filter(Boolean);
 
   const results = [];
   let city = '';
-  let prevLine = '';
+  let pendingName = '';
+  let foundFirstEmail = false;
 
   for (const line of lines) {
     if (EMAIL_RE.test(line)) {
-      results.push({ city, name: prevLine !== city ? prevLine : '', email: line.toLowerCase() });
-      prevLine = '';
+      foundFirstEmail = true;
+      results.push({ city, name: pendingName, email: line.toLowerCase() });
+      pendingName = '';
+    } else if (/^HOTELY\s+|^HOTELS\s+|^HOTEIS\s+/i.test(line)) {
+      // Explicitní označení města
+      city = line.replace(/^HOTELY\s+/i,'').replace(/^HOTELS\s+/i,'').replace(/^HOTEIS\s+/i,'').trim();
+      pendingName = '';
+    } else if (!foundFirstEmail && !city) {
+      // Před prvním emailem bez města — toto je město
+      city = line;
+      pendingName = '';
     } else {
-      if (line === line.toUpperCase() && line.length > 3 && /[A-Z]/.test(line)) {
-        // Velká písmena
-        if (prevLine && EMAIL_RE.test('x@' + prevLine)) {
-          // předchozí byl email — skip
-        } else if (!city || results.length > 0) {
-          // Může být město nebo název hotelu — uložíme jako potenciální město
-          // pokud příští je email bez názvu => je to město
-          // pokud příští je název => je to město
-          city = line.replace(/^HOTEIS?\s+/i,'').replace(/^HOTELS?\s+/i,'').trim();
-        }
-      }
-      prevLine = line;
+      // Název hotelu
+      pendingName = line;
     }
   }
   return results.filter(r => r.email);
