@@ -949,17 +949,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ✨ Vytvořit hotely z textu
           </button>
           <button onClick={() => {
-            // Collect cities and dates from hotel items
             const hotelItems = activeItems.filter(it => it.subType === 'hotel');
-            const firstDate = hotelItems.length > 0 ? hotelItems[0].dateFrom : (offer.startDate || '');
-            const lastDate = hotelItems.length > 0 ? hotelItems[hotelItems.length-1].dateTo : (offer.endDate || '');
-            const cities = [...new Set(hotelItems.map(h => h.city).filter(Boolean))];
+            // Build city list with per-city dates
+            const cityMap = {};
+            hotelItems.forEach(h => {
+              if (!h.city) return;
+              if (!cityMap[h.city]) cityMap[h.city] = { checkIn: h.dateFrom, checkOut: h.dateTo };
+              else cityMap[h.city].checkOut = h.dateTo; // extend checkout if multiple nights
+            });
+            const cityList = Object.entries(cityMap).map(([city, dates]) => ({ city, ...dates }));
             navigate('hotels', {
               prefill: {
                 groupName: offer.name || offer.clientName || '',
-                checkIn: firstDate,
-                checkOut: lastDate,
-                cities,
+                cityList,
               }
             });
           }}

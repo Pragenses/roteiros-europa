@@ -80,7 +80,9 @@ VAT: CZ284 45 961`;
 export default function Hotels({ navigate, colors, navParams }) {
   const C = colors;
   const prefill = navParams?.prefill || null;
+  const cityList = prefill?.cityList || null;
   const [tab, setTab] = useState(prefill ? 'compose' : 'import');
+  const [activeCityPrefill, setActiveCityPrefill] = useState(null);
 
   const [hotels, setHotels]       = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -97,10 +99,11 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [importDone, setImportDone]   = useState(null);
 
   const [selected, setSelected]       = useState([]);
-  const [composeCity, setComposeCity] = useState(prefill?.cities?.[0] || '');
+  const [composeCity, setComposeCity] = useState('');
   const [groupName, setGroupName]     = useState(prefill?.groupName || '');
-  const [checkIn, setCheckIn]         = useState(prefill?.checkIn || '');
-  const [checkOut, setCheckOut]       = useState(prefill?.checkOut || '');
+  const [prefillGroupName] = useState(prefill?.groupName || '');
+  const [checkIn, setCheckIn]         = useState('');
+  const [checkOut, setCheckOut]       = useState('');
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [subject, setSubject]         = useState('Group Accommodation Request');
@@ -376,11 +379,52 @@ export default function Hotels({ navigate, colors, navParams }) {
         </div>
       )}
 
+      {/* ── CITY LIST Z OFFER ── */}
+      {tab === 'compose' && cityList && cityList.length > 0 && !activeCityPrefill && (
+        <div style={cardS}>
+          <h3 style={{ margin: '0 0 12px', fontSize: 15, color: C.primary, fontWeight: 600 }}>
+            Města z itineráře — vyber město pro poptávku
+          </h3>
+          <p style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>Skupina: <strong>{prefillGroupName}</strong></p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead><tr style={{ background: C.bg }}>
+              {['Město','Check-in','Check-out',''].map(h => <th key={h} style={thS}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {cityList.map((c, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={tdS}><strong>{c.city}</strong></td>
+                  <td style={tdS}>{c.checkIn}</td>
+                  <td style={tdS}>{c.checkOut}</td>
+                  <td style={tdS}>
+                    <button onClick={() => {
+                      setActiveCityPrefill(c);
+                      setGroupName(prefillGroupName);
+                      setCheckIn(c.checkIn);
+                      setCheckOut(c.checkOut);
+                      setComposeCity(c.city);
+                      setSelected([]);
+                    }} style={{ padding: '4px 14px', background: C.primary, color: '#fff', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 12, fontFamily: 'Georgia, serif' }}>
+                      ✉ Poslat
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* ── COMPOSE ── */}
       {tab === 'compose' && (
         <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '1.5rem', alignItems: 'start' }}>
           <div>
             <div style={cardS}>
+              {cityList && activeCityPrefill && (
+                <button onClick={() => setActiveCityPrefill(null)} style={{ fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', marginBottom: 10, display: 'block' }}>
+                  ← Zpět na seznam měst
+                </button>
+              )}
               <h3 style={{ margin: '0 0 12px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Skupina</h3>
               {[
                 ['Název skupiny', groupName, setGroupName, 'text'],
