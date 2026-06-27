@@ -263,8 +263,10 @@ export default function Hotels({ navigate, colors }) {
         sentAt: serverTimestamp(), status: 'mailto',
       })
     ));
-    const emails = sel.map(h => h.email).join(',');
-    window.open(`mailto:${emails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+    // Každý hotel dostane vlastní email
+    for (const h of sel) {
+      window.open(`mailto:${h.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+    }
     setSendResult({ count: sel.length });
     setTab('log'); fetchLogs();
   };
