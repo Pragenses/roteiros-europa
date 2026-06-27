@@ -9,6 +9,7 @@ export default function Settings({ colors }) {
   const [backupStatus, setBackupStatus] = useState('');
   const [smtpPass, setSmtpPass] = useState(() => localStorage.getItem('smtpPass') || '');
   const [smtpSaved, setSmtpSaved] = useState(false);
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
 
   const saveSmtp = () => {
     localStorage.setItem('smtpPass', smtpPass);
@@ -252,9 +253,14 @@ export default function Settings({ colors }) {
         </div>
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Heslo</div>
-          <input type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)}
-            placeholder="Zadej heslo ke schránce grupos@tour-pragenses.com"
-            style={iStyle} />
+          <div style={{ position: 'relative' }}>
+            <input type={showSmtpPass ? 'text' : 'password'} value={smtpPass} onChange={e => setSmtpPass(e.target.value)}
+              placeholder="Zadej heslo ke schránce grupos@tour-pragenses.com"
+              style={{ ...iStyle, paddingRight: 36 }} />
+            <button onClick={() => setShowSmtpPass(s => !s)} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: colors.muted }}>
+              {showSmtpPass ? '🙈' : '👁'}
+            </button>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button onClick={saveSmtp} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
