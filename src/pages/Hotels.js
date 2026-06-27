@@ -196,6 +196,8 @@ export default function Hotels({ navigate, colors }) {
   // ── Log ──────────────────────────────────────────────────────────────────────
   const [logs, setLogs]             = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [editRow, setEditRow] = useState(null);
+  const [editRow, setEditRow] = useState(null); // { id, city, name, email }
 
   // ── Fetch ─────────────────────────────────────────────────────────────────────
   const fetchHotels = useCallback(async () => {
@@ -250,6 +252,22 @@ export default function Hotels({ navigate, colors }) {
     if (!window.confirm('Smazat hotel?')) return;
     await deleteDoc(doc(db, 'hotels', id));
     setSelected(s => s.filter(x => x !== id));
+    fetchHotels();
+  };
+
+  const saveEdit = async () => {
+    if (!editRow) return;
+    await updateDoc(doc(db, 'hotels', editRow.id), { city: editRow.city, name: editRow.name, email: editRow.email });
+    setEditRow(null);
+    fetchHotels();
+  };
+
+  const saveEdit = async () => {
+    if (!editRow) return;
+    await updateDoc(doc(db, 'hotels', editRow.id), {
+      city: editRow.city, name: editRow.name, email: editRow.email,
+    });
+    setEditRow(null);
     fetchHotels();
   };
 
@@ -420,14 +438,31 @@ export default function Hotels({ navigate, colors }) {
                 </tr></thead>
                 <tbody>
                   {dbFiltered.map(h => (
-                    <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                      <td style={tdS}>{h.city||'—'}</td>
-                      <td style={tdS}>{h.name||<span style={{color:C.muted}}>—</span>}</td>
-                      <td style={tdS}><a href={`mailto:${h.email}`} style={{ color: C.primary }}>{h.email}</a></td>
-                      <td style={tdS}>
-                        <button onClick={() => deleteHotel(h.id)} style={{ padding: '2px 8px', background: C.danger, color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>✕</button>
-                      </td>
-                    </tr>
+                    editRow && editRow.id === h.id ? (
+                      <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}`, background: '#fffbf0' }}>
+                        <td style={tdS}><input value={editRow.city} onChange={e => setEditRow({...editRow, city: e.target.value})} style={{width:'100%',padding:'4px 6px',border:`1px solid ${C.border}`,borderRadius:4,fontSize:13,fontFamily:'Georgia,serif'}}/></td>
+                        <td style={tdS}><input value={editRow.name} onChange={e => setEditRow({...editRow, name: e.target.value})} style={{width:'100%',padding:'4px 6px',border:`1px solid ${C.border}`,borderRadius:4,fontSize:13,fontFamily:'Georgia,serif'}}/></td>
+                        <td style={tdS}><input value={editRow.email} onChange={e => setEditRow({...editRow, email: e.target.value})} style={{width:'100%',padding:'4px 6px',border:`1px solid ${C.border}`,borderRadius:4,fontSize:13,fontFamily:'Georgia,serif'}}/></td>
+                        <td style={tdS}>
+                          <div style={{display:'flex',gap:4}}>
+                            <button onClick={saveEdit} style={{padding:'2px 8px',background:C.success,color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontSize:11}}>✓</button>
+                            <button onClick={() => setEditRow(null)} style={{padding:'2px 8px',background:C.muted,color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontSize:11}}>✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={h.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={tdS}>{h.city||'—'}</td>
+                        <td style={tdS}>{h.name||<span style={{color:C.muted}}>—</span>}</td>
+                        <td style={tdS}><a href={`mailto:${h.email}`} style={{ color: C.primary }}>{h.email}</a></td>
+                        <td style={tdS}>
+                          <div style={{display:'flex',gap:4}}>
+                            <button onClick={() => setEditRow({id:h.id,city:h.city||'',name:h.name||'',email:h.email||''})} style={{padding:'2px 8px',background:C.primary,color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontSize:11}}>✎</button>
+                            <button onClick={() => deleteHotel(h.id)} style={{padding:'2px 8px',background:C.danger,color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontSize:11}}>✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
                   ))}
                 </tbody>
               </table>
