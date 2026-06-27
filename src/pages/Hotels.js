@@ -43,32 +43,39 @@ const TABS = [
   { id: 'log',     label: '📋 Log' },
 ];
 
-const DEFAULT_TEMPLATE = `<p>Dear Sir or Madam,</p>
-<p>I am reaching out to inquire about the best possible rates and options for accommodating a group booking as outlined below:</p>
-<p><b>GROUP DETAILS:</b><br>
-<b>- Group Name: {{groupName}}</b><br>
-<b>- Travel Dates: {{checkIn}} - {{checkOut}}</b><br>
-<b>- Accommodation Needs: 18 rooms in total ( 16 twin/dbl + 2 sngl )</b><br>
-<b>&nbsp;&nbsp;- Room Breakdown: twin/dbl rooms and single rooms. Our groups need at least 50% of twin rooms with separated beds.</b><br>
-<b>&nbsp;&nbsp;- If available, please also provide pricing for triple rooms or double rooms with an extra bed as an alternative.</b></p>
-<p>SPECIAL REQUESTS:<br>
-- Complimentary Room: 1 free guest per {{freeRatio}} paid rooms<br>
-- Porterage Service: Please inform us if porterage is available, along with the associated pricing.<br>
-- Meal Plan Options:<br>
-&nbsp;&nbsp;- BB: Please provide the rate.<br>
-&nbsp;&nbsp;- HB: if offered ( not requested in this moment )</p>
-<p>BOOKING CONDITIONS:<br>
-- Cancellation policy (including free cancellation terms and partial cancellation conditions)<br>
-- Deposit requirements and payment schedule</p>
-<p>Additionally, we would appreciate if you could hold this offer until the date ............</p>
-<p>Thank you very much for your assistance. I look forward to your proposal and any further details you may require.</p>
-<p>Best regards,<br>
---<br>
-Helena Dlasková, sales<br>
-TOUR PRAGENSES, PRAGENSES s.r.o.<br>
-Lipnická 688, Praha 9 - Kyje, Czech Republic<br>
-Tlf - whatsapp : +420 777 079 997<br>
-VAT: CZ284 45 961</p>`;
+const DEFAULT_TEMPLATE = `Dear Sir or Madam,
+
+I am reaching out to inquire about the best possible rates and options for accommodating a group booking as outlined below:
+
+GROUP DETAILS:
+- Group Name: {{groupName}}
+- Travel Dates: {{checkIn}} - {{checkOut}}
+- Accommodation Needs: 18 rooms in total ( 16 twin/dbl + 2 sngl )
+  - Room Breakdown: twin/dbl rooms and single rooms. Our groups need at least 50% of twin rooms with separated beds.
+  - If available, please also provide pricing for triple rooms or double rooms with an extra bed as an alternative.
+
+SPECIAL REQUESTS:
+- Complimentary Room: 1 free guest per {{freeRatio}} paid rooms
+- Porterage Service: Please inform us if porterage is available, along with the associated pricing.
+- Meal Plan Options:
+  - BB: Please provide the rate.
+  - HB: if offered ( not requested in this moment )
+
+BOOKING CONDITIONS:
+- Cancellation policy (including free cancellation terms and partial cancellation conditions)
+- Deposit requirements and payment schedule
+
+Additionally, we would appreciate if you could hold this offer until the date ............
+
+Thank you very much for your assistance. I look forward to your proposal and any further details you may require.
+
+Best regards,
+--
+Helena Dlasková, sales
+TOUR PRAGENSES, PRAGENSES s.r.o.
+Lipnická 688, Praha 9 - Kyje, Czech Republic
+Tlf - whatsapp : +420 777 079 997
+VAT: CZ284 45 961`;
 
 export default function Hotels({ navigate, colors }) {
   const C = colors;
