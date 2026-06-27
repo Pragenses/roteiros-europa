@@ -190,7 +190,7 @@ export default function Hotels({ navigate, colors }) {
     let sent = 0, failed = 0;
     for (const h of sel) {
       try {
-        const res = await fetch('/.netlify/functions/sendmail', {
+        const res = await fetch('https://www.tour-pragenses.com/mailer.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to: h.email, subject, body, smtpPass }),
