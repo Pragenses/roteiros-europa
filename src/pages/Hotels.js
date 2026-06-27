@@ -129,27 +129,39 @@ const TABS = [
   { id: 'log',     label: '📋 Log' },
 ];
 
-const DEFAULT_TEMPLATE = `Dear Reservations Team,
+const DEFAULT_TEMPLATE = `Dear Sir or Madam,
 
-We would like to request availability and rates for a group:
+I am reaching out to inquire about the best possible rates and options for accommodating a group booking as outlined below:
 
-Group: {{groupName}}
-Check-in: {{checkIn}}
-Check-out: {{checkOut}}
-Rooms: {{rooms}}
+Group Details:
+- Group Name: {{groupName}}
+- Travel Dates: {{checkIn}} – {{checkOut}}
+- Accommodation Needs: {{rooms}} rooms in total
+  - Room Breakdown: twin/dbl rooms and single rooms. Our groups need at least 50% of twin rooms with separated beds.
+  - If available, please also provide pricing for triple rooms or double rooms with an extra bed as an alternative.
 
-Please provide your best group rates including:
-- Room rate per night (DBL / SGL supplement)
-- 1 complimentary room per {{freeRatio}} paid rooms
-- Breakfast included
-- Group payment conditions
+Special Requests:
+- Complimentary Room: 1 free guest per {{freeRatio}} paid rooms
+- Porterage Service: Please inform us if porterage is available, along with the associated pricing.
+- Meal Plan Options:
+  - BB: Please provide the rate.
+  - HB: If offered, please include the additional cost for this option.
 
-We look forward to your reply.
+Booking Conditions:
+- Cancellation policy (including free cancellation terms and partial cancellation conditions)
+- Deposit requirements and payment schedule
 
-Kind regards,
-Helena Čejková
-Orbis Europa DMC
-grupos@tour-pragenses.com`;
+Additionally, we would appreciate if you could hold this offer until the date ............
+
+Thank you very much for your assistance. I look forward to your proposal and any further details you may require.
+
+Best regards,
+--
+Helena Dlasková, sales
+TOUR PRAGENSES, PRAGENSES s.r.o.
+Lipnická 688, Praha 9 - Kyje, Czech Republic
+Tlf - whatsapp : +420 777 079 997
+VAT: CZ284 45 961`;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function Hotels({ navigate, colors }) {
