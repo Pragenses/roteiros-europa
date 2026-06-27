@@ -98,12 +98,8 @@ export default function Hotels({ navigate, colors }) {
   const [selected, setSelected]       = useState([]);
   const [composeCity, setComposeCity] = useState('');
   const [groupName, setGroupName]     = useState('');
-  const [checkInD, setCheckInD]   = useState('');
-  const [checkInM, setCheckInM]   = useState('');
-  const [checkInY, setCheckInY]   = useState('');
-  const [checkOutD, setCheckOutD] = useState('');
-  const [checkOutM, setCheckOutM] = useState('');
-  const [checkOutY, setCheckOutY] = useState('');
+  const [checkIn, setCheckIn]         = useState('');
+  const [checkOut, setCheckOut]       = useState('');
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [subject, setSubject]         = useState('Group Accommodation Request');
@@ -173,8 +169,6 @@ export default function Hotels({ navigate, colors }) {
     fetchHotels();
   };
 
-  const checkIn = checkInD && checkInM && checkInY ? checkInD+'/'+checkInM+'/'+checkInY : (checkInD||checkInM||checkInY ? (checkInD||'?')+'/'+(checkInM||'?')+'/'+(checkInY||'?') : '');
-  const checkOut = checkOutD && checkOutM && checkOutY ? checkOutD+'/'+checkOutM+'/'+checkOutY : (checkOutD||checkOutM||checkOutY ? (checkOutD||'?')+'/'+(checkOutM||'?')+'/'+(checkOutY||'?') : '');
   const buildBody = () => emailBody
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, checkIn||'[CHECK-IN]')
@@ -212,8 +206,7 @@ export default function Hotels({ navigate, colors }) {
       }
     }
     setSendResult({ sent, failed });
-    setGroupName(''); setCheckInD(''); setCheckInM(''); setCheckInY('');
-    setCheckOutD(''); setCheckOutM(''); setCheckOutY('');
+    setGroupName(''); setCheckIn(''); setCheckOut('');
     setSelected([]);
     setTab('log'); fetchLogs();
   };
@@ -388,30 +381,17 @@ export default function Hotels({ navigate, colors }) {
           <div>
             <div style={cardS}>
               <h3 style={{ margin: '0 0 12px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Skupina</h3>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Název skupiny</label>
-                <input value={groupName} onChange={e => setGroupName(e.target.value)} style={inp()} />
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Check-in</label>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <input value={checkInD} onChange={e => setCheckInD(e.target.value)} placeholder="DD" maxLength={2} style={{ ...inp(), width: 48, textAlign: 'center' }} />
-                  <input value={checkInM} onChange={e => setCheckInM(e.target.value)} placeholder="MM" maxLength={2} style={{ ...inp(), width: 48, textAlign: 'center' }} />
-                  <input value={checkInY} onChange={e => setCheckInY(e.target.value)} placeholder="YYYY" maxLength={4} style={{ ...inp(), width: 70, textAlign: 'center' }} />
+              {[
+                ['Název skupiny', groupName, setGroupName, 'text'],
+                ['Check-in', checkIn, setCheckIn, 'date'],
+                ['Check-out', checkOut, setCheckOut, 'date'],
+                ['1 pokoj zdarma za X placených', freeRatio, setFreeRatio, 'number'],
+              ].map(([label, val, setter, type]) => (
+                <div key={label} style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>{label}</label>
+                  <input type={type} value={val} onChange={e => setter(e.target.value)} style={inp()} />
                 </div>
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Check-out</label>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <input value={checkOutD} onChange={e => setCheckOutD(e.target.value)} placeholder="DD" maxLength={2} style={{ ...inp(), width: 48, textAlign: 'center' }} />
-                  <input value={checkOutM} onChange={e => setCheckOutM(e.target.value)} placeholder="MM" maxLength={2} style={{ ...inp(), width: 48, textAlign: 'center' }} />
-                  <input value={checkOutY} onChange={e => setCheckOutY(e.target.value)} placeholder="YYYY" maxLength={4} style={{ ...inp(), width: 70, textAlign: 'center' }} />
-                </div>
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>1 pokoj zdarma za X placených</label>
-                <input type="number" value={freeRatio} onChange={e => setFreeRatio(e.target.value)} style={inp()} />
-              </div>
+              ))}
             </div>
             <div style={{ ...cardS, marginTop: 12 }}>
               <h3 style={{ margin: '0 0 10px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Hotely ({selected.length} vybráno)</h3>
