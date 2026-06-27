@@ -370,7 +370,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const newHotels = [];
     let lastYear = new Date().getFullYear() + 1 + ''; // default next year
 
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       // Remove trailing notes
       const cleanLine = line.replace(/\s*-\s*(obeslano|FD|June|July|Aug|Sep|Oct|Nov|Dec|Jan|Feb|Mar|Apr|objedn)[^\n]*/i, '').trim();
 
