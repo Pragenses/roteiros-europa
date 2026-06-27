@@ -401,6 +401,27 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           else { cityRaw = restClean.trim(); hotelName = ''; }
         }
       } else {
+        // Format E: DD a DD/MM/YYYY: City (next line: HOTEL NAME)
+        const fmtE = cleanLine.match(/^(\d{1,2})\s+a\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*:\s*(.+)/i);
+        if (fmtE) {
+          const [, d1, d2, m2, y2raw, city] = fmtE;
+          const y2 = y2raw.length === 2 ? '20' + y2raw : y2raw;
+          lastYear = y2;
+          dateFrom = `${y2}-${m2.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          cityRaw = city.trim();
+          hotelName = '';
+          // next non-empty line will be hotel name
+          for (let j = i + 1; j < lines.length; j++) {
+            const nextLine = lines[j].trim();
+            if (!nextLine) continue;
+            // if it looks like another date line, stop
+            if (/^\d{1,2}\s+a\s+\d/.test(nextLine)) break;
+            hotelName = nextLine;
+            break;
+          }
+        }
+
         // Format B: DD/MM a DD/MM/YY – CITY: HOTEL (Portuguese style)
         const fmtB = cleanLine.match(/(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\s+a\s+(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s*-+\s*([^:]+)(?::\s*(.+))?/i);
         if (fmtB) {
