@@ -179,21 +179,16 @@ export default function Hotels({ navigate, colors }) {
 
   const handleSend = async () => {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
-    const smtpPass = localStorage.getItem('smtpPass');
-    if (!smtpPass) {
-      alert('Nejprve zadej SMTP heslo v Settings.');
-      return;
-    }
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
     let sent = 0, failed = 0;
     for (const h of sel) {
       try {
-        const res = await fetch('https://www.tour-pragenses.com/mailer.php', {
+        const res = await fetch('https://tour-pragenses.com/mailer.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: h.email, subject, body, smtpPass }),
+          body: JSON.stringify({ to: h.email, subject, body }),
         });
         const data = await res.json();
         if (data.ok) {
