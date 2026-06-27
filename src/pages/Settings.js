@@ -7,6 +7,14 @@ export default function Settings({ colors }) {
   const [saved, setSaved] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [backupStatus, setBackupStatus] = useState('');
+  const [smtpPass, setSmtpPass] = useState(() => localStorage.getItem('smtpPass') || '');
+  const [smtpSaved, setSmtpSaved] = useState(false);
+
+  const saveSmtp = () => {
+    localStorage.setItem('smtpPass', smtpPass);
+    setSmtpSaved(true);
+    setTimeout(() => setSmtpSaved(false), 2000);
+  };
   const formRef = useRef(null);
 
   useEffect(() => {
@@ -224,6 +232,37 @@ export default function Settings({ colors }) {
           </form>
         </div>
       )}
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.5rem', maxWidth: 600, marginTop: '1.5rem' }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>📧 SMTP — odesílání emailů hotelům</div>
+        <div style={{ fontSize: 13, color: colors.muted, marginBottom: '1.25rem', lineHeight: 1.5 }}>
+          Heslo se uloží pouze v tomto prohlížeči. Nikam se neodesílá, nikdo jiný ho neuvidí.
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>SMTP server</div>
+          <input value="smtp.svethostingu.cz" readOnly style={{ ...iStyle, background: colors.bg, color: colors.muted }} />
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Port</div>
+          <input value="465 (SSL)" readOnly style={{ ...iStyle, background: colors.bg, color: colors.muted }} />
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Uživatel</div>
+          <input value="grupos@tour-pragenses.com" readOnly style={{ ...iStyle, background: colors.bg, color: colors.muted }} />
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Heslo</div>
+          <input type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)}
+            placeholder="Zadej heslo ke schránce grupos@tour-pragenses.com"
+            style={iStyle} />
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button onClick={saveSmtp} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            Uložit heslo
+          </button>
+          {smtpSaved && <span style={{ fontSize: 13, color: '#27500A' }}>✓ Uloženo</span>}
+        </div>
+      </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.5rem', maxWidth: 600, marginTop: '1.5rem' }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>💾 Backup de segurança</div>
