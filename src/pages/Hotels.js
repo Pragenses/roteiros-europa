@@ -179,17 +179,38 @@ export default function Hotels({ navigate, colors }) {
 
   const handleSend = async () => {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
+    const smtpPass = localStorage.getItem('smtpPass');
+    if (!smtpPass) {
+      alert('Nejprve zadej SMTP heslo v Settings.');
+      return;
+    }
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
-    await Promise.all(sel.map(h => addDoc(collection(db, 'hotelEmailLog'), {
-      hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
-      email: h.email, subject, groupName, checkIn, checkOut,
-      sentAt: serverTimestamp(), status: 'mailto',
-    })));
+    setSendResult(null);
+    let sent = 0, failed = 0;
     for (const h of sel) {
-      window.open(`mailto:${h.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+      try {
+        const res = await fetch('/.netlify/functions/sendmail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: h.email, subject, body, smtpPass }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          await addDoc(collection(db, 'hotelEmailLog'), {
+            hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
+            email: h.email, subject, groupName, checkIn, checkOut,
+            sentAt: serverTimestamp(), status: 'sent',
+          });
+          sent++;
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        failed++;
+      }
     }
-    setSendResult({ count: sel.length });
+    setSendResult({ sent, failed });
     setTab('log'); fetchLogs();
   };
 
@@ -428,9 +449,10 @@ export default function Hotels({ navigate, colors }) {
               ✉ Odeslat na {selected.length} hotel{selected.length===1?'':selected.length<5?'y':'ů'}
             </button>
             {sendResult && (
-              <div style={{ marginTop: 12, padding: '10px 14px', background: '#e8f5e9', borderRadius: 6, fontSize: 13, color: C.success }}>
-                ✓ Otevřen emailový klient pro {sendResult.count} hotelů.
-                <button onClick={() => setTab('log')} style={{ marginLeft: 12, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>→ Log</button>
+              <div style={{ marginTop: 12, padding: '10px 14px', background: sendResult.failed ? '#fff3e0' : '#e8f5e9', borderRadius: 6, fontSize: 13 }}>
+                {sendResult.sent > 0 && <div style={{ color: C.success }}>✓ Odesláno: <strong>{sendResult.sent}</strong> emailů</div>}
+                {sendResult.failed > 0 && <div style={{ color: C.warning, marginTop: 4 }}>⚠ Nepodařilo se: <strong>{sendResult.failed}</strong> emailů</div>}
+                <button onClick={() => setTab('log')} style={{ marginTop: 6, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>→ Log</button>
               </div>
             )}
           </div>
