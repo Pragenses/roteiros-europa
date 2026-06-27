@@ -226,6 +226,38 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     'BELGRADE': 'Belgrado', 'BEOGRAD': 'Belgrado', 'SOFIA': 'Sofia',
     'BUCHAREST': 'Bucareste', 'BUCURESTI': 'Bucareste', 'CZESTOCHOWA': 'Czestochowa',
     'VADUZ': 'Vaduz', 'LUXEMBOURG': 'Luxemburgo',
+    // Varianty názvů měst
+    'BUXELAS': 'Bruxelas', 'BRUSEL': 'Bruxelas', 'BRÜSSEL': 'Bruxelas',
+    'LISABON': 'Lisboa', 'LISBONA': 'Lisboa',
+    'MUNIQUE': 'Munique', 'MUNICH': 'Munique', 'MUNCHEN': 'Munique',
+    'PRAGA': 'Praga', 'PRAG': 'Praga',
+    'VIENA': 'Viena', 'VIENNE': 'Viena',
+    'VARSOVIA': 'Varsóvia', 'VARSOVIE': 'Varsóvia',
+    'CRACOVIA': 'Cracóvia', 'CRACOVIE': 'Cracóvia',
+    'FLORENCA': 'Florença', 'FLORENCIA': 'Florença',
+    'VENEZA': 'Veneza', 'VENECIA': 'Veneza',
+    'NAPOLES': 'Nápoles', 'NÁPOLES': 'Nápoles',
+    'SEVILHA': 'Sevilha',
+    'COLONIA': 'Colônia', 'COLÓNIA': 'Colônia',
+    'HAMBURGO': 'Hamburgo',
+    'BERLIM': 'Berlim',
+    'ZURIQUE': 'Zurique',
+    'GENEBRA': 'Genebra',
+    'LUCERNA': 'Lucerna',
+    'ESTOCOLMO': 'Estocolmo',
+    'COPENHAGUE': 'Copenhague', 'KOBENHAVN': 'Copenhague',
+    'HELSINQUE': 'Helsinque',
+    'ATENAS': 'Atenas',
+    'ISTAMBUL': 'Istambul',
+    'BELGRADO': 'Belgrado',
+    'BUCARESTE': 'Bucareste',
+    'LONDRA': 'Londres', 'LONDRE': 'Londres', 'LONDRAS': 'Londres',
+    'EDIMBURGO': 'Edimburgo',
+    'MILAO': 'Milão', 'MILÁN': 'Milão',
+    'RÜDESHEIM': 'Rüdesheim', 'RUDESHEIM': 'Rüdesheim',
+    'NURENBERG': 'Nuremberga', 'NUREMBERG': 'Nuremberga', 'NURNBERG': 'Nuremberga', 'NÜRNBERG': 'Nuremberga',
+    'MESTRE': 'Mestre', 'DESENZANO': 'Desenzano del Garda', 'DESENZANO DEL GARDA': 'Desenzano del Garda',
+    'FUSSEN': 'Füssen', 'FUSSEN': 'Füssen',
   };
 
   const handleParseItinerary = () => {
@@ -911,10 +943,30 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         <textarea value={itineraryText} onChange={e => setItineraryText(e.target.value)} rows={5}
           placeholder={"18.5.2027 – 21.5.2027 MUNICH\n21.5.2027 – 23.5.2027 SALZBURG\n23.5.2027 – 24.5.2027 INNSBRUCK"}
           style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
-        <button onClick={handleParseItinerary} disabled={!itineraryText.trim()}
-          style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
-          ✨ Vytvořit hotely z textu
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={handleParseItinerary} disabled={!itineraryText.trim()}
+            style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            ✨ Vytvořit hotely z textu
+          </button>
+          <button onClick={() => {
+            // Collect cities and dates from hotel items
+            const hotelItems = activeItems.filter(it => it.subType === 'hotel');
+            const firstDate = hotelItems.length > 0 ? hotelItems[0].dateFrom : (offer.startDate || '');
+            const lastDate = hotelItems.length > 0 ? hotelItems[hotelItems.length-1].dateTo : (offer.endDate || '');
+            const cities = [...new Set(hotelItems.map(h => h.city).filter(Boolean))];
+            navigate('hotels', {
+              prefill: {
+                groupName: offer.name || offer.clientName || '',
+                checkIn: firstDate,
+                checkOut: lastDate,
+                cities,
+              }
+            });
+          }}
+            style={{ padding: '8px 18px', background: colors.accent, color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            ✉ Poslat poptávky hotelům
+          </button>
+        </div>
         {parseError && <div style={{ fontSize: 12, color: colors.danger, marginTop: 8 }}>{parseError}</div>}
       </div>
 

@@ -77,9 +77,10 @@ Lipnická 688, Praha 9 - Kyje, Czech Republic
 Tlf - whatsapp : +420 777 079 997
 VAT: CZ284 45 961`;
 
-export default function Hotels({ navigate, colors }) {
+export default function Hotels({ navigate, colors, navParams }) {
   const C = colors;
-  const [tab, setTab] = useState('import');
+  const prefill = navParams?.prefill || null;
+  const [tab, setTab] = useState(prefill ? 'compose' : 'import');
 
   const [hotels, setHotels]       = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -96,10 +97,10 @@ export default function Hotels({ navigate, colors }) {
   const [importDone, setImportDone]   = useState(null);
 
   const [selected, setSelected]       = useState([]);
-  const [composeCity, setComposeCity] = useState('');
-  const [groupName, setGroupName]     = useState('');
-  const [checkIn, setCheckIn]         = useState('');
-  const [checkOut, setCheckOut]       = useState('');
+  const [composeCity, setComposeCity] = useState(prefill?.cities?.[0] || '');
+  const [groupName, setGroupName]     = useState(prefill?.groupName || '');
+  const [checkIn, setCheckIn]         = useState(prefill?.checkIn || '');
+  const [checkOut, setCheckOut]       = useState(prefill?.checkOut || '');
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [subject, setSubject]         = useState('Group Accommodation Request');

@@ -170,7 +170,7 @@ export default function App() {
     if (page === 'clients') return <Clients navigate={navigate} colors={COLORS} />;
     if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
     if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
-    if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} />;
+    if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'settings')  return <Settings colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} />;
   };
