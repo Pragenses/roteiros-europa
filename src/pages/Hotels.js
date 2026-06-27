@@ -209,8 +209,8 @@ export default function Hotels({ navigate, colors }) {
   const handleParse = () => {
     const city = importCity.trim().toUpperCase();
     const raw = parseSimple(importText);
-    // Pokud je zadané město, přepíš city u všech které ho nemají
-    const withCity = raw.map(h => ({ ...h, city: h.city || city || '?' }));
+    // Pokud je zadané město ručně, použij ho vždy (přepíše i to co parser našel)
+    const withCity = raw.map(h => ({ ...h, city: city || h.city || '?' }));
     setParsed(withCity);
   };
 
