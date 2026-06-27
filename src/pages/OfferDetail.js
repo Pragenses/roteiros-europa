@@ -367,6 +367,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       }
     }
 
+    console.debug('parser v198b');
     const newHotels = [];
     let lastYear = new Date().getFullYear() + 1 + ''; // default next year
 
