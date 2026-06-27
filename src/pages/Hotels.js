@@ -145,7 +145,7 @@ SPECIAL REQUESTS:
 - Porterage Service: Please inform us if porterage is available, along with the associated pricing.
 - Meal Plan Options:
   - BB: Please provide the rate.
-  - HB: If offered, please include the additional cost for this option.
+  - HB: if offered ( not requested in this moment )
 
 BOOKING CONDITIONS:
 - Cancellation policy (including free cancellation terms and partial cancellation conditions)
