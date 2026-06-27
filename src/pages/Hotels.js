@@ -133,21 +133,21 @@ const DEFAULT_TEMPLATE = `Dear Sir or Madam,
 
 I am reaching out to inquire about the best possible rates and options for accommodating a group booking as outlined below:
 
-Group Details:
+GROUP DETAILS:
 - Group Name: {{groupName}}
-- Travel Dates: {{checkIn}} – {{checkOut}}
-- Accommodation Needs: {{rooms}} rooms in total
+- Travel Dates: {{checkIn}} - {{checkOut}}
+- Accommodation Needs: 18 rooms in total ( 16 twin/dbl + 2 sngl )
   - Room Breakdown: twin/dbl rooms and single rooms. Our groups need at least 50% of twin rooms with separated beds.
   - If available, please also provide pricing for triple rooms or double rooms with an extra bed as an alternative.
 
-Special Requests:
+SPECIAL REQUESTS:
 - Complimentary Room: 1 free guest per {{freeRatio}} paid rooms
 - Porterage Service: Please inform us if porterage is available, along with the associated pricing.
 - Meal Plan Options:
   - BB: Please provide the rate.
   - HB: If offered, please include the additional cost for this option.
 
-Booking Conditions:
+BOOKING CONDITIONS:
 - Cancellation policy (including free cancellation terms and partial cancellation conditions)
 - Deposit requirements and payment schedule
 
