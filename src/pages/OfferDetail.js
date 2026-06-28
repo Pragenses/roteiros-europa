@@ -513,6 +513,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const insertAt = lastHotelIdx !== undefined ? lastHotelIdx + 1 : 0;
     existingItems.splice(insertAt, 0, ...newHotels);
     setItems(existingItems);
+    itemsRef.current = existingItems;
+    updateDoc(doc(db, 'offers', offerId), { items: existingItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
     setItineraryText('');
   };
 
