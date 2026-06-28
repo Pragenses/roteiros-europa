@@ -313,7 +313,8 @@ export default function Hotels({ navigate, colors, navParams }) {
             <button onClick={() => { setShowAdd(true); setNewHotel({ city: cityFilter, name: '', email: '' }); }} style={btn(C.primary)}>+ Přidat ručně</button>
             {cityFilter && (
               <button onClick={async () => {
-                if (!window.confirm('Smazat všechny hotely města ' + cityFilter + '?')) return;
+                if (!window.confirm('Smazat všechny hotely města ' + cityFilter + '? (' + hotels.filter(h => h.city === cityFilter).length + ' hotelů)')) return;
+                if (!window.confirm('Jsi si jistá? Tato akce je nevratná.')) return;
                 const toDelete = hotels.filter(h => h.city === cityFilter);
                 for (const h of toDelete) await deleteDoc(doc(db, 'hotels', h.id));
                 setCityFilter('');
