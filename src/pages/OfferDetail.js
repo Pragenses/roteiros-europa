@@ -1241,7 +1241,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 2fr', gap: 12, marginBottom: 10 }}>
           <div>{lbl('Margin (%)')}<input type="text" inputMode="decimal" value={margin} onChange={e => setMargin(e.target.value)} onInput={decimalInput} style={iStyle} /></div>
           <div>{lbl('FOC — počet volných osob')}
-            <input type="number" min="0" max="5" value={focCount} onChange={e => setFocCount(e.target.value)} style={iStyle} />
+            <input type="number" min="0" max="20" value={focCount} onChange={e => setFocCount(e.target.value)} style={iStyle} />
           </div>
           <div>{lbl('FOC typ')}
             <select value={focType} onChange={e => setFocType(e.target.value)} style={iStyle}>
