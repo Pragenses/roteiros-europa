@@ -6,39 +6,25 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseSimple(text) {
   const lines = text.split('\n').map(l =>
-    l.replace(/\[([^\]]+)\]\([^)]+\)/g, '').trim()
+    l.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim()
   ).filter(Boolean);
-  const INLINE_EMAIL_RE = /[^\s@,]+@[^\s@,]+\.[^\s@,/]+/g;
   const results = [];
   let city = '';
   let pendingName = '';
   let foundFirstEmail = false;
-
   for (const line of lines) {
-    const inlineEmails = line.match(INLINE_EMAIL_RE);
-    // Format: * Hotel Name: email1 / email2
-    if (inlineEmails && (line.includes(':') || line.match(/^[*•\-]/))) {
+    if (EMAIL_RE.test(line)) {
       foundFirstEmail = true;
-      const namePart = line.replace(/^[*•\-]\s*/, '').split(':')[0].trim();
-      inlineEmails.forEach(email => {
-        results.push({ city, name: namePart || pendingName, email: email.toLowerCase() });
-      });
-      pendingName = '';
-      continue;
-    }
-    // Format: standalone email
-    if (inlineEmails && inlineEmails.length === 1 && EMAIL_RE.test(line.trim())) {
-      foundFirstEmail = true;
-      results.push({ city, name: pendingName, email: line.toLowerCase().trim() });
+      results.push({ city, name: pendingName, email: line.toLowerCase() });
       pendingName = '';
     } else if (/^HOTELY\s+|^HOTELS\s+|^HOTEIS\s+/i.test(line)) {
       city = line.replace(/^HOTELY\s+/i,'').replace(/^HOTELS\s+/i,'').replace(/^HOTEIS\s+/i,'').trim();
       pendingName = '';
     } else if (!foundFirstEmail && !city) {
-      city = line.replace(/^[*•\-]\s*/, '');
+      city = line;
       pendingName = '';
     } else {
-      pendingName = line.replace(/^[*•\-]\s*/, '');
+      pendingName = line;
     }
   }
   return results.filter(r => r.email);
@@ -95,7 +81,6 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
   const [cityFilter, setCityFilter] = useState('');
-  // cache bust v2
   const [editRow, setEditRow]     = useState(null);
   const [showAdd, setShowAdd]     = useState(false);
   const [newHotel, setNewHotel]   = useState({ city: '', name: '', email: '' });
@@ -115,7 +100,6 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [subject, setSubject]         = useState('Group Accommodation Request');
-  // subject updates when groupName or composeCity changes
   React.useEffect(() => {
     let s = 'Group Accommodation Request';
     if (groupName) s += ' / ' + groupName;
@@ -197,7 +181,6 @@ export default function Hotels({ navigate, colors, navParams }) {
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
   const handleSend = async () => {
-    alert('handleSend spuštěn, selected: ' + selected.length);
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
@@ -219,11 +202,9 @@ export default function Hotels({ navigate, colors, navParams }) {
           });
           sent++;
         } else {
-          alert('Chyba pro ' + h.email + ': ' + JSON.stringify(data));
           failed++;
         }
       } catch (e) {
-        alert('Výjimka pro ' + h.email + ': ' + e.message);
         failed++;
       }
     }
