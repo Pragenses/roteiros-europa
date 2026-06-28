@@ -503,6 +503,11 @@ export default function Hotels({ navigate, colors, navParams }) {
             <button onClick={handleSend} disabled={!selected.length} style={{ ...btn(selected.length ? C.primary : C.border, selected.length ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
               ✉ Odeslat na {selected.length} hotel{selected.length===1?'':selected.length<5?'y':'ů'}
             </button>
+            <button onClick={async () => {
+              const r = await fetch('https://tour-pragenses.com/mailer.php', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:'info@tour-pragenses.com',subject:'Test z aplikace',body:'Test'})});
+              const d = await r.json();
+              alert(JSON.stringify(d));
+            }} style={{ ...btn('#888'), fontSize: 12, padding: '6px 12px' }}>🔧 Test</button>
             {sendResult && (
               <div style={{ marginTop: 12, padding: '10px 14px', background: sendResult.failed ? '#fff3e0' : '#e8f5e9', borderRadius: 6, fontSize: 13 }}>
                 {sendResult.sent > 0 && <div style={{ color: C.success }}>✓ Odesláno: <strong>{sendResult.sent}</strong> emailů</div>}
