@@ -435,6 +435,17 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           else { cityRaw = restClean.trim(); hotelName = ''; }
         }
       } else {
+        // Format F: DD/MM a DD/MM CITY – [HOTEL NAME](url) or HOTEL NAME
+        const fmtF = cleanLine.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').match(/^(\d{1,2})\/(\d{1,2})\s+a\s+(\d{1,2})\/(\d{1,2})\s+(.+?)\s*[\u2013\u2014-]+\s*(.+)/);
+        if (fmtF) {
+          const [, d1, m1, d2, m2, cityRawF, hotelRawF] = fmtF;
+          const year = lastYear || new Date().getFullYear() + 1 + '';
+          dateFrom = `${year}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${year}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          cityRaw = cityRawF.trim();
+          hotelName = hotelRawF.trim();
+        }
+
         // Format E: DD a DD/MM/YYYY: City (next line: HOTEL NAME)
         const fmtE = cleanLine.match(/^(\d{1,2})\s+a\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*:\s*(.+)/i);
         if (fmtE) {
