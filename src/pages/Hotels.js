@@ -107,6 +107,8 @@ export default function Hotels({ navigate, colors, navParams }) {
     setSubject(s);
   }, [groupName, composeCity]);
   const [sendResult, setSendResult]   = useState(null);
+  const [sending, setSending]           = useState(false);
+  const [sendStatus, setSendStatus]     = useState('');
 
   const [logs, setLogs]               = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -182,6 +184,8 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const handleSend = async () => {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
+    setSending(true);
+    setSendStatus('Odesílám...');
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
@@ -496,8 +500,8 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </ul>
               </div>
             )}
-            <button onClick={handleSend} disabled={!selected.length} style={{ ...btn(selected.length ? C.primary : C.border, selected.length ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
-              ✉ Odeslat na {selected.length} hotel{selected.length===1?'':selected.length<5?'y':'ů'}
+            <button onClick={handleSend} disabled={!selected.length || sending} style={{ ...btn(selected.length && !sending ? C.primary : C.border, selected.length && !sending ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
+              {sending ? sendStatus : `✉ Odeslat na ${selected.length} hotel${selected.length===1?'':selected.length<5?'y':'ů'}`}
             </button>
             {sendResult && (
               <div style={{ marginTop: 12, padding: '10px 14px', background: sendResult.failed ? '#fff3e0' : '#e8f5e9', borderRadius: 6, fontSize: 13 }}>
