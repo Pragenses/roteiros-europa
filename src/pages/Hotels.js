@@ -197,6 +197,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
   const handleSend = async () => {
+    alert('handleSend spuštěn, selected: ' + selected.length);
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
