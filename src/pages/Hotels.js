@@ -115,6 +115,8 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [subject, setSubject]         = useState('Group Accommodation Request');
+  // subject updates when groupName changes
+  React.useEffect(() => { setSubject('Group Accommodation Request' + (groupName ? ' / ' + groupName : '')); }, [groupName]);
   const [sendResult, setSendResult]   = useState(null);
 
   const [logs, setLogs]               = useState([]);
