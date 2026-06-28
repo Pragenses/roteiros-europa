@@ -439,9 +439,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         const fmtF = cleanLine.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').match(/^(\d{1,2})\/(\d{1,2})\s+a\s+(\d{1,2})\/(\d{1,2})\s+(.+?)\s*[\u2013\u2014-]+\s*(.+)/);
         if (fmtF) {
           const [, d1, m1, d2, m2, cityRawF, hotelRawF] = fmtF;
-          const year = lastYear || new Date().getFullYear() + 1 + '';
+          const year = lastYear || new Date().getFullYear() + '';
           dateFrom = `${year}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
-          dateTo = `${year}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          // If dateTo < dateFrom, try next year
+          let dateTo2 = `${year}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          if (dateTo2 < dateFrom) dateTo2 = `${parseInt(year)+1}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          dateTo = dateTo2;
           cityRaw = cityRawF.trim();
           hotelName = hotelRawF.trim();
         }
