@@ -218,9 +218,11 @@ export default function Hotels({ navigate, colors, navParams }) {
           });
           sent++;
         } else {
+          alert('Chyba pro ' + h.email + ': ' + JSON.stringify(data));
           failed++;
         }
       } catch (e) {
+        alert('Výjimka pro ' + h.email + ': ' + e.message);
         failed++;
       }
     }
