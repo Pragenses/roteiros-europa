@@ -6,25 +6,39 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseSimple(text) {
   const lines = text.split('\n').map(l =>
-    l.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim()
+    l.replace(/\[([^\]]+)\]\([^)]+\)/g, '').trim()
   ).filter(Boolean);
+  const INLINE_EMAIL_RE = /[^\s@,]+@[^\s@,]+\.[^\s@,/]+/g;
   const results = [];
   let city = '';
   let pendingName = '';
   let foundFirstEmail = false;
+
   for (const line of lines) {
-    if (EMAIL_RE.test(line)) {
+    const inlineEmails = line.match(INLINE_EMAIL_RE);
+    // Format: * Hotel Name: email1 / email2
+    if (inlineEmails && (line.includes(':') || line.match(/^[*•\-]/))) {
       foundFirstEmail = true;
-      results.push({ city, name: pendingName, email: line.toLowerCase() });
+      const namePart = line.replace(/^[*•\-]\s*/, '').split(':')[0].trim();
+      inlineEmails.forEach(email => {
+        results.push({ city, name: namePart || pendingName, email: email.toLowerCase() });
+      });
+      pendingName = '';
+      continue;
+    }
+    // Format: standalone email
+    if (inlineEmails && inlineEmails.length === 1 && EMAIL_RE.test(line.trim())) {
+      foundFirstEmail = true;
+      results.push({ city, name: pendingName, email: line.toLowerCase().trim() });
       pendingName = '';
     } else if (/^HOTELY\s+|^HOTELS\s+|^HOTEIS\s+/i.test(line)) {
       city = line.replace(/^HOTELY\s+/i,'').replace(/^HOTELS\s+/i,'').replace(/^HOTEIS\s+/i,'').trim();
       pendingName = '';
     } else if (!foundFirstEmail && !city) {
-      city = line;
+      city = line.replace(/^[*•\-]\s*/, '');
       pendingName = '';
     } else {
-      pendingName = line;
+      pendingName = line.replace(/^[*•\-]\s*/, '');
     }
   }
   return results.filter(r => r.email);
