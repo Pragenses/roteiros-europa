@@ -95,6 +95,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
   const [cityFilter, setCityFilter] = useState('');
+  // cache bust v2
   const [editRow, setEditRow]     = useState(null);
   const [showAdd, setShowAdd]     = useState(false);
   const [newHotel, setNewHotel]   = useState({ city: '', name: '', email: '' });
