@@ -384,7 +384,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     }
 
     // Split on newlines first, then also split lines that have multiple date patterns
-    const rawLines = normalized.split('\n').map(l => l.trim()).filter(l => l);
+    // Also split on DD/MM a DD/MM pattern (Format F) that may appear on same line
+    const normalized2 = normalized.replace(/(\d{1,2}\/\d{1,2}\s+a\s+\d{1,2}\/\d{1,2}\s+)/g, '\n$1').trim();
+    const rawLines = normalized2.split('\n').map(l => l.trim()).filter(l => l);
 
     // Split only when we see a full new date entry: whitespace + digit.digit. NOT preceded by " -"
     const lines = [];
