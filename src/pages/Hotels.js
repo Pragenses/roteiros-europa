@@ -200,8 +200,6 @@ export default function Hotels({ navigate, colors, navParams }) {
       alert('Fetch failed: ' + e.message + ' | URL: https://tour-pragenses.com/mailer.php');
       return;
     }
-    setSending(true);
-    setSendStatus('Odesílám...');
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
