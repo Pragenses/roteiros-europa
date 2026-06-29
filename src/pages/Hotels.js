@@ -192,7 +192,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     let sent = 0, failed = 0;
     for (const h of sel) {
       try {
-        const res = await fetch('https://www.tour-pragenses.com/mailer.php', {
+        const res = await fetch('https://tour-pragenses.com/mailer.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to: h.email, subject, body }),
@@ -509,7 +509,7 @@ export default function Hotels({ navigate, colors, navParams }) {
               ✉ Odeslat na {selected.length} hotel{selected.length===1?'':selected.length<5?'y':'ů'}
             </button>
             <button onClick={async () => {
-              const r = await fetch('https://www.tour-pragenses.com/mailer.php', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:'info@tour-pragenses.com',subject:'Test z aplikace',body:'Test'})});
+              const r = await fetch('https://tour-pragenses.com/mailer.php', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:'info@tour-pragenses.com',subject:'Test z aplikace',body:'Test'})});
               const d = await r.json();
               alert(JSON.stringify(d));
             }} style={{ ...btn('#888'), fontSize: 12, padding: '6px 12px' }}>🔧 Test</button>
