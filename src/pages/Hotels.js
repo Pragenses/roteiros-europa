@@ -43,32 +43,47 @@ const TABS = [
   { id: 'log',     label: '📋 Log' },
 ];
 
-const DEFAULT_TEMPLATE = `<p>Dear Sir or Madam,</p>
+const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">
+<p>Dear Sir or Madam,</p>
 <p>I am reaching out to inquire about the best possible rates and options for accommodating a group booking as outlined below:</p>
-<p><b>GROUP DETAILS:</b><br>
-<b>- Group Name: {{groupName}}</b><br>
-<b>- Travel Dates: {{checkIn}} – {{checkOut}}</b><br>
-<b>- Accommodation Needs: 18 rooms in total ( 16 twin/dbl + 2 sngl )</b><br>
-<b>- Room Breakdown: twin/dbl rooms and single rooms. Our groups need at least 50% of twin rooms with separated beds.</b><br>
-<b>- If available, please also provide pricing for triple rooms or double rooms with an extra bed as an alternative.</b></p>
-<p>SPECIAL REQUESTS:<br>
-- Complimentary Room: 1 free guest per {{freeRatio}} paid rooms<br>
-- Porterage Service: Please inform us if porterage is available, along with the associated pricing.<br>
-- Meal Plan Options:<br>
-&nbsp;&nbsp;- BB: Please provide the rate.<br>
-&nbsp;&nbsp;- HB: if offered ( not requested in this moment )</p>
-<p>BOOKING CONDITIONS:<br>
-- Cancellation policy (including free cancellation terms and partial cancellation conditions)<br>
-- Deposit requirements and payment schedule</p>
+
+<p><span style="background-color:#FFD700;font-weight:bold;padding:2px 6px">GROUP DETAILS:</span></p>
+<ul>
+<li><b>Group Name:</b> {{groupName}}</li>
+<li><b>Travel Dates:</b> {{checkIn}} – {{checkOut}}</li>
+<li><b>Accommodation Needs:</b> 18 rooms in total ( 16 twin/dbl + 2 sngl )</li>
+<li><b>Room Breakdown:</b> twin/dbl rooms and single rooms. Our groups need at least 50% of twin rooms with separated beds.</li>
+<li>If available, please also provide pricing for triple rooms or double rooms with an extra bed as an alternative.</li>
+</ul>
+
+<p><span style="background-color:#FFD700;font-weight:bold;padding:2px 6px">SPECIAL REQUESTS:</span></p>
+<ul>
+<li><b>Complimentary Room:</b> 1 free guest for every {{freeRatio}} paying guests.</li>
+<li><b>Porterage Service:</b> Please inform us if porterage is available, along with the associated pricing.</li>
+<li><b>Meal Plan Options:</b>
+  <ul>
+    <li>BB: Please provide the rate.</li>
+    <li>HB: If offered ( optional )</li>
+  </ul>
+</li>
+</ul>
+
+<p><span style="background-color:#FFD700;font-weight:bold;padding:2px 6px">BOOKING CONDITIONS:</span></p>
+<ul>
+<li>Cancellation policy (including free cancellation terms and partial cancellation conditions)</li>
+<li>Deposit requirements and payment schedule</li>
+</ul>
+
 <p>Additionally, we would appreciate if you could hold this offer until the date ............</p>
 <p>Thank you very much for your assistance. I look forward to your proposal and any further details you may require.</p>
 <p>Best regards,<br>
 --<br>
-Helena Dlasková, sales<br>
+<b>Helena Dlasková, sales</b><br>
 TOUR PRAGENSES, PRAGENSES s.r.o.<br>
 Lipnická 688, Praha 9 - Kyje, Czech Republic<br>
 Tlf - whatsapp : +420 777 079 997<br>
-VAT: CZ284 45 961</p>`;
+VAT: CZ284 45 961</p>
+</div>`;
 
 export default function Hotels({ navigate, colors, navParams }) {
   const C = colors;
