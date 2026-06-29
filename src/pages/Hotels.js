@@ -192,12 +192,16 @@ export default function Hotels({ navigate, colors, navParams }) {
     let sent = 0, failed = 0;
     for (const h of sel) {
       try {
+        const payload = JSON.stringify({ to: h.email, subject, body });
+        alert('Posílám na: ' + h.email + '\nSubject: ' + subject + '\nBody délka: ' + body.length);
         const res = await fetch('https://tour-pragenses.com/mailer.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: h.email, subject, body }),
+          body: payload,
         });
-        const data = await res.json();
+        const txt = await res.text();
+        alert('Odpověď: ' + txt);
+        const data = JSON.parse(txt);
         if (data.ok) {
           await addDoc(collection(db, 'hotelEmailLog'), {
             hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
