@@ -185,36 +185,34 @@ export default function Hotels({ navigate, colors, navParams }) {
   const handleSend = async () => {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
     setSending(true);
-    setSendStatus('Odesílám...');
-    setSending(true);
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
+    setSendProgress(`Odesílám ${sel.length} emailů...`);
     let sent = 0, failed = 0;
-    for (let idx = 0; idx < sel.length; idx++) {
-      const h = sel[idx];
-      setSendProgress(`Odesílám ${idx+1}/${sel.length}: ${h.name||h.email}`);
-      try {
-        const res = await fetch('https://tour-pragenses.com/mailer.php', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: h.email, subject, body }),
-        });
-        const data = await res.json();
-        if (data.ok) {
-          await addDoc(collection(db, 'hotelEmailLog'), {
-            hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
-            email: h.email, subject, groupName, checkIn, checkOut,
-            sentAt: serverTimestamp(), status: 'sent',
-          });
-          sent++;
-        } else {
-          failed++;
+    try {
+      const res = await fetch('https://tour-pragenses.com/mailer.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipients: sel.map(h => ({ email: h.email, name: h.name||h.email })), subject, body }),
+      });
+      const data = await res.json();
+      if (data.results) {
+        for (let i = 0; i < data.results.length; i++) {
+          const h = sel[i];
+          setSendProgress(`Zaznamenávám ${i+1}/${sel.length}`);
+          if (data.results[i].ok) {
+            await addDoc(collection(db, 'hotelEmailLog'), {
+              hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
+              email: h.email, subject, groupName, checkIn, checkOut,
+              sentAt: serverTimestamp(), status: 'sent',
+            });
+            sent++;
+          } else { failed++; }
         }
-      } catch (e) {
-        failed++;
-        alert('Chyba: ' + e.message);
-      }
+      } else { alert('Chyba: ' + JSON.stringify(data)); failed = sel.length; }
+    } catch (e) {
+      alert('Chyba: ' + e.message); failed = sel.length;
     }
     setSending(false);
     setSendProgress('');
@@ -224,7 +222,6 @@ export default function Hotels({ navigate, colors, navParams }) {
       setSelected([]);
       setTab('log'); fetchLogs();
     } else {
-      setSending(false);
       alert('Nepodařilo se odeslat žádný email. Chyby: ' + failed);
     }
   };
