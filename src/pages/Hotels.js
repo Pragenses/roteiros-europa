@@ -210,12 +210,17 @@ export default function Hotels({ navigate, colors, navParams }) {
         }
       } catch (e) {
         failed++;
+        alert('Chyba: ' + e.message);
       }
     }
-    setSendResult({ sent, failed });
-    setGroupName(''); setCheckIn(''); setCheckOut('');
-    setSelected([]);
-    setTab('log'); fetchLogs();
+    if (sent > 0) {
+      setSendResult({ sent, failed });
+      setGroupName(''); setCheckIn(''); setCheckOut('');
+      setSelected([]);
+      setTab('log'); fetchLogs();
+    } else {
+      alert('Nepodařilo se odeslat žádný email. Chyby: ' + failed);
+    }
   };
 
   const cities = [...new Set(hotels.map(h => h.city).filter(Boolean))].sort();
