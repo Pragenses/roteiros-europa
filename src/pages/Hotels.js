@@ -108,7 +108,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   }, [groupName, composeCity]);
   const [sendResult, setSendResult]   = useState(null);
   const [sending, setSending]           = useState(false);
-  const [sendStatus, setSendStatus]     = useState('');
+  const [sendProgress, setSendProgress] = useState('');
 
   const [logs, setLogs]               = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -186,11 +186,14 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
     setSending(true);
     setSendStatus('Odesílám...');
+    setSending(true);
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
     let sent = 0, failed = 0;
-    for (const h of sel) {
+    for (let idx = 0; idx < sel.length; idx++) {
+      const h = sel[idx];
+      setSendProgress(`Odesílám ${idx+1}/${sel.length}: ${h.name||h.email}`);
       try {
         const res = await fetch('https://tour-pragenses.com/mailer.php', {
           method: 'POST',
@@ -213,12 +216,15 @@ export default function Hotels({ navigate, colors, navParams }) {
         alert('Chyba: ' + e.message);
       }
     }
+    setSending(false);
+    setSendProgress('');
     if (sent > 0) {
       setSendResult({ sent, failed });
       setGroupName(''); setCheckIn(''); setCheckOut('');
       setSelected([]);
       setTab('log'); fetchLogs();
     } else {
+      setSending(false);
       alert('Nepodařilo se odeslat žádný email. Chyby: ' + failed);
     }
   };
@@ -505,8 +511,8 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </ul>
               </div>
             )}
-            <button onClick={handleSend} disabled={!selected.length} style={{ ...btn(selected.length ? C.primary : C.border, selected.length ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
-              ✉ Odeslat na {selected.length} hotel{selected.length===1?'':selected.length<5?'y':'ů'}
+            <button onClick={handleSend} disabled={!selected.length || sending} style={{ ...btn(selected.length && !sending ? C.primary : C.border, selected.length && !sending ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
+              {sending ? sendProgress || 'Připravuji...' : `✉ Odeslat na ${selected.length} hotel${selected.length===1?'':selected.length<5?'y':'ů'}`}
             </button>
             <button onClick={async () => {
               const r = await fetch('https://tour-pragenses.com/mailer.php', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:'info@tour-pragenses.com',subject:'Test z aplikace',body:'Test'})});
