@@ -74,7 +74,7 @@ const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14p
 <li>Deposit requirements and payment schedule</li>
 </ul>
 
-<p>Additionally, we would appreciate if you could hold this offer until the date ............</p>
+<p>Additionally, we would appreciate if you could hold this offer until ............</p>
 <p>Thank you very much for your assistance. I look forward to your proposal and any further details you may require.</p>
 <p>Best regards,<br>
 --<br>
