@@ -184,37 +184,20 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const handleSend = async () => {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
-    // Quick test first
-    try {
-      const testRes = await fetch('https://tour-pragenses.com/mailer.php', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({to: 'info@tour-pragenses.com', subject: 'Test', body: 'Test'})
-      });
-      const testData = await testRes.json();
-      if (!testData.ok) {
-        alert('Mailer test failed: ' + JSON.stringify(testData));
-        return;
-      }
-    } catch(e) {
-      alert('Fetch failed: ' + e.message + ' | URL: https://tour-pragenses.com/mailer.php');
-      return;
-    }
+    setSending(true);
+    setSendStatus('Odesílám...');
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
     let sent = 0, failed = 0;
     for (const h of sel) {
       try {
-        const payload = { to: h.email, subject, body };
-        if (!h.email) { alert('Prázdný email pro hotel: ' + h.name); failed++; continue; }
         const res = await fetch('https://tour-pragenses.com/mailer.php', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ to: h.email, subject, body }),
         });
         const data = await res.json();
-        if (!data.ok) alert('Chyba pro ' + h.email + ': ' + JSON.stringify(data));
         if (data.ok) {
           await addDoc(collection(db, 'hotelEmailLog'), {
             hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
