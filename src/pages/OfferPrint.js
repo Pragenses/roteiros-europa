@@ -181,12 +181,15 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       .filter(p => p && p !== '&nbsp;');
     if (htmlParts.length > 3) return htmlParts;
     // Fallback: plain text with \n (Safari/Firefox contentEditable or copy-pasted text)
-    const plainParts = html
-      .replace(/<[^>]+>/g, '') // strip HTML tags
-      .split(/\n/)
+    const stripped = html.replace(/<[^>]+>/g, '');
+    const plainParts = stripped
+      .split(/\n+/)
       .map(p => p.trim())
       .filter(p => p);
-    return plainParts.length > 0 ? plainParts : [html];
+    if (plainParts.length > 3) return plainParts;
+    // Last resort: split on the day-marker emoji 📅 which always starts a new paragraph
+    const dayParts = stripped.split(/(?=📅)/).map(p => p.trim()).filter(p => p);
+    return dayParts.length > 0 ? dayParts : [html];
   })();
   const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
   const versions = offer.pdfVersions || [];
