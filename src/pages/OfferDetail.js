@@ -1180,6 +1180,26 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                         })()}
                       </div>
                     )}
+                    {isHotel && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select value={it.bookingStatus || ''} onChange={e => updateItem(it.id, 'bookingStatus', e.target.value)}
+                          style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'requested' ? '#854f0b' : colors.border}`, borderRadius: 4, background: it.bookingStatus === 'confirmed' ? '#e8f5e9' : it.bookingStatus === 'requested' ? '#fff8e1' : '#fff', color: it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'requested' ? '#854f0b' : colors.muted }}>
+                          <option value="">Stav?</option>
+                          <option value="requested">🟡 Poptáno</option>
+                          <option value="confirmed">🟢 Potvrzeno</option>
+                        </select>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <span style={{ fontSize: 9, color: colors.muted }}>Option:</span>
+                          <input type="date" value={it.optionDate || ''} onChange={e => updateItem(it.id, 'optionDate', e.target.value)}
+                            style={{ fontSize: 10, padding: '2px 3px', border: `1px solid ${colors.border}`, borderRadius: 4, width: 110 }} />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <span style={{ fontSize: 9, color: colors.muted }}>Free cancel:</span>
+                          <input type="date" value={it.cancellationDeadline || ''} onChange={e => updateItem(it.id, 'cancellationDeadline', e.target.value)}
+                            style={{ fontSize: 10, padding: '2px 3px', border: `1px solid ${colors.border}`, borderRadius: 4, width: 110 }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   {isHotel ? (
                     <>
