@@ -1431,57 +1431,70 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             const fmtDate = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}.${m}.${y}`; };
             const data = [];
             data.push([`${offer.name || ''} | ${fmtDate(offer.startDate)} - ${fmtDate(offer.endDate)}`]);
-            data.push([offer.clientName || '', '', '', '', 'DBL', 'SNGL', 'DBL total', 'SNGL total', 'Měna']);
-            // Note which exchange rates were used, so totals in EUR can be traced back
-            const usedCurrencies = [...new Set(activeItems.filter(it => it.currency && it.currency !== 'EUR').map(it => it.currency))];
-            if (usedCurrencies.length > 0) {
-              data.push([`Směnné kurzy → EUR: ${usedCurrencies.map(c => `1 ${c} = ${(rates[c] || 1).toFixed(4)} EUR`).join(' · ')}`]);
-            }
+            data.push([offer.clientName || '']);
             data.push([]);
 
-            // Hotels
-            const hotels = activeItems.filter(it => it.subType === 'hotel');
-            let currentCity = '';
-            hotels.forEach(h => {
-              if (h.city && h.city !== currentCity) {
-                currentCity = h.city;
-                data.push([`${h.city} ${fmtDate(h.dateFrom)} - ${fmtDate(h.dateTo)}`]);
-              }
-              const dbl = evalAmount(h.pricePerNightDbl);
-              const sngl = evalAmount(h.pricePerNightSngl);
-              const nights = parseFloat(h.nights) || 0;
-              const tax = evalAmount(h.cityTax);
-              const taxSngl = (h.cityTaxSngl !== '' && h.cityTaxSngl !== undefined && h.cityTaxSngl !== null) ? evalAmount(h.cityTaxSngl) : evalAmount(h.cityTax);
-              const totalDbl = ((dbl + tax) * nights) / 2;
-              const totalSngl = (sngl + taxSngl) * nights;
-              const curr = h.currency || 'EUR';
-              data.push([h.name || '', '', '', '', dbl, sngl, totalDbl, totalSngl, curr]);
-              if (tax > 0) data.push(['TAX', '', '', '', tax, taxSngl, tax * nights / 2, taxSngl * nights, curr]);
-            });
+            // Collect all currencies used in hotels
+            const allHotels = activeItems.filter(it => it.subType === 'hotel');
+            const allTickets = activeItems.filter(it => it.subType === 'ticket');
+            const allCurrencies = [...new Set([
+              ...allHotels.map(h => h.currency || 'EUR'),
+              ...allTickets.map(t => t.currency || 'EUR')
+            ])];
 
-            // Tickets
-            const tickets = activeItems.filter(it => it.subType === 'ticket');
-            if (tickets.length > 0) {
-              data.push([]);
-              data.push(['INGRESSOS']);
-              tickets.forEach(t => {
-                const v = evalAmount(t.costDbl);
-                data.push([t.name || '', '', '', '', v, '', v, v]);
+            // Output hotels and tickets grouped by currency
+            allCurrencies.forEach(curr => {
+              const currHotels = allHotels.filter(h => (h.currency || 'EUR') === curr);
+              const currTickets = allTickets.filter(t => (t.currency || 'EUR') === curr);
+              if (currHotels.length === 0 && currTickets.length === 0) return;
+
+              data.push([`HOTELY / INGRESSOS — ${curr}`, '', '', '', 'DBL/noite', 'SNGL/noite', 'DBL total', 'SNGL total']);
+              let totalDblCurr = 0, totalSnglCurr = 0;
+
+              let currentCity = '';
+              currHotels.forEach(h => {
+                if (h.city && h.city !== currentCity) {
+                  currentCity = h.city;
+                  data.push([`${h.city} ${fmtDate(h.dateFrom)} - ${fmtDate(h.dateTo)}`]);
+                }
+                const dbl = evalAmount(h.pricePerNightDbl);
+                const sngl = evalAmount(h.pricePerNightSngl);
+                const nights = parseFloat(h.nights) || 0;
+                const tax = evalAmount(h.cityTax);
+                const taxSngl = (h.cityTaxSngl !== '' && h.cityTaxSngl !== undefined && h.cityTaxSngl !== null) ? evalAmount(h.cityTaxSngl) : evalAmount(h.cityTax);
+                const tDbl = ((dbl + tax) * nights) / 2;
+                const tSngl = (sngl + taxSngl) * nights;
+                totalDblCurr += tDbl;
+                totalSnglCurr += tSngl;
+                data.push([h.name || '', '', '', '', dbl, sngl, tDbl.toFixed(2), tSngl.toFixed(2)]);
+                if (tax > 0) data.push([`  TAX`, '', '', '', tax, taxSngl, (tax * nights / 2).toFixed(2), (taxSngl * nights).toFixed(2)]);
               });
-            }
+
+              currTickets.forEach(t => {
+                const v = evalAmount(t.costDbl);
+                totalDblCurr += v;
+                data.push([t.name || '', '', '', '', '', '', v.toFixed(2), v.toFixed(2)]);
+              });
+
+              data.push([`TOTAL ${curr}`, '', '', '', '', '', totalDblCurr.toFixed(2), totalSnglCurr.toFixed(2)]);
+              data.push([]);
+            });
 
             // Totals per pax
             data.push([]);
             const perPaxDbl = perPaxDblEUR;
             const perPaxSngl = perPaxSnglEUR;
-            data.push(['TOTAL per pax (přepočteno na EUR)', '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2), 'EUR']);
+            const rateNote = [...new Set(activeItems.filter(it => it.currency && it.currency !== 'EUR').map(it => it.currency))].map(c => `1 ${c} = ${(rates[c]||1).toFixed(4)} EUR`).join(', ');
+            data.push([`TOTAL per pax (EUR)${rateNote ? ' · kurz: ' + rateNote : ''}`, '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2)]);
 
             // Group costs
             data.push([]);
             groupItems.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel').forEach(g => {
-              data.push([g.name || '', '', evalAmount(g.groupCost), '', '', '', '', '', g.currency || 'EUR']);
+              const gc = evalAmount(g.groupCost);
+              const gcurr = g.currency || 'EUR';
+              data.push([g.name || '', '', `${gc} ${gcurr}`]);
             });
-            data.push(['TOTAL group (přepočteno na EUR)', '', groupTotalEUR.toFixed(2), '', '', '', '', '', 'EUR']);
+            data.push([`TOTAL group (EUR)`, '', groupTotalEUR.toFixed(2)]);
 
             // Pricing table
             data.push([]);
@@ -1510,7 +1523,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             });
             loadXLSX().then(XLSX => {
               const ws = XLSX.utils.aoa_to_sheet(data);
-              ws['!cols'] = [{ wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 8 }];
+              ws['!cols'] = [{ wch: 45 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }];
               const wb = XLSX.utils.book_new();
               XLSX.utils.book_append_sheet(wb, ws, 'Kalkulace');
               XLSX.writeFile(wb, `${offer.name || 'kalkulace'}.xlsx`);
