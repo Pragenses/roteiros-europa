@@ -1431,7 +1431,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             const fmtDate = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}.${m}.${y}`; };
             const data = [];
             data.push([`${offer.name || ''} | ${fmtDate(offer.startDate)} - ${fmtDate(offer.endDate)}`]);
-            data.push([offer.clientName || '', '', '', '', 'DBL', 'SNGL', 'DBL total', 'SNGL total']);
+            data.push([offer.clientName || '', '', '', '', 'DBL', 'SNGL', 'DBL total', 'SNGL total', 'Měna']);
+            // Note which exchange rates were used, so totals in EUR can be traced back
+            const usedCurrencies = [...new Set(activeItems.filter(it => it.currency && it.currency !== 'EUR').map(it => it.currency))];
+            if (usedCurrencies.length > 0) {
+              data.push([`Směnné kurzy → EUR: ${usedCurrencies.map(c => `1 ${c} = ${(rates[c] || 1).toFixed(4)} EUR`).join(' · ')}`]);
+            }
             data.push([]);
 
             // Hotels
@@ -1449,8 +1454,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const taxSngl = (h.cityTaxSngl !== '' && h.cityTaxSngl !== undefined && h.cityTaxSngl !== null) ? evalAmount(h.cityTaxSngl) : evalAmount(h.cityTax);
               const totalDbl = ((dbl + tax) * nights) / 2;
               const totalSngl = (sngl + taxSngl) * nights;
-              data.push([h.name || '', '', '', '', dbl, sngl, totalDbl, totalSngl]);
-              if (tax > 0) data.push(['TAX', '', '', '', tax, taxSngl, tax * nights / 2, taxSngl * nights]);
+              const curr = h.currency || 'EUR';
+              data.push([h.name || '', '', '', '', dbl, sngl, totalDbl, totalSngl, curr]);
+              if (tax > 0) data.push(['TAX', '', '', '', tax, taxSngl, tax * nights / 2, taxSngl * nights, curr]);
             });
 
             // Tickets
@@ -1468,14 +1474,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             data.push([]);
             const perPaxDbl = perPaxDblEUR;
             const perPaxSngl = perPaxSnglEUR;
-            data.push(['TOTAL per pax', '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2)]);
+            data.push(['TOTAL per pax (přepočteno na EUR)', '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2), 'EUR']);
 
             // Group costs
             data.push([]);
             groupItems.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel').forEach(g => {
-              data.push([g.name || '', '', evalAmount(g.groupCost)]);
+              data.push([g.name || '', '', evalAmount(g.groupCost), '', '', '', '', '', g.currency || 'EUR']);
             });
-            data.push(['TOTAL group', '', groupTotalEUR.toFixed(2)]);
+            data.push(['TOTAL group (přepočteno na EUR)', '', groupTotalEUR.toFixed(2), '', '', '', '', '', 'EUR']);
 
             // Pricing table
             data.push([]);
@@ -1504,7 +1510,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             });
             loadXLSX().then(XLSX => {
               const ws = XLSX.utils.aoa_to_sheet(data);
-              ws['!cols'] = [{ wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }];
+              ws['!cols'] = [{ wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 8 }];
               const wb = XLSX.utils.book_new();
               XLSX.utils.book_append_sheet(wb, ws, 'Kalkulace');
               XLSX.writeFile(wb, `${offer.name || 'kalkulace'}.xlsx`);
