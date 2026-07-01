@@ -434,7 +434,20 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           const spaceMatch = restClean.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.\/]+?)\s{2,}(.+)/);
           if (dashMatch) { cityRaw = dashMatch[1].trim(); hotelName = dashMatch[2].trim(); }
           else if (spaceMatch) { cityRaw = spaceMatch[1].trim(); hotelName = spaceMatch[2].trim(); }
-          else { cityRaw = restClean.trim(); hotelName = ''; }
+          else {
+            cityRaw = restClean.trim();
+            hotelName = '';
+            // Hotel name may be on the next non-empty line
+            for (let j = i + 1; j < lines.length; j++) {
+              const nextLine = lines[j].trim();
+              if (!nextLine) continue;
+              // If next line looks like a date line, stop
+              if (/^\d{1,2}[.\/]/.test(nextLine)) break;
+              // If next line looks like a hotel name (not all-caps city), use it
+              hotelName = nextLine;
+              break;
+            }
+          }
         }
       } else {
         // Format F: DD/MM a DD/MM CITY – [HOTEL NAME](url) or HOTEL NAME
