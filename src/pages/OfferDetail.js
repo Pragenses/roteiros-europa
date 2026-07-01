@@ -428,22 +428,27 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           cityRaw = restClean.slice(0, colonIdx).trim();
           hotelName = restClean.slice(colonIdx + 1).trim();
         } else {
-          // Hotel name after " - " separator
-          const dashMatch = restClean.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.\/]+?)\s+-\s+(.+)/);
-          // Hotel name after double space
-          const spaceMatch = restClean.match(/^([A-ZÁÉÍÓÚÀÂÊÔÃÕÜÖÄČŠŽŘÝŮĚ\s.\/]+?)\s{2,}(.+)/);
-          if (dashMatch) { cityRaw = dashMatch[1].trim(); hotelName = dashMatch[2].trim(); }
-          else if (spaceMatch) { cityRaw = spaceMatch[1].trim(); hotelName = spaceMatch[2].trim(); }
-          else {
-            cityRaw = restClean.trim();
-            hotelName = '';
-            // Hotel name may be on the next non-empty line
+          // Split city from hotel: city = first word(s), hotel = rest
+          const CITY_CONN = new Set(['DEL','DE','DU','DO','DA','DES','THE','AM','AN','IM','SAINT','SAN','LE','LA','LES','LOS','AUX','VON','VAN','BAD','GRAN','NEW','LAKE']);
+          const CITY_PRE = new Set(['ST','ST.']);
+          const rcWords = restClean.split(/\s+/);
+          let cityEnd = 1; // first word always city
+          if (CITY_PRE.has((rcWords[0] || '').toUpperCase().replace('.',''))) {
+            if (cityEnd < rcWords.length) cityEnd++; // take word after ST.
+          }
+          while (cityEnd < rcWords.length) {
+            const w = (rcWords[cityEnd] || '').toUpperCase().replace('.','');
+            if (CITY_CONN.has(w)) { cityEnd++; if (cityEnd < rcWords.length) cityEnd++; }
+            else break;
+          }
+          cityRaw = rcWords.slice(0, cityEnd).join(' ');
+          hotelName = rcWords.slice(cityEnd).join(' ');
+          // If no hotel found on same line, look at next non-empty line
+          if (!hotelName) {
             for (let j = i + 1; j < lines.length; j++) {
               const nextLine = lines[j].trim();
               if (!nextLine) continue;
-              // If next line looks like a date line, stop
               if (/^\d{1,2}[.\/]/.test(nextLine)) break;
-              // If next line looks like a hotel name (not all-caps city), use it
               hotelName = nextLine;
               break;
             }
