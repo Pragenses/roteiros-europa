@@ -423,7 +423,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
       // Format A: DD.MM. - DD.MM.YYYY CITY (year only on second date)
       // or: DD.MM.YYYY - DD.MM.YYYY CITY
-      const fmtA = cleanLine.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})?\s*-+\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(.+)/);
+      const fmtA = cleanLine.match(/(\d{1,2})\.(\d{1,2})\.\s*(\d{4})?\s*-+\s*(\d{1,2})\.(\d{1,2})\.\s*(\d{4})\s+(.+)/);
       if (fmtA) {
         const [, d1, m1, y1raw, d2, m2, y2, rest] = fmtA;
         const y1 = y1raw || y2;
