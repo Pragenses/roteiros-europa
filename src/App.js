@@ -26,6 +26,7 @@ import OfferPrint from './pages/OfferPrint';
 import Providers from './pages/Providers';
 import Calendar from './pages/Calendar';
 import Hotels from './pages/Hotels';
+import Declined from './pages/Declined';
 import Settings from './pages/Settings';
 
 const COLORS = {
@@ -50,6 +51,7 @@ const NAV = [
   { id: 'offers', label: 'Offers', icon: '◫' },
   { id: 'providers', label: 'Providers', icon: '◎' },
   { id: 'hotels',    label: 'Hotels',    icon: '🏨' },
+  { id: 'declined',  label: 'Declined',  icon: '✕' },
   { id: 'settings',  label: 'Settings',  icon: '⚙' },
 ];
 
@@ -171,6 +173,7 @@ export default function App() {
     if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
     if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} navParams={navParams} />;
+    if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
     if (page === 'settings')  return <Settings colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} />;
   };
@@ -186,7 +189,7 @@ export default function App() {
         <nav style={{ flex: 1, padding: '1rem 0' }}>
           {NAV.map(n => (
             <button key={n.id} onClick={() => navigate(n.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 1.25rem', background: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail')) ? 'rgba(200,168,75,0.15)' : 'transparent', border: 'none', borderLeft: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail')) ? `3px solid ${COLORS.accent}` : '3px solid transparent', color: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail')) ? COLORS.accent : 'rgba(255,255,255,0.65)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 1.25rem', background: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? 'rgba(200,168,75,0.15)' : 'transparent', border: 'none', borderLeft: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? `3px solid ${COLORS.accent}` : '3px solid transparent', color: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? COLORS.accent : 'rgba(255,255,255,0.65)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
               <span style={{ fontSize: 16 }}>{n.icon}</span>
               {n.label}
             </button>

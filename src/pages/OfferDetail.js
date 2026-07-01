@@ -654,6 +654,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     await updateDoc(doc(db, 'offers', offerId), { [field]: value, updatedAt: new Date().toISOString() });
   };
 
+  const handleDecline = async () => {
+    if (!window.confirm('Move this offer to Declined?')) return;
+    await updateDoc(doc(db, 'offers', offerId), { declined: true });
+    navigate('offers');
+  };
+
   const handleConvertToOrder = async () => {
     if (!window.confirm('Create a new Order from this offer? Hotels and tickets will be copied as services.')) return;
     const data = {
@@ -1567,9 +1573,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Notes</div>
         <textarea defaultValue={offer.notes} onBlur={e => handleHeaderChange('notes', e.target.value)} rows={3} style={{ ...iStyle, resize: 'vertical', marginBottom: 14 }} />
-        <button onClick={handleConvertToOrder} style={{ padding: '9px 20px', background: colors.success, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
-          ✓ Client confirmed — Convert to Order
-        </button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button onClick={handleConvertToOrder} style={{ padding: '9px 20px', background: colors.success, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            ✓ Client confirmed — Convert to Order
+          </button>
+          <button onClick={handleDecline} style={{ padding: '9px 20px', background: colors.danger, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            ✕ Move to Declined
+          </button>
+        </div>
       </div>
     </div>
   );
