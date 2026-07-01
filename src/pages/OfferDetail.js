@@ -389,16 +389,24 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const normalized2 = normalized.replace(/(\d{1,2}\/\d{1,2}\s+a\s+\d{1,2}\/\d{1,2}\s+)/g, '\n$1').trim();
     const rawLines = normalized2.split('\n').map(l => l.trim()).filter(l => l);
 
-    // Split only when we see a full new date entry: whitespace + digit.digit. NOT preceded by " -"
+    // Split lines where a new date range starts (DD.MM. or DD.MM.YYYY followed eventually by another DD.MM.)
     const lines = [];
     for (const line of rawLines) {
-      // Split only at positions where a NEW date range starts (not mid-range second date)
-      // A new entry starts when: there's whitespace before DD.MM. AND it's NOT immediately after " -"
-      const parts = line.split(/\s{2,}(?=\d{1,2}\.\d{1,2}\.)/g);
+      // Split on: 1+ spaces followed by a date pattern DD.MM. (new entry)
+      // But NOT inside a date range (e.g. not between 8.4.2027 - 11.4.2027)
+      // Strategy: split on any whitespace before a digit that starts a new date sequence
+      // A new date starts when preceded by text (city/hotel name), not by " - "
+      const parts = line.split(/(?<=\w)\s+(?=\d{1,2}\.\d{1,2}\.(?:\d{2,4})?\s*[-–])/g);
       if (parts.length > 1) {
         parts.forEach(p => { if (p.trim()) lines.push(p.trim()); });
       } else {
-        lines.push(line);
+        // Fallback: split on 2+ spaces before a digit
+        const parts2 = line.split(/\s{2,}(?=\d{1,2}\.\d{1,2}\.)/g);
+        if (parts2.length > 1) {
+          parts2.forEach(p => { if (p.trim()) lines.push(p.trim()); });
+        } else {
+          lines.push(line);
+        }
       }
     }
 
