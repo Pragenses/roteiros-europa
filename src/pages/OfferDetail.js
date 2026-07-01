@@ -265,7 +265,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     // Normalize dashes and whitespace
     const normalized = itineraryText
       .replace(/[\u2013\u2014\u2012\u2015]/g, '-')
-      .replace(/\u00a0/g, ' ')
+      .replace(/[\u00a0\u202f\u2009\u2007\u2003\u2002\u2001\u2000\u00ad]/g, ' ')
+      .replace(/\t/g, '    ')
       .replace(/\r/g, '');
 
     // --- Format C: flag-emoji block style ---
