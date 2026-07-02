@@ -1258,6 +1258,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const isHotel = it.type === 'per_pax' && it.subType === 'hotel';
               const isGuideHotel = it.type === 'group' && it.subType === 'guide_hotel';
               const isDriverHotel = it.type === 'group' && it.subType === 'driver_hotel';
+              const isTicket = it.type === 'per_pax' && it.subType === 'ticket';
+              const isTransportGroup = it.type === 'group' && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel';
               const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : (isGuideHotel || isDriverHotel) ? '60px 2fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               const isEnabled = it.enabled !== false;
@@ -1364,6 +1366,16 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                           <DateDMY dateKey={`cxl-${it.id}`} value={it.cancellationDeadline || ''} colors={colors}
                             onChange={v => updateItem(it.id, 'cancellationDeadline', v)} />
                         </div>
+                        <HotelAttachment
+                          item={it}
+                          colors={colors}
+                          onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
+                          onRemove={() => handleRemoveConfirmation(it)}
+                        />
+                      </div>
+                    )}
+                    {(isTicket || isTransportGroup) && (
+                      <div style={{ display: 'flex', marginTop: 4 }}>
                         <HotelAttachment
                           item={it}
                           colors={colors}
