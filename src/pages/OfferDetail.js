@@ -1334,13 +1334,13 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                         </select>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                           <span style={{ fontSize: 9, color: colors.muted }}>Option:</span>
-                          <input type="date" value={it.optionDate || ''} onChange={e => updateItem(it.id, 'optionDate', e.target.value)}
-                            style={{ fontSize: 10, padding: '2px 3px', border: `1px solid ${colors.border}`, borderRadius: 4, width: 110 }} />
+                          <DateDMY dateKey={`opt-${it.id}`} value={it.optionDate || ''} colors={colors}
+                            onChange={v => updateItem(it.id, 'optionDate', v)} />
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                           <span style={{ fontSize: 9, color: colors.muted }}>Free cancel:</span>
-                          <input type="date" value={it.cancellationDeadline || ''} onChange={e => updateItem(it.id, 'cancellationDeadline', e.target.value)}
-                            style={{ fontSize: 10, padding: '2px 3px', border: `1px solid ${colors.border}`, borderRadius: 4, width: 110 }} />
+                          <DateDMY dateKey={`cxl-${it.id}`} value={it.cancellationDeadline || ''} colors={colors}
+                            onChange={v => updateItem(it.id, 'cancellationDeadline', v)} />
                         </div>
                         <HotelAttachment
                           item={it}
