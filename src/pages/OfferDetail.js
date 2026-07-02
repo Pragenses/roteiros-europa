@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth, storage } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 
 const STATUS_OPTS = [
@@ -94,6 +94,7 @@ const DateDMY = ({ value, onChange, colors, dateKey }) => {
 // (e.g. an email saved as PDF, a voucher, or a screenshot) directly to an itinerary item.
 const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
   const [uploading, setUploading] = React.useState(false);
+  const [progress, setProgress] = React.useState(0);
   const [dragOver, setDragOver] = React.useState(false);
   const [error, setError] = React.useState('');
   const inputRef = React.useRef(null);
@@ -101,11 +102,12 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
   const handleFile = async (file) => {
     if (!file) return;
     setError('');
+    setProgress(0);
     setUploading(true);
     try {
-      await onUpload(file);
+      await onUpload(file, (pct) => setProgress(pct));
     } catch (e) {
-      setError('Nahrání selhalo');
+      setError(e.message || 'Nahrání selhalo');
       console.error('Attachment upload failed:', e);
     } finally {
       setUploading(false);
@@ -136,14 +138,15 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
         if (file) handleFile(file);
       }}
       onClick={() => !uploading && inputRef.current && inputRef.current.click()}
-      title="Přetáhni sem email/PDF potvrzení, nebo klikni pro výběr souboru"
+      title={error || 'Přetáhni sem email/PDF potvrzení, nebo klikni pro výběr souboru'}
       style={{
         fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: uploading ? 'default' : 'pointer',
         border: `1px dashed ${error ? colors.danger : dragOver ? colors.primary : colors.border}`,
         background: dragOver ? '#f0f7ff' : 'transparent',
         color: error ? colors.danger : colors.muted, whiteSpace: 'nowrap',
+        maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis',
       }}>
-      {uploading ? '⏳ Nahrávám…' : error ? '⚠ ' + error : '📎 Potvrzení'}
+      {uploading ? `⏳ Nahrávám… ${progress}%` : error ? '⚠ ' + error : '📎 Potvrzení'}
       <input ref={inputRef} type="file" style={{ display: 'none' }}
         onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
     </div>
@@ -715,16 +718,35 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   // Upload a hotel confirmation (email saved as PDF, screenshot, voucher, etc.) to Firebase
   // Storage and attach the resulting URL to the itinerary item.
-  const handleUploadConfirmation = async (item, file) => {
+  const handleUploadConfirmation = (item, file, onProgress) => {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const path = `offers/${offerId}/confirmations/${item.id}_${Date.now()}_${safeName}`;
     const fileRef = storageRef(storage, path);
-    await uploadBytes(fileRef, file);
-    const url = await getDownloadURL(fileRef);
-    updateItemFields(item.id, {
-      confirmationFileUrl: url,
-      confirmationFileName: file.name,
-      confirmationFilePath: path,
+    const task = uploadBytesResumable(fileRef, file);
+    return new Promise((resolve, reject) => {
+      task.on('state_changed',
+        (snapshot) => {
+          if (onProgress) onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+        },
+        (err) => {
+          // Surface the real Firebase error code (e.g. storage/unauthorized) so it can be
+          // shown directly in the UI without needing browser dev tools.
+          reject(new Error(err.code ? `${err.code}` : (err.message || 'Neznámá chyba')));
+        },
+        async () => {
+          try {
+            const url = await getDownloadURL(task.snapshot.ref);
+            updateItemFields(item.id, {
+              confirmationFileUrl: url,
+              confirmationFileName: file.name,
+              confirmationFilePath: path,
+            });
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }
+      );
     });
   };
 
@@ -1345,7 +1367,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                         <HotelAttachment
                           item={it}
                           colors={colors}
-                          onUpload={(file) => handleUploadConfirmation(it, file)}
+                          onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
                           onRemove={() => handleRemoveConfirmation(it)}
                         />
                       </div>
