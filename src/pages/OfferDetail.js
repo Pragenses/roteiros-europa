@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db, auth } from '../lib/firebase';
+import { db, auth, storage } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 
 const STATUS_OPTS = [
@@ -86,6 +87,66 @@ const DateDMY = ({ value, onChange, colors, dateKey }) => {
       />
       {weekday && <span style={{ fontSize: 11, color: colors.muted, fontWeight: 600, whiteSpace: 'nowrap' }}>{weekday}</span>}
     </span>
+  );
+};
+
+// Small drag-and-drop / click-to-upload control for attaching a hotel confirmation
+// (e.g. an email saved as PDF, a voucher, or a screenshot) directly to an itinerary item.
+const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
+  const [uploading, setUploading] = React.useState(false);
+  const [dragOver, setDragOver] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const inputRef = React.useRef(null);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setError('');
+    setUploading(true);
+    try {
+      await onUpload(file);
+    } catch (e) {
+      setError('Nahrání selhalo');
+      console.error('Attachment upload failed:', e);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (item.confirmationFileUrl) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <a href={item.confirmationFileUrl} target="_blank" rel="noopener noreferrer"
+          title={item.confirmationFileName}
+          style={{ fontSize: 10, color: colors.primary, textDecoration: 'underline', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          📎 {item.confirmationFileName || 'potvrzení'}
+        </a>
+        <button onClick={onRemove} title="Odebrat přílohu"
+          style={{ fontSize: 10, color: colors.danger, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={e => {
+        e.preventDefault(); setDragOver(false);
+        const file = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file) handleFile(file);
+      }}
+      onClick={() => !uploading && inputRef.current && inputRef.current.click()}
+      title="Přetáhni sem email/PDF potvrzení, nebo klikni pro výběr souboru"
+      style={{
+        fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: uploading ? 'default' : 'pointer',
+        border: `1px dashed ${error ? colors.danger : dragOver ? colors.primary : colors.border}`,
+        background: dragOver ? '#f0f7ff' : 'transparent',
+        color: error ? colors.danger : colors.muted, whiteSpace: 'nowrap',
+      }}>
+      {uploading ? '⏳ Nahrávám…' : error ? '⚠ ' + error : '📎 Potvrzení'}
+      <input ref={inputRef} type="file" style={{ display: 'none' }}
+        onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
+    </div>
   );
 };
 
@@ -618,6 +679,51 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         }).catch(err => console.error('Auto-save item field failed:', err));
       }, 800);
       return newItems;
+    });
+  };
+
+  // Same as updateItem but sets several fields on the item at once (used for attachments,
+  // where filename + URL + storage path must all land together in a single save).
+  const updateItemFields = (id, fields) => {
+    setItems(prev => {
+      const newItems = prev.map(it => it.id === id ? { ...it, ...fields } : it);
+      itemsRef.current = newItems;
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+        updateDoc(doc(db, 'offers', offerId), {
+          items: itemsRef.current,
+          updatedAt: new Date().toISOString(),
+        }).catch(err => console.error('Auto-save item fields failed:', err));
+      }, 800);
+      return newItems;
+    });
+  };
+
+  // Upload a hotel confirmation (email saved as PDF, screenshot, voucher, etc.) to Firebase
+  // Storage and attach the resulting URL to the itinerary item.
+  const handleUploadConfirmation = async (item, file) => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `offers/${offerId}/confirmations/${item.id}_${Date.now()}_${safeName}`;
+    const fileRef = storageRef(storage, path);
+    await uploadBytes(fileRef, file);
+    const url = await getDownloadURL(fileRef);
+    updateItemFields(item.id, {
+      confirmationFileUrl: url,
+      confirmationFileName: file.name,
+      confirmationFilePath: path,
+    });
+  };
+
+  const handleRemoveConfirmation = async (item) => {
+    if (!window.confirm('Odebrat přiloženou přílohu?')) return;
+    if (item.confirmationFilePath) {
+      try { await deleteObject(storageRef(storage, item.confirmationFilePath)); }
+      catch (e) { console.error('Storage delete failed (continuing anyway):', e); }
+    }
+    updateItemFields(item.id, {
+      confirmationFileUrl: '',
+      confirmationFileName: '',
+      confirmationFilePath: '',
     });
   };
 
@@ -1222,6 +1328,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                           <input type="date" value={it.cancellationDeadline || ''} onChange={e => updateItem(it.id, 'cancellationDeadline', e.target.value)}
                             style={{ fontSize: 10, padding: '2px 3px', border: `1px solid ${colors.border}`, borderRadius: 4, width: 110 }} />
                         </div>
+                        <HotelAttachment
+                          item={it}
+                          colors={colors}
+                          onUpload={(file) => handleUploadConfirmation(it, file)}
+                          onRemove={() => handleRemoveConfirmation(it)}
+                        />
                       </div>
                     )}
                   </div>
