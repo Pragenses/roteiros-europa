@@ -490,6 +490,21 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         hotelName = hotelG.trim();
       }
 
+      // Format H: D1[-D2]/MM/YYYY CITY - HOTEL (compact range, single shared year; month repeated
+      // only when it rolls over, e.g. "20-22/05/2027 Ljubljana - Hotel" or "31/05-02/06/2027 City - Hotel")
+      if (!dateFrom) {
+        const fmtH = cleanLine.match(/^(\d{1,2})(?:\/(\d{1,2}))?-(\d{1,2})\/(\d{1,2})\s*\/?\s*(\d{4})\s*\u00b7?\s*(.+?)\s*-+\s*(.+)$/);
+        if (fmtH) {
+          const [, d1, m1raw, d2, m2, yearH, cityH, hotelH] = fmtH;
+          const m1 = m1raw || m2;
+          dateFrom = `${yearH}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${yearH}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          lastYear = yearH;
+          cityRaw = cityH.trim();
+          hotelName = hotelH.trim();
+        }
+      }
+
       // Format A: DD.MM. - DD.MM.YYYY CITY (year only on second date)
       // or: DD.MM.YYYY - DD.MM.YYYY CITY
       const fmtA = cleanLine.match(/(\d{1,2})\.(\d{1,2})\.\s*(\d{4})?\s*-+\s*(\d{1,2})\.(\d{1,2})\.\s*(\d{4})\s+(.+)/);
