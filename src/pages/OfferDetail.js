@@ -505,6 +505,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         }
       }
 
+      // Format I: DD/MM/YYYY-DD/MM/YYYY CITY - HOTEL (full date written out on both sides)
+      if (!dateFrom) {
+        const fmtI = cleanLine.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s*-\s*(\d{1,2})\/(\d{1,2})\s*\/?\s*(\d{4})\s*\u00b7?\s*(.+?)\s*-+\s*(.+)$/);
+        if (fmtI) {
+          const [, d1, m1, y1, d2, m2, y2, cityI, hotelI] = fmtI;
+          dateFrom = `${y1}-${m1.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          lastYear = y2;
+          cityRaw = cityI.trim();
+          hotelName = hotelI.trim();
+        }
+      }
+
       // Format A: DD.MM. - DD.MM.YYYY CITY (year only on second date)
       // or: DD.MM.YYYY - DD.MM.YYYY CITY
       const fmtA = cleanLine.match(/(\d{1,2})\.(\d{1,2})\.\s*(\d{4})?\s*-+\s*(\d{1,2})\.(\d{1,2})\.\s*(\d{4})\s+(.+)/);
