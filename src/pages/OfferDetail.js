@@ -628,7 +628,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     }
 
     if (newHotels.length === 0) {
-      setParseError('Nepodařilo se rozpoznat žádné řádky. Zkontrolujte formát.');
+      const shown = lines.slice(0, 12).map((l, idx) => `${idx + 1}. ${l}`).join('\n');
+      const more = lines.length > 12 ? `\n… a dalších ${lines.length - 12} řádků` : '';
+      setParseError(`Nepodařilo se rozpoznat žádné řádky. Takto to parser rozdělil (${lines.length} řádků):\n${shown}${more}`);
       return;
     }
 
@@ -1181,7 +1183,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ✉ Poslat poptávky hotelům
           </button>
         </div>
-        {parseError && <div style={{ fontSize: 12, color: colors.danger, marginTop: 8 }}>{parseError}</div>}
+        {parseError && <div style={{ fontSize: 12, color: colors.danger, marginTop: 8, whiteSpace: 'pre-line' }}>{parseError}</div>}
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
