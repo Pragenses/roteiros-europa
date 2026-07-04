@@ -3,9 +3,30 @@ import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// TLD deliberately restricted to lowercase letters only: when hotel entries are pasted with
+// no separator at all between them (e.g. "...info@hotel.hrHotel Next Name – info@..."), an
+// unbounded TLD would swallow the start of the next hotel's name. Real TLDs are lowercase.
+const GLOBAL_EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,10}/g;
+const SAME_LINE_RE = /^(.+?)\s*[:–—-]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,10})$/;
 
 function parseSimple(text) {
-  const lines = text.split('\n').map(l =>
+  // If the pasted text has no line breaks between hotel entries at all, force a break
+  // right after every recognizable email address so each entry lands on its own line.
+  const emailMatches = [...text.matchAll(GLOBAL_EMAIL_RE)];
+  let workingText = text;
+  if (emailMatches.length > 1) {
+    let rebuilt = '';
+    let lastEnd = 0;
+    for (const m of emailMatches) {
+      const end = m.index + m[0].length;
+      rebuilt += text.slice(lastEnd, end) + '\n';
+      lastEnd = end;
+    }
+    rebuilt += text.slice(lastEnd);
+    workingText = rebuilt;
+  }
+
+  const lines = workingText.split('\n').map(l =>
     l.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim()
   ).filter(Boolean);
   const results = [];
@@ -13,6 +34,14 @@ function parseSimple(text) {
   let pendingName = '';
   let foundFirstEmail = false;
   for (const line of lines) {
+    const sameLine = line.match(SAME_LINE_RE);
+    if (sameLine && sameLine[1].trim()) {
+      foundFirstEmail = true;
+      const cleanName = sameLine[1].trim().replace(/^[*•-]\s*/, '');
+      results.push({ city, name: cleanName, email: sameLine[2].toLowerCase() });
+      pendingName = '';
+      continue;
+    }
     if (EMAIL_RE.test(line)) {
       foundFirstEmail = true;
       results.push({ city, name: pendingName, email: line.toLowerCase() });
