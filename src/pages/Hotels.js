@@ -7,7 +7,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // no separator at all between them (e.g. "...info@hotel.hrHotel Next Name – info@..."), an
 // unbounded TLD would swallow the start of the next hotel's name. Real TLDs are lowercase.
 const GLOBAL_EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,10}/g;
-const SAME_LINE_RE = /^(.+?)\s*[:–—-]\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,10})$/;
+const SAME_LINE_SEP_TRIM_RE = /[:–—-]\s*$/;
 
 function parseSimple(text) {
   // If the pasted text has no line breaks between hotel entries at all, force a break
@@ -34,13 +34,19 @@ function parseSimple(text) {
   let pendingName = '';
   let foundFirstEmail = false;
   for (const line of lines) {
-    const sameLine = line.match(SAME_LINE_RE);
-    if (sameLine && sameLine[1].trim()) {
-      foundFirstEmail = true;
-      const cleanName = sameLine[1].trim().replace(/^[*•-]\s*/, '');
-      results.push({ city, name: cleanName, email: sameLine[2].toLowerCase() });
-      pendingName = '';
-      continue;
+    const lineEmails = line.match(GLOBAL_EMAIL_RE);
+    if (lineEmails && lineEmails.length === 1) {
+      const email = lineEmails[0];
+      const namePart = line.slice(0, line.indexOf(email))
+        .replace(SAME_LINE_SEP_TRIM_RE, '')
+        .trim()
+        .replace(/^[*•-]\s*/, '');
+      if (namePart) {
+        foundFirstEmail = true;
+        results.push({ city, name: namePart, email: email.toLowerCase() });
+        pendingName = '';
+        continue;
+      }
     }
     if (EMAIL_RE.test(line)) {
       foundFirstEmail = true;
