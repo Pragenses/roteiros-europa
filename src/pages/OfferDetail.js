@@ -518,6 +518,21 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         }
       }
 
+      // Format J: ▸ D1 A D2/MM/YYYY • CITY - HOTEL (bullet-prefixed, shared month/year, uppercase "A",
+      // bullet-dot separator before city; city may include a parenthetical note like "VENEZA (MESTRE)")
+      if (!dateFrom) {
+        const fmtJ = cleanLine.match(/^\u25b8?\s*(\d{1,2})\s+[Aa]\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*\u2022?\s*(.+?)\s*-+\s*(.+)$/);
+        if (fmtJ) {
+          const [, d1, d2, m2, yearJraw, cityJ, hotelJ] = fmtJ;
+          const yearJ = yearJraw.length === 2 ? '20' + yearJraw : yearJraw;
+          dateFrom = `${yearJ}-${m2.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${yearJ}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          lastYear = yearJ;
+          cityRaw = cityJ.trim();
+          hotelName = hotelJ.trim();
+        }
+      }
+
       // Format A: DD.MM. - DD.MM.YYYY CITY (year only on second date)
       // or: DD.MM.YYYY - DD.MM.YYYY CITY
       const fmtA = cleanLine.match(/(\d{1,2})\.(\d{1,2})\.\s*(\d{4})?\s*-+\s*(\d{1,2})\.(\d{1,2})\.\s*(\d{4})\s+(.+)/);
