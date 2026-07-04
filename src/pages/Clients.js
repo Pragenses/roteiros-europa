@@ -192,7 +192,8 @@ export default function Clients({ navigate, colors }) {
               <div>
                 {lbl('Cor do cliente (para lista de ofertas)')}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                  {['#FAEEDA','#FFD699','#FFE0B2','#E6F1FB','#EAF3DE','#FCEBEB','#FCE4EC','#E0F7FA','#FFF8E7','#F3E5F5','#FFF9C4','#D4EDDA'].map(c => (
+                  {['#FAEEDA','#FFD699','#FFE0B2','#E6F1FB','#EAF3DE','#FCEBEB','#FCE4EC','#E0F7FA','#FFF8E7','#F3E5F5','#FFF9C4','#D4EDDA',
+                    '#F4A9A8','#F6C453','#7FB3D5','#A9DFBF','#D7A9E3','#85C1E9','#F8C471','#82E0AA','#BB8FCE','#F1948A','#76D7C4','#F0B27A','#C39BD3','#7DCEA0'].map(c => (
                     <div key={c} onClick={() => setClientColor(c)}
                       style={{ width: 28, height: 28, borderRadius: 6, background: c, cursor: 'pointer', border: clientColor === c ? '3px solid #333' : '2px solid #ccc' }} />
                   ))}
