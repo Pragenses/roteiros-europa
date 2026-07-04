@@ -187,8 +187,10 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       .map(p => p.trim())
       .filter(p => p);
     if (plainParts.length > 3) return plainParts;
-    // Last resort: split on the day-marker emoji 📅 which always starts a new paragraph
-    const dayParts = stripped.split(/(?=📅)/).map(p => p.trim()).filter(p => p);
+    // Last resort: split on a day-marker that always starts a new paragraph — either the
+    // 📅 emoji style, or the "Nº DIA –" style (e.g. "2º DIA – 20/05/2027 – FRANKFURT").
+    // The (?<!\d) guard stops "10º DIA" from being mis-split between its two digits.
+    const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-])/i).map(p => p.trim()).filter(p => p);
     return dayParts.length > 0 ? dayParts : [html];
   })();
   const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
