@@ -542,6 +542,7 @@ export default function Hotels({ navigate, colors, navParams }) {
               <select value={senderFrom} onChange={e => setSenderFrom(e.target.value)} style={inp()}>
                 <option value="grupos">grupos@tour-pragenses.com</option>
                 <option value="reservas3">reservas3@tour-pragenses.com</option>
+                <option value="info">info@tour-pragenses.com</option>
               </select>
             </div>
             <div style={{ marginBottom: 10 }}>
