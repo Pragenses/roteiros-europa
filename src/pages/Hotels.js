@@ -150,6 +150,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [subject, setSubject]         = useState('Group Accommodation Request');
+  const [senderFrom, setSenderFrom]   = useState('grupos');
   React.useEffect(() => {
     let s = 'Group Accommodation Request';
     if (groupName) s += ' / ' + groupName;
@@ -244,7 +245,7 @@ export default function Hotels({ navigate, colors, navParams }) {
       const res = await fetch('https://tour-pragenses.com/mailer.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipients: sel.map(h => ({ email: h.email, name: h.name||h.email })), subject, body }),
+        body: JSON.stringify({ recipients: sel.map(h => ({ email: h.email, name: h.name||h.email })), subject, body, from: senderFrom }),
       });
       const data = await res.json();
       if (data.results) {
@@ -536,6 +537,13 @@ export default function Hotels({ navigate, colors, navParams }) {
 
           <div style={cardS}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Email</h3>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Odesílat z</label>
+              <select value={senderFrom} onChange={e => setSenderFrom(e.target.value)} style={inp()}>
+                <option value="grupos">grupos@tour-pragenses.com</option>
+                <option value="reservas3">reservas3@tour-pragenses.com</option>
+              </select>
+            </div>
             <div style={{ marginBottom: 10 }}>
               <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Předmět</label>
               <input value={subject} onChange={e => setSubject(e.target.value)} style={inp()} />
