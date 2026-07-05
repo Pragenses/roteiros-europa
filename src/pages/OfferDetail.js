@@ -1716,14 +1716,33 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             const rateNote = [...new Set(activeItems.filter(it => it.currency && it.currency !== 'EUR').map(it => it.currency))].map(c => `1 ${c} = ${(rates[c]||1).toFixed(4)} EUR`).join(', ');
             data.push([`TOTAL per pax (EUR)${rateNote ? ' · kurz: ' + rateNote : ''}`, '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2)]);
 
-            // Group costs
+            // Group costs — grouped by currency, same clear structure as hotels above
             data.push([]);
-            groupItems.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel').forEach(g => {
-              const gc = evalAmount(g.groupCost);
-              const gcurr = g.currency || 'EUR';
-              data.push([g.name || '', '', `${gc} ${gcurr}`]);
+            const regularGroupItemsForExcel = groupItems.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
+            const groupCurrencies = [...new Set(regularGroupItemsForExcel.map(g => g.currency || 'EUR'))];
+            groupCurrencies.forEach(curr => {
+              const itemsInCurr = regularGroupItemsForExcel.filter(g => (g.currency || 'EUR') === curr);
+              if (itemsInCurr.length === 0) return;
+              data.push([`GROUP COSTS — ${curr}`]);
+              let subtotal = 0;
+              itemsInCurr.forEach(g => {
+                const gc = evalAmount(g.groupCost);
+                subtotal += gc;
+                data.push([g.name || '', '', gc.toFixed(2)]);
+              });
+              data.push([`TOTAL ${curr}`, '', subtotal.toFixed(2)]);
+              data.push([]);
             });
-            data.push([`TOTAL group (EUR)`, '', groupTotalEUR.toFixed(2)]);
+            // Guide/driver hotel allowances are always shown already-converted to EUR
+            // (their own currency, if overridden per-item, doesn't carry through as a single group currency)
+            if (guideHotelItems.length > 0 || driverHotelItems.length > 0) {
+              data.push(['GUIA / MOTORISTA (alojamento) — EUR']);
+              guideHotelItems.forEach(g => data.push([g.name || 'Guia', '', getGuideHotelCost(g).toFixed(2)]));
+              driverHotelItems.forEach(d => data.push([d.name || 'Motorista', '', getDriverHotelCost(d).toFixed(2)]));
+              data.push(['TOTAL EUR (guia/motorista)', '', (guideHotelTotalEUR + driverHotelTotalEUR).toFixed(2)]);
+              data.push([]);
+            }
+            data.push([`TOTAL group (EUR)${rateNote ? ' · kurz: ' + rateNote : ''}`, '', groupTotalEUR.toFixed(2)]);
 
             // Pricing table
             data.push([]);
