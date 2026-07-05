@@ -16,6 +16,7 @@ export default function Clients({ navigate, colors }) {
   const [expanded, setExpanded] = useState({});
   const [paymentFormFor, setPaymentFormFor] = useState(null);
   const [newPayment, setNewPayment] = useState({ date: '', amount: '', currency: 'EUR', note: '' });
+  const [showArchived, setShowArchived] = useState(false);
   const [contacts, setContacts] = useState([{ name: '', role: '', email: '', phone: '' }]);
   const [clientColor, setClientColor] = useState('#FAEEDA');
   const [aiLoading, setAiLoading] = useState(false);
@@ -135,10 +136,24 @@ export default function Clients({ navigate, colors }) {
     }, 50);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Delete this client?')) {
-      await deleteDoc(doc(db, 'clients', id)); fetchData();
+  const handleArchive = async (id) => {
+    if (window.confirm('Přesunout tohoto klienta do archivu? (dá se kdykoliv vrátit zpět)')) {
+      await updateDoc(doc(db, 'clients', id), { archived: true });
+      fetchData();
     }
+  };
+
+  const handleRestore = async (id) => {
+    await updateDoc(doc(db, 'clients', id), { archived: false });
+    fetchData();
+  };
+
+  const handlePermanentDelete = async (client) => {
+    const typed = window.prompt(`Tato akce je NEVRATNÁ a smaže i všechny platby. Pro potvrzení napiš přesný název klienta:\n\n${client.name}`);
+    if (typed === null) return;
+    if (typed.trim() !== client.name) { alert('Název nesouhlasí, smazání zrušeno.'); return; }
+    await deleteDoc(doc(db, 'clients', client.id));
+    fetchData();
   };
 
   const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
@@ -186,10 +201,16 @@ export default function Clients({ navigate, colors }) {
           <h1 style={{ fontSize: 22, fontWeight: 700, color: colors.primary, margin: 0 }}>Clients</h1>
           <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Brazilian tour operators</div>
         </div>
-        <button onClick={() => { setShowForm(true); setEditingId(null); setContacts([{ name: '', role: '', email: '', phone: '' }]); setParseText(''); setTimeout(() => formRef.current?.reset(), 50); }}
-          style={{ padding: '9px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
-          + New client
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setShowArchived(a => !a)}
+            style={{ padding: '9px 16px', background: showArchived ? colors.primary : 'transparent', color: showArchived ? colors.white : colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            📦 Archiv {clients.filter(c => c.archived).length ? `(${clients.filter(c => c.archived).length})` : ''}
+          </button>
+          <button onClick={() => { setShowForm(true); setEditingId(null); setContacts([{ name: '', role: '', email: '', phone: '' }]); setParseText(''); setTimeout(() => formRef.current?.reset(), 50); }}
+            style={{ padding: '9px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            + New client
+          </button>
+        </div>
       </div>
 
       {showForm && (
@@ -297,13 +318,13 @@ export default function Clients({ navigate, colors }) {
       )}
 
       {loading ? <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div> :
-        clients.length === 0 ? (
+        clients.filter(c => showArchived ? c.archived : !c.archived).length === 0 ? (
           <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '3rem', textAlign: 'center', color: colors.muted, fontSize: 14 }}>
-            No clients yet. Add your first client.
+            {showArchived ? 'Žádní archivovaní klienti.' : 'No clients yet. Add your first client.'}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {clients.map((c, i) => {
+            {clients.filter(c => showArchived ? c.archived : !c.archived).map((c, i) => {
               const clientOrders = getOrdersFor(c);
               return (
               <div key={c.id} style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
@@ -434,8 +455,17 @@ export default function Clients({ navigate, colors }) {
                     </div>
 
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <button onClick={() => handleEdit(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.muted }}>✏ Edit</button>
-                      <button onClick={() => handleDelete(c.id)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#7f1d1d' }}>Delete</button>
+                      {!c.archived ? (
+                        <>
+                          <button onClick={() => handleEdit(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.muted }}>✏ Edit</button>
+                          <button onClick={() => handleArchive(c.id)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#854f0b' }}>📦 Archive</button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => handleRestore(c.id)} style={{ padding: '7px 14px', background: colors.success || '#2d6a4f', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>↩ Obnovit</button>
+                          <button onClick={() => handlePermanentDelete(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#7f1d1d' }}>🗑 Smazat natrvalo</button>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
