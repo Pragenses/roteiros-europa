@@ -1024,7 +1024,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       : (it.costSngl || it.costDbl)), 0);
     const groupTotal = curGroupItems.reduce((sum, it) => sum + evalAmount(it.groupCost), 0);
     const snglSupp = perPaxSngl - perPaxDbl;
-    const focPool = perPaxDbl;
+    const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
     const rows = paxCounts.map(pax => {
       const groupPerPax = groupTotal / pax;
       const costDbl = groupPerPax + perPaxDbl;
@@ -1047,7 +1047,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     const groupTotal = eurGroupItems.reduce((sum, it) => sum + toEURWithRates(evalAmount(it.groupCost), it.currency), 0)
       + guideHotelTotalEUR + driverHotelTotalEUR;
     const snglSupp = perPaxSngl - perPaxDbl;
-    const focPool = perPaxDbl;
+    const focPool = focType === 'sngl' ? perPaxSngl : perPaxDbl;
     const rows = paxCounts.map(pax => {
       const groupPerPax = groupTotal / pax;
       const costDbl = groupPerPax + perPaxDbl;
