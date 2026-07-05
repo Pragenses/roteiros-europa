@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { parseClientText, aiFillClientFree } from '../lib/ai';
+import { CURRENCIES } from '../lib/offerCalc';
 
 const CLIENT_COLORS = ['#E6F1FB','#FAEEDA','#EAF3DE','#EEEDFE','#FCEBEB','#F1EFE8'];
 const CLIENT_TEXT = ['#0C447C','#633806','#27500A','#534AB7','#791F1F','#444441'];
@@ -13,6 +14,8 @@ export default function Clients({ navigate, colors }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expanded, setExpanded] = useState({});
+  const [paymentFormFor, setPaymentFormFor] = useState(null);
+  const [newPayment, setNewPayment] = useState({ date: '', amount: '', currency: 'EUR', note: '' });
   const [contacts, setContacts] = useState([{ name: '', role: '', email: '', phone: '' }]);
   const [clientColor, setClientColor] = useState('#FAEEDA');
   const [aiLoading, setAiLoading] = useState(false);
@@ -139,6 +142,35 @@ export default function Clients({ navigate, colors }) {
   };
 
   const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
+
+  const addPayment = async (client) => {
+    if (!newPayment.amount || isNaN(parseFloat(newPayment.amount))) { alert('Zadej platnou částku.'); return; }
+    const entry = {
+      id: Date.now() + Math.random(),
+      date: newPayment.date || new Date().toISOString().slice(0, 10),
+      amount: parseFloat(newPayment.amount),
+      currency: newPayment.currency,
+      note: newPayment.note.trim(),
+    };
+    const updatedPayments = [...(client.payments || []), entry];
+    await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
+    setNewPayment({ date: '', amount: '', currency: newPayment.currency, note: '' });
+    setPaymentFormFor(null);
+    fetchData();
+  };
+
+  const deletePayment = async (client, paymentId) => {
+    if (!window.confirm('Smazat tento záznam platby?')) return;
+    const updatedPayments = (client.payments || []).filter(p => p.id !== paymentId);
+    await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
+    fetchData();
+  };
+
+  const sumByCurrency = (payments) => {
+    const sums = {};
+    (payments || []).forEach(p => { sums[p.currency] = (sums[p.currency] || 0) + p.amount; });
+    return sums;
+  };
 
   const getOrdersFor = (client) => orders
     .filter(o => o.clientId === client.id || o.clientName === client.name)
@@ -340,6 +372,66 @@ export default function Clients({ navigate, colors }) {
                         </div>
                       </>
                     )}
+
+                    {/* Payments ledger — simple running record of money received, no forced order-matching */}
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                          💰 Platby {c.payments?.length ? `(${c.payments.length})` : ''}
+                        </div>
+                        <button onClick={() => { setPaymentFormFor(paymentFormFor === c.id ? null : c.id); setNewPayment({ date: '', amount: '', currency: 'EUR', note: '' }); }}
+                          style={{ fontSize: 11, color: colors.primary, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}>
+                          {paymentFormFor === c.id ? '✕ Zavřít' : '+ Přidat platbu'}
+                        </button>
+                      </div>
+
+                      {Object.keys(sumByCurrency(c.payments)).length > 0 && (
+                        <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>
+                          Celkem přijato: {Object.entries(sumByCurrency(c.payments)).map(([cur, sum]) => `${sum.toFixed(2)} ${cur}`).join(' · ')}
+                        </div>
+                      )}
+
+                      {paymentFormFor === c.id && (
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap', background: '#f7f6f3', borderRadius: 7, padding: 10, marginBottom: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Datum</div>
+                            <input type="date" value={newPayment.date} onChange={e => setNewPayment(p => ({ ...p, date: e.target.value }))}
+                              style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Částka</div>
+                            <input type="text" inputMode="decimal" value={newPayment.amount} onChange={e => setNewPayment(p => ({ ...p, amount: e.target.value.replace(',', '.') }))}
+                              placeholder="0.00" style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, width: 90 }} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Měna</div>
+                            <select value={newPayment.currency} onChange={e => setNewPayment(p => ({ ...p, currency: e.target.value }))}
+                              style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+                              {CURRENCIES.map(cur => <option key={cur} value={cur}>{cur}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ flex: 1, minWidth: 140 }}>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Poznámka</div>
+                            <input type="text" value={newPayment.note} onChange={e => setNewPayment(p => ({ ...p, note: e.target.value }))}
+                              placeholder="např. záloha, doplatek Grupo X" style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, width: '100%', boxSizing: 'border-box' }} />
+                          </div>
+                          <button onClick={() => addPayment(c)} style={{ padding: '6px 14px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: 'pointer' }}>Uložit</button>
+                        </div>
+                      )}
+
+                      {c.payments?.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {[...c.payments].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(p => (
+                            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12 }}>
+                              <div style={{ color: colors.muted, width: 85, flexShrink: 0 }}>{p.date}</div>
+                              <div style={{ fontWeight: 700, color: colors.primary, width: 100, flexShrink: 0 }}>{p.amount.toFixed(2)} {p.currency}</div>
+                              <div style={{ flex: 1, color: colors.text }}>{p.note}</div>
+                              <button onClick={() => deletePayment(c, p.id)} style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button onClick={() => handleEdit(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.muted }}>✏ Edit</button>
