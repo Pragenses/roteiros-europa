@@ -10,13 +10,17 @@ const CLIENT_TEXT = ['#0C447C','#633806','#27500A','#534AB7','#791F1F','#444441'
 export default function Clients({ navigate, colors }) {
   const [clients, setClients] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [paymentFormFor, setPaymentFormFor] = useState(null);
   const [newPayment, setNewPayment] = useState({ date: '', amount: '', currency: 'EUR', note: '' });
-  const [showArchived, setShowArchived] = useState(false);
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [editPaymentDraft, setEditPaymentDraft] = useState({ date: '', amount: '', currency: 'EUR', note: '' });
+  const [allocationFormFor, setAllocationFormFor] = useState(null);
+  const [newAllocation, setNewAllocation] = useState({ amount: '', currency: 'EUR', target: '', isOther: false, customText: '' });
   const [contacts, setContacts] = useState([{ name: '', role: '', email: '', phone: '' }]);
   const [clientColor, setClientColor] = useState('#FAEEDA');
   const [aiLoading, setAiLoading] = useState(false);
@@ -26,12 +30,14 @@ export default function Clients({ navigate, colors }) {
   const formRef = useRef(null);
 
   const fetchData = useCallback(async () => {
-    const [snap, ordSnap] = await Promise.all([
+    const [snap, ordSnap, offSnap] = await Promise.all([
       getDocs(collection(db, 'clients')),
-      getDocs(collection(db, 'orders'))
+      getDocs(collection(db, 'orders')),
+      getDocs(collection(db, 'offers'))
     ]);
     setClients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     setOrders(ordSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setOffers(offSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     setLoading(false);
   }, []);
 
@@ -136,20 +142,8 @@ export default function Clients({ navigate, colors }) {
     }, 50);
   };
 
-  const handleArchive = async (id) => {
-    if (window.confirm('Přesunout tohoto klienta do archivu? (dá se kdykoliv vrátit zpět)')) {
-      await updateDoc(doc(db, 'clients', id), { archived: true });
-      fetchData();
-    }
-  };
-
-  const handleRestore = async (id) => {
-    await updateDoc(doc(db, 'clients', id), { archived: false });
-    fetchData();
-  };
-
-  const handlePermanentDelete = async (client) => {
-    const typed = window.prompt(`Tato akce je NEVRATNÁ a smaže i všechny platby. Pro potvrzení napiš přesný název klienta:\n\n${client.name}`);
+  const handleDelete = async (client) => {
+    const typed = window.prompt(`Tato akce je nevratná a smaže i všechny platby. Pro potvrzení napiš přesný název klienta:\n\n${client.name}`);
     if (typed === null) return;
     if (typed.trim() !== client.name) { alert('Název nesouhlasí, smazání zrušeno.'); return; }
     await deleteDoc(doc(db, 'clients', client.id));
@@ -174,11 +168,62 @@ export default function Clients({ navigate, colors }) {
     fetchData();
   };
 
+  const startEditPayment = (p) => {
+    setEditingPaymentId(p.id);
+    setEditPaymentDraft({ date: p.date || '', amount: String(p.amount), currency: p.currency, note: p.note || '' });
+  };
+
+  const updatePayment = async (client, paymentId) => {
+    if (!editPaymentDraft.amount || isNaN(parseFloat(editPaymentDraft.amount))) { alert('Zadej platnou částku.'); return; }
+    const updatedPayments = (client.payments || []).map(p => p.id === paymentId
+      ? { ...p, date: editPaymentDraft.date, amount: parseFloat(editPaymentDraft.amount), currency: editPaymentDraft.currency, note: editPaymentDraft.note.trim() }
+      : p);
+    await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
+    setEditingPaymentId(null);
+    fetchData();
+  };
+
   const deletePayment = async (client, paymentId) => {
     if (!window.confirm('Smazat tento záznam platby?')) return;
     const updatedPayments = (client.payments || []).filter(p => p.id !== paymentId);
     await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
     fetchData();
+  };
+
+  const addAllocation = async (client) => {
+    if (!newAllocation.amount || isNaN(parseFloat(newAllocation.amount))) { alert('Zadej platnou částku.'); return; }
+    const label = newAllocation.isOther ? newAllocation.customText.trim() : newAllocation.target;
+    if (!label) { alert(newAllocation.isOther ? 'Napiš na co se to vztahuje.' : 'Vyber zakázku/nabídku.'); return; }
+    const entry = {
+      id: Date.now() + Math.random(),
+      amount: parseFloat(newAllocation.amount),
+      currency: newAllocation.currency,
+      label,
+    };
+    const updatedAllocations = [...(client.allocations || []), entry];
+    await updateDoc(doc(db, 'clients', client.id), { allocations: updatedAllocations });
+    setNewAllocation({ amount: '', currency: newAllocation.currency, target: '', isOther: false, customText: '' });
+    setAllocationFormFor(null);
+    fetchData();
+  };
+
+  const deleteAllocation = async (client, allocationId) => {
+    if (!window.confirm('Smazat toto přiřazení?')) return;
+    const updatedAllocations = (client.allocations || []).filter(a => a.id !== allocationId);
+    await updateDoc(doc(db, 'clients', client.id), { allocations: updatedAllocations });
+    fetchData();
+  };
+
+  const balanceByCurrency = (client) => {
+    const received = sumByCurrency(client.payments);
+    const allocated = sumByCurrency(client.allocations);
+    const allCurrencies = [...new Set([...Object.keys(received), ...Object.keys(allocated)])];
+    return allCurrencies.map(cur => ({
+      currency: cur,
+      received: received[cur] || 0,
+      allocated: allocated[cur] || 0,
+      remaining: (received[cur] || 0) - (allocated[cur] || 0),
+    }));
   };
 
   const sumByCurrency = (payments) => {
@@ -188,6 +233,10 @@ export default function Clients({ navigate, colors }) {
   };
 
   const getOrdersFor = (client) => orders
+    .filter(o => o.clientId === client.id || o.clientName === client.name)
+    .sort((a, b) => new Date(a.startDate || 0) - new Date(b.startDate || 0));
+
+  const getOffersFor = (client) => offers
     .filter(o => o.clientId === client.id || o.clientName === client.name)
     .sort((a, b) => new Date(a.startDate || 0) - new Date(b.startDate || 0));
 
@@ -202,10 +251,6 @@ export default function Clients({ navigate, colors }) {
           <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Brazilian tour operators</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setShowArchived(a => !a)}
-            style={{ padding: '9px 16px', background: showArchived ? colors.primary : 'transparent', color: showArchived ? colors.white : colors.muted, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-            📦 Archiv {clients.filter(c => c.archived).length ? `(${clients.filter(c => c.archived).length})` : ''}
-          </button>
           <button onClick={() => { setShowForm(true); setEditingId(null); setContacts([{ name: '', role: '', email: '', phone: '' }]); setParseText(''); setTimeout(() => formRef.current?.reset(), 50); }}
             style={{ padding: '9px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             + New client
@@ -318,13 +363,13 @@ export default function Clients({ navigate, colors }) {
       )}
 
       {loading ? <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div> :
-        clients.filter(c => showArchived ? c.archived : !c.archived).length === 0 ? (
+        clients.length === 0 ? (
           <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '3rem', textAlign: 'center', color: colors.muted, fontSize: 14 }}>
-            {showArchived ? 'Žádní archivovaní klienti.' : 'No clients yet. Add your first client.'}
+            No clients yet. Add your first client.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {clients.filter(c => showArchived ? c.archived : !c.archived).map((c, i) => {
+            {clients.map((c, i) => {
               const clientOrders = getOrdersFor(c);
               return (
               <div key={c.id} style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
@@ -406,10 +451,27 @@ export default function Clients({ navigate, colors }) {
                         </button>
                       </div>
 
-                      {Object.keys(sumByCurrency(c.payments)).length > 0 && (
-                        <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>
-                          Celkem přijato: {Object.entries(sumByCurrency(c.payments)).map(([cur, sum]) => `${sum.toFixed(2)} ${cur}`).join(' · ')}
-                        </div>
+                      {balanceByCurrency(c).length > 0 && (
+                        <table style={{ borderCollapse: 'collapse', fontSize: 12, marginBottom: 10 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ textAlign: 'left', padding: '2px 10px 2px 0', color: colors.muted, fontWeight: 600 }}></th>
+                              <th style={{ textAlign: 'right', padding: '2px 10px', color: colors.muted, fontWeight: 600 }}>Přijato</th>
+                              <th style={{ textAlign: 'right', padding: '2px 10px', color: colors.muted, fontWeight: 600 }}>Přiřazeno</th>
+                              <th style={{ textAlign: 'right', padding: '2px 0px 2px 10px', color: colors.muted, fontWeight: 600 }}>Zbývá</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {balanceByCurrency(c).map(row => (
+                              <tr key={row.currency}>
+                                <td style={{ padding: '2px 10px 2px 0', fontWeight: 700, color: colors.primary }}>{row.currency}</td>
+                                <td style={{ textAlign: 'right', padding: '2px 10px' }}>{row.received.toFixed(2)}</td>
+                                <td style={{ textAlign: 'right', padding: '2px 10px' }}>{row.allocated.toFixed(2)}</td>
+                                <td style={{ textAlign: 'right', padding: '2px 0 2px 10px', fontWeight: 700, color: row.remaining < 0 ? '#7f1d1d' : colors.primary }}>{row.remaining.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       )}
 
                       {paymentFormFor === c.id && (
@@ -443,11 +505,106 @@ export default function Clients({ navigate, colors }) {
                       {c.payments?.length > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           {[...c.payments].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(p => (
-                            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12 }}>
-                              <div style={{ color: colors.muted, width: 85, flexShrink: 0 }}>{p.date}</div>
-                              <div style={{ fontWeight: 700, color: colors.primary, width: 100, flexShrink: 0 }}>{p.amount.toFixed(2)} {p.currency}</div>
-                              <div style={{ flex: 1, color: colors.text }}>{p.note}</div>
-                              <button onClick={() => deletePayment(c, p.id)} style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>
+                            editingPaymentId === p.id ? (
+                              <div key={p.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', background: '#fffbf0', border: `1px solid ${colors.border}`, borderRadius: 6, padding: 8 }}>
+                                <input type="date" value={editPaymentDraft.date} onChange={e => setEditPaymentDraft(d => ({ ...d, date: e.target.value }))}
+                                  style={{ padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }} />
+                                <input type="text" inputMode="decimal" value={editPaymentDraft.amount} onChange={e => setEditPaymentDraft(d => ({ ...d, amount: e.target.value.replace(',', '.') }))}
+                                  style={{ padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, width: 80 }} />
+                                <select value={editPaymentDraft.currency} onChange={e => setEditPaymentDraft(d => ({ ...d, currency: e.target.value }))}
+                                  style={{ padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+                                  {CURRENCIES.map(cur => <option key={cur} value={cur}>{cur}</option>)}
+                                </select>
+                                <input type="text" value={editPaymentDraft.note} onChange={e => setEditPaymentDraft(d => ({ ...d, note: e.target.value }))}
+                                  style={{ flex: 1, minWidth: 120, padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }} />
+                                <button onClick={() => updatePayment(c, p.id)} style={{ padding: '4px 10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: 'pointer' }}>✓ Uložit</button>
+                                <button onClick={() => setEditingPaymentId(null)} style={{ padding: '4px 10px', background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.muted }}>✕</button>
+                              </div>
+                            ) : (
+                              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12 }}>
+                                <div style={{ color: colors.muted, width: 85, flexShrink: 0 }}>{p.date}</div>
+                                <div style={{ fontWeight: 700, color: colors.primary, width: 100, flexShrink: 0 }}>{p.amount.toFixed(2)} {p.currency}</div>
+                                <div style={{ flex: 1, color: colors.text }}>{p.note}</div>
+                                <button onClick={() => startEditPayment(p)} style={{ background: 'none', border: 'none', color: colors.primary, cursor: 'pointer', fontSize: 12, padding: 0 }}>✎</button>
+                                <button onClick={() => deletePayment(c, p.id)} style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>
+                              </div>
+                            )
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Allocations — which orders/offers the received money has been assigned to */}
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                          📋 Přiřazeno zakázkám {c.allocations?.length ? `(${c.allocations.length})` : ''}
+                        </div>
+                        <button onClick={() => { setAllocationFormFor(allocationFormFor === c.id ? null : c.id); setNewAllocation({ amount: '', currency: 'EUR', target: '', isOther: false, customText: '' }); }}
+                          style={{ fontSize: 11, color: colors.primary, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}>
+                          {allocationFormFor === c.id ? '✕ Zavřít' : '+ Přidat přiřazení'}
+                        </button>
+                      </div>
+
+                      {allocationFormFor === c.id && (
+                        <div style={{ background: '#f7f6f3', borderRadius: 7, padding: 10, marginBottom: 8 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
+                            <div>
+                              <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Částka</div>
+                              <input type="text" inputMode="decimal" value={newAllocation.amount} onChange={e => setNewAllocation(a => ({ ...a, amount: e.target.value.replace(',', '.') }))}
+                                placeholder="0.00" style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, width: 90 }} />
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Měna</div>
+                              <select value={newAllocation.currency} onChange={e => setNewAllocation(a => ({ ...a, currency: e.target.value }))}
+                                style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+                                {CURRENCIES.map(cur => <option key={cur} value={cur}>{cur}</option>)}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 12 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                              <input type="radio" checked={!newAllocation.isOther} onChange={() => setNewAllocation(a => ({ ...a, isOther: false }))} />
+                              Vybrat nabídku/zakázku
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                              <input type="radio" checked={newAllocation.isOther} onChange={() => setNewAllocation(a => ({ ...a, isOther: true }))} />
+                              Jiné (např. taxi)
+                            </label>
+                          </div>
+
+                          {!newAllocation.isOther ? (
+                            <select value={newAllocation.target} onChange={e => setNewAllocation(a => ({ ...a, target: e.target.value }))}
+                              style={{ width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, marginBottom: 8, boxSizing: 'border-box' }}>
+                              <option value="">— Vyber —</option>
+                              {getOrdersFor(c).length > 0 && (
+                                <optgroup label="Orders">
+                                  {getOrdersFor(c).map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
+                                </optgroup>
+                              )}
+                              {getOffersFor(c).length > 0 && (
+                                <optgroup label="Offers">
+                                  {getOffersFor(c).map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
+                                </optgroup>
+                              )}
+                            </select>
+                          ) : (
+                            <input type="text" value={newAllocation.customText} onChange={e => setNewAllocation(a => ({ ...a, customText: e.target.value }))}
+                              placeholder="např. taxi, spropitné, jiné náklady" style={{ width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, marginBottom: 8, boxSizing: 'border-box' }} />
+                          )}
+
+                          <button onClick={() => addAllocation(c)} style={{ padding: '6px 14px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: 'pointer' }}>Uložit</button>
+                        </div>
+                      )}
+
+                      {c.allocations?.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {c.allocations.map(a => (
+                            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12 }}>
+                              <div style={{ fontWeight: 700, color: colors.primary, width: 100, flexShrink: 0 }}>{a.amount.toFixed(2)} {a.currency}</div>
+                              <div style={{ flex: 1, color: colors.text }}>{a.label}</div>
+                              <button onClick={() => deleteAllocation(c, a.id)} style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>
                             </div>
                           ))}
                         </div>
@@ -455,17 +612,8 @@ export default function Clients({ navigate, colors }) {
                     </div>
 
                     <div style={{ display: 'flex', gap: 8 }}>
-                      {!c.archived ? (
-                        <>
-                          <button onClick={() => handleEdit(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.muted }}>✏ Edit</button>
-                          <button onClick={() => handleArchive(c.id)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#854f0b' }}>📦 Archive</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => handleRestore(c.id)} style={{ padding: '7px 14px', background: colors.success || '#2d6a4f', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>↩ Obnovit</button>
-                          <button onClick={() => handlePermanentDelete(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#7f1d1d' }}>🗑 Smazat natrvalo</button>
-                        </>
-                      )}
+                      <button onClick={() => handleEdit(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.muted }}>✏ Edit</button>
+                      <button onClick={() => handleDelete(c)} style={{ padding: '7px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#7f1d1d' }}>🗑 Delete</button>
                     </div>
                   </div>
                 )}
