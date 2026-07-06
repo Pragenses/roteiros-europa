@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { logDeletion } from '../lib/activityLog';
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -47,10 +48,12 @@ export default function Declined({ navigate, colors }) {
     fetchAll();
   };
 
-  const handleDelete = async (id, name) => {
-    if (!window.confirm(`Permanently delete "${name}"?`)) return;
+  const handleDelete = async (offer) => {
+    if (!window.confirm(`Permanently delete "${offer.name}"?`)) return;
     if (!window.confirm('This cannot be undone. Are you sure?')) return;
-    await deleteDoc(doc(db, 'offers', id));
+    const { id, ...offerData } = offer;
+    await logDeletion('offer', offer.id, offer.name, offerData);
+    await deleteDoc(doc(db, 'offers', offer.id));
     fetchAll();
   };
 
@@ -143,7 +146,7 @@ export default function Declined({ navigate, colors }) {
                     style={{ padding: '4px 10px', background: colors.success, color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     ↩ Restore
                   </button>
-                  <button onClick={() => handleDelete(o.id, o.name)}
+                  <button onClick={() => handleDelete(o)}
                     style={{ padding: '4px 10px', background: colors.danger, color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, cursor: 'pointer' }}>
                     🗑 Delete
                   </button>

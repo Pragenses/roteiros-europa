@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { logDeletion } from '../lib/activityLog';
 
 const STATUS_OPTS = [
   { value: 'enquired', label: 'Enquired' },
@@ -79,11 +80,14 @@ export default function Orders({ navigate, colors }) {
     navigate('order-detail', { orderId: ref.id });
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Delete this order?')) {
-      await deleteDoc(doc(db, 'orders', id));
-      fetchAll();
-    }
+  const handleDelete = async (order) => {
+    const typed = window.prompt(`Tato akce je nevratná. Pro potvrzení napiš přesný název zakázky:\n\n${order.name}`);
+    if (typed === null) return;
+    if (typed.trim() !== order.name) { alert('Název nesouhlasí, smazání zrušeno.'); return; }
+    const { id, ...orderData } = order;
+    await logDeletion('order', order.id, order.name, orderData);
+    await deleteDoc(doc(db, 'orders', order.id));
+    fetchAll();
   };
 
   const allFilters = [['all', 'All'], ...STATUS_OPTS.map(o => [o.value, o.label])];
@@ -191,7 +195,7 @@ export default function Orders({ navigate, colors }) {
                   <div style={{ fontSize: 12, color: colors.muted }}>{o.clientName} · {o.destinations || ''}{o.paxCount ? ` · ${o.paxCount} pax` : ''} · FOC {o.focCount || 1} ({o.focType || 'dbl'})</div>
                 </div>
                 <Badge status={o.status} />
-                <button onClick={e => { e.stopPropagation(); handleDelete(o.id); }}
+                <button onClick={e => { e.stopPropagation(); handleDelete(o); }}
                   style={{ padding: '4px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 11, cursor: 'pointer', color: colors.muted }}>
                   ✕
                 </button>

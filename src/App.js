@@ -27,6 +27,7 @@ import Providers from './pages/Providers';
 import Calendar from './pages/Calendar';
 import Hotels from './pages/Hotels';
 import Declined from './pages/Declined';
+import History from './pages/History';
 import Settings from './pages/Settings';
 
 const COLORS = {
@@ -52,6 +53,7 @@ const NAV = [
   { id: 'providers', label: 'Providers', icon: '◎' },
   { id: 'hotels',    label: 'Hotels',    icon: '🏨' },
   { id: 'declined',  label: 'Declined',  icon: '✕' },
+  { id: 'history',   label: 'History',   icon: '🕐' },
   { id: 'settings',  label: 'Settings',  icon: '⚙' },
 ];
 
@@ -174,6 +176,7 @@ export default function App() {
     if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
+    if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
     if (page === 'settings')  return <Settings colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} />;
   };

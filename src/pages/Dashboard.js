@@ -29,14 +29,17 @@ const STATUS_LABELS = {
 export default function Dashboard({ navigate, colors }) {
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({ active: 0, clients: 0, urgentOptions: 0 });
+  const [hotelTasks, setHotelTasks] = useState([]);
+  const [balanceTasks, setBalanceTasks] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [ordSnap, cliSnap] = await Promise.all([
+        const [ordSnap, cliSnap, offSnap] = await Promise.all([
           getDocs(collection(db, 'orders')),
-          getDocs(collection(db, 'clients'))
+          getDocs(collection(db, 'clients')),
+          getDocs(collection(db, 'offers'))
         ]);
         const allOrders = ordSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         const sorted = allOrders.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
@@ -48,6 +51,41 @@ export default function Dashboard({ navigate, colors }) {
           return diff <= 14 && diff >= 0;
         });
         setStats({ active: allOrders.filter(o => o.status !== 'completed' && o.status !== 'dokonceno').length, clients: cliSnap.size, urgentOptions: urgent.length });
+
+        // Hotel option / cancellation deadlines living inside each offer's items
+        const allOffers = offSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(o => !o.declined);
+        const today = new Date();
+        const hTasks = [];
+        allOffers.forEach(offer => {
+          (offer.items || []).forEach(item => {
+            if (!(item.type === 'per_pax' && item.subType === 'hotel')) return;
+            if (item.optionDate && item.bookingStatus !== 'confirmed') {
+              const diff = Math.round((new Date(item.optionDate) - today) / 86400000);
+              if (diff <= 14) hTasks.push({ kind: 'option', offerId: offer.id, offerName: offer.name, hotelName: item.name, date: item.optionDate, diff });
+            }
+            if (item.cancellationDeadline) {
+              const diff = Math.round((new Date(item.cancellationDeadline) - today) / 86400000);
+              if (diff <= 14) hTasks.push({ kind: 'cancellation', offerId: offer.id, offerName: offer.name, hotelName: item.name, date: item.cancellationDeadline, diff });
+            }
+          });
+        });
+        hTasks.sort((a, b) => a.diff - b.diff);
+        setHotelTasks(hTasks);
+
+        // Client balances still outstanding (received but not yet allocated to an order/offer)
+        const allClients = cliSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const bTasks = [];
+        allClients.forEach(c => {
+          const received = {};
+          (c.payments || []).forEach(p => { received[p.currency] = (received[p.currency] || 0) + p.amount; });
+          const allocated = {};
+          (c.allocations || []).forEach(a => { allocated[a.currency] = (allocated[a.currency] || 0) + a.amount; });
+          Object.keys(received).forEach(cur => {
+            const remaining = received[cur] - (allocated[cur] || 0);
+            if (Math.abs(remaining) > 0.5) bTasks.push({ clientId: c.id, clientName: c.name, currency: cur, remaining });
+          });
+        });
+        setBalanceTasks(bTasks);
       } catch (e) { console.log('No data yet'); }
       setLoading(false);
     };
@@ -78,6 +116,36 @@ export default function Dashboard({ navigate, colors }) {
         <Metric val={stats.urgentOptions} label="Options expiring soon" />
         <Metric val="15%" label="Margin" />
       </div>
+
+      {(hotelTasks.length > 0 || balanceTasks.length > 0) && (
+        <div style={{ background: '#FFFBF0', border: `1px solid #E8D9A8`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: '#854f0b', textTransform: 'uppercase', marginBottom: '1rem' }}>
+            ⚠️ Vyžaduje pozornost ({hotelTasks.length + balanceTasks.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {hotelTasks.map((t, i) => (
+              <div key={'h' + i} onClick={() => navigate('offer-detail', { offerId: t.offerId })}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: t.diff < 0 ? '#7f1d1d' : '#854f0b', width: 80, flexShrink: 0 }}>
+                  {t.diff < 0 ? `${-t.diff}d po termínu` : t.diff === 0 ? 'DNES' : `za ${t.diff}d`}
+                </span>
+                <span style={{ color: colors.muted, width: 90, flexShrink: 0 }}>{t.kind === 'option' ? 'Opce' : 'Storno lhůta'}</span>
+                <span style={{ flex: 1, fontWeight: 600, color: colors.text }}>{t.hotelName}</span>
+                <span style={{ color: colors.muted, fontSize: 12 }}>{t.offerName}</span>
+              </div>
+            ))}
+            {balanceTasks.map((t, i) => (
+              <div key={'b' + i} onClick={() => navigate('clients')}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: colors.primary, width: 80, flexShrink: 0 }}>💰 Zůstatek</span>
+                <span style={{ flex: 1, fontWeight: 600, color: colors.text }}>{t.clientName}</span>
+                <span style={{ color: t.remaining > 0 ? colors.primary : '#7f1d1d', fontWeight: 700 }}>{t.remaining.toFixed(2)} {t.currency}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: colors.muted, textTransform: 'uppercase', marginBottom: '1rem' }}>Upcoming departures</div>
         {loading ? <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div> :

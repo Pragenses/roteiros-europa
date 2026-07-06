@@ -3,6 +3,7 @@ import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { parseClientText, aiFillClientFree } from '../lib/ai';
 import { CURRENCIES } from '../lib/offerCalc';
+import { logDeletion } from '../lib/activityLog';
 
 const CLIENT_COLORS = ['#E6F1FB','#FAEEDA','#EAF3DE','#EEEDFE','#FCEBEB','#F1EFE8'];
 const CLIENT_TEXT = ['#0C447C','#633806','#27500A','#534AB7','#791F1F','#444441'];
@@ -146,6 +147,8 @@ export default function Clients({ navigate, colors }) {
     const typed = window.prompt(`Tato akce je nevratná a smaže i všechny platby. Pro potvrzení napiš přesný název klienta:\n\n${client.name}`);
     if (typed === null) return;
     if (typed.trim() !== client.name) { alert('Název nesouhlasí, smazání zrušeno.'); return; }
+    const { id, ...clientData } = client;
+    await logDeletion('client', client.id, client.name, clientData);
     await deleteDoc(doc(db, 'clients', client.id));
     fetchData();
   };
