@@ -114,6 +114,11 @@ export default function App() {
     setNavParams(data || {});
   };
 
+  const publicOfferId = new URLSearchParams(window.location.search).get('oferta');
+  if (publicOfferId) {
+    return <OfferPrint offerId={publicOfferId} colors={COLORS} isPublic={true} navigate={() => {}} />;
+  }
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif', color: COLORS.muted, fontSize: 16 }}>
       Loading...

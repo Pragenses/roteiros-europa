@@ -19,7 +19,7 @@ const fmtDate = (d) => {
   return `${day}/${m}/${y}`;
 };
 
-export default function OfferPrint({ offerId, navigate, colors }) {
+export default function OfferPrint({ offerId, navigate, colors, isPublic = false }) {
   const [offer, setOffer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [rates, setRates] = useState(DEFAULT_RATES);
@@ -53,6 +53,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
 
   if (loading) return <div style={{ padding: 20 }}>Loading...</div>;
   if (!offer) return <div style={{ padding: 20 }}>Offer not found.</div>;
+  if (isPublic && !offer.publicShareEnabled) return <div style={{ padding: 20 }}>This link is no longer active.</div>;
 
   const items = offer.items || [];
   const margin = offer.margin || 15;
@@ -367,13 +368,13 @@ export default function OfferPrint({ offerId, navigate, colors }) {
       `}</style>
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3', flexWrap: 'wrap' }}>
-        <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>
+        {!isPublic && <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>}
         <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir / Salvar PDF</button>
-        <button onClick={() => { setVersionLabel(''); setVersionError(''); setShowVersionDialog(true); }} style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>📌 Salvar versão (NR)</button>
-        {createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
+        {!isPublic && <button onClick={() => { setVersionLabel(''); setVersionError(''); setShowVersionDialog(true); }} style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>📌 Salvar versão (NR)</button>}
+        {!isPublic && createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
 
-      {versions.length > 0 && (
+      {!isPublic && versions.length > 0 && (
         <div className="op-no-print" style={{ margin: '0 16px 16px', padding: '14px 16px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 10 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>📁 Versões salvas</div>
           {versions.slice().reverse().map((v, i) => (
@@ -386,7 +387,7 @@ export default function OfferPrint({ offerId, navigate, colors }) {
         </div>
       )}
 
-      {showVersionDialog && (
+      {!isPublic && showVersionDialog && (
         <div className="op-no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: '#fff', borderRadius: 12, padding: '2rem', width: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📌 Salvar esta versão do PDF</div>

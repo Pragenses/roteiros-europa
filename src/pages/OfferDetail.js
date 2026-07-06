@@ -168,6 +168,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [paxList, setPaxList] = useState('15,20,25,30,35');
   const [focCount, setFocCount] = useState(1);
   const [focType, setFocType] = useState('dbl');
+  const [showShareLink, setShowShareLink] = useState(false);
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -863,6 +865,30 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     if (!window.confirm('Move this offer to Declined?')) return;
     await updateDoc(doc(db, 'offers', offerId), { declined: true });
     navigate('offers');
+  };
+
+  const getShareUrl = () => `${window.location.origin}${window.location.pathname}?oferta=${offerId}`;
+
+  const handleEnableShare = async () => {
+    if (!offer.publicShareEnabled) {
+      await updateDoc(doc(db, 'offers', offerId), { publicShareEnabled: true });
+      setOffer(prev => ({ ...prev, publicShareEnabled: true }));
+    }
+    setShowShareLink(true);
+    setShareLinkCopied(false);
+  };
+
+  const handleDisableShare = async () => {
+    if (!window.confirm('Zrušit sdílení? Odkaz přestane fungovat.')) return;
+    await updateDoc(doc(db, 'offers', offerId), { publicShareEnabled: false });
+    setOffer(prev => ({ ...prev, publicShareEnabled: false }));
+    setShowShareLink(false);
+  };
+
+  const handleCopyShareLink = () => {
+    navigator.clipboard.writeText(getShareUrl());
+    setShareLinkCopied(true);
+    setTimeout(() => setShareLinkCopied(false), 2000);
   };
 
   const handleConvertToOrder = async () => {
@@ -1651,10 +1677,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           data-placeholder="📅 07/04/2027 • QUARTA-FEIRA • DIA 1: BRASIL / LISBOA / BERLIM (AÉREO)&#10;Apresentação no aeroporto para embarque..."
           style={{ ...iStyle, minHeight: 220, resize: 'vertical', fontFamily: 'Georgia, serif', lineHeight: 1.5, overflowY: 'auto', whiteSpace: 'pre-wrap' }}
         />
-        <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
+        <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             📄 Gerar oferta (PDF)
           </button>
+          {!offer.publicShareEnabled ? (
+            <button onClick={handleEnableShare} style={{ padding: '9px 20px', background: 'transparent', color: colors.primary, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+              🔗 Compartilhar
+            </button>
+          ) : (
+            <button onClick={() => setShowShareLink(s => !s)} style={{ padding: '9px 20px', background: 'transparent', color: '#27500A', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+              🔗 Link ativo
+            </button>
+          )}
           <button onClick={() => {
             // Build Excel data
             const fmtDate = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}.${m}.${y}`; };
@@ -1780,6 +1815,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             📥 Export Excel
           </button>
         </div>
+
+        {showShareLink && offer.publicShareEnabled && (
+          <div style={{ marginTop: 10, padding: 12, background: '#f7f6f3', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <input readOnly value={getShareUrl()} onFocus={e => e.target.select()}
+              style={{ flex: 1, minWidth: 260, padding: '7px 10px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, fontFamily: 'monospace', background: '#fff' }} />
+            <button onClick={handleCopyShareLink} style={{ padding: '7px 14px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
+              {shareLinkCopied ? '✓ Copiado' : '📋 Copiar'}
+            </button>
+            <button onClick={handleDisableShare} style={{ padding: '7px 14px', background: 'transparent', color: '#7f1d1d', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>
+              Desativar
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
