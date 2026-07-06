@@ -188,13 +188,14 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
       .map(p => p.trim())
       .filter(p => p);
     if (plainParts.length > 3) return plainParts;
-    // Last resort: split on a day-marker that always starts a new paragraph — either the
-    // 📅 emoji style, or the "Nº DIA –" style (e.g. "2º DIA – 20/05/2027 – FRANKFURT").
-    // The (?<!\d) guard stops "10º DIA" from being mis-split between its two digits.
-    const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-])/i).map(p => p.trim()).filter(p => p);
+    // Last resort: split on a day-marker that always starts a new paragraph — the
+    // 📅 emoji style, the "Nº DIA –" style (e.g. "2º DIA – 20/05/2027 – FRANKFURT"), or the
+    // "DD Mmm (Wkday) -" style (e.g. "22 Jul (Qui) - EDIMBURGO"). The (?<!\d) guard stops
+    // two-digit days like "10º DIA" or "22 Jul" from being mis-split between their digits.
+    const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-]|(?<!\d)\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-)/i).map(p => p.trim()).filter(p => p);
     return dayParts.length > 0 ? dayParts : [html];
   })();
-  const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const versions = offer.pdfVersions || [];
 
   const loadHtml2Pdf = () => new Promise((resolve, reject) => {
