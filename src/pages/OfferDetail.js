@@ -1223,6 +1223,21 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             style={{ padding: '8px 18px', background: colors.accent, color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             ✉ Poslat poptávky hotelům
           </button>
+          <button onClick={() => {
+            const plainProgram = (offer.programText || '').replace(/<[^>]+>/g, '\n').replace(/\n{2,}/g, '\n').trim();
+            navigate('providers', {
+              prefill: {
+                groupName: offer.name || offer.clientName || '',
+                programText: plainProgram,
+                startDate: offer.startDate,
+                endDate: offer.endDate,
+                destinations: offer.destinations,
+              }
+            });
+          }}
+            style={{ padding: '8px 18px', background: colors.accent, color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            📨 Poslat poptávku dodavatelům
+          </button>
         </div>
         {parseError && <div style={{ fontSize: 12, color: colors.danger, marginTop: 8, whiteSpace: 'pre-line' }}>{parseError}</div>}
       </div>

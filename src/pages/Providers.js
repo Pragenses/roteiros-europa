@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { parseProviderText, aiFillProviderFree } from '../lib/ai';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { parseProviderText, aiFillProviderFree, translateToEnglish } from '../lib/ai';
 
 const PROVIDER_TYPES = [
   { value: 'hotel', label: 'Hotel', icon: '🏨' },
@@ -27,6 +27,21 @@ export default function Providers({ navigate, colors, navParams }) {
   const [parseLoading, setParseLoading] = useState(false);
   const [parseText, setParseText] = useState('');
   const formRef = useRef(null);
+
+  // Poptávka (compose/send inquiry email) — works for any provider type, standalone or
+  // prefilled from an Offer via navParams.prefill
+  const [tab, setTab] = useState(navParams?.prefill ? 'compose' : 'list');
+  const [composeSelected, setComposeSelected] = useState([]);
+  const [composeTypeFilter, setComposeTypeFilter] = useState('all');
+  const [senderFrom, setSenderFrom] = useState('grupos');
+  const [subject, setSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [translateEnabled, setTranslateEnabled] = useState(true);
+  const [translating, setTranslating] = useState(false);
+  const [originalProgramText, setOriginalProgramText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendProgress, setSendProgress] = useState('');
+  const [sendResult, setSendResult] = useState(null);
 
   const fetchData = useCallback(async () => {
     const [provSnap, ordSnap] = await Promise.all([
@@ -57,6 +72,21 @@ export default function Providers({ navigate, colors, navParams }) {
       }
     }
   }, [navParams, providers]);
+
+  useEffect(() => {
+    if (navParams?.prefill) {
+      const { groupName, programText, startDate, endDate, destinations } = navParams.prefill;
+      setTab('compose');
+      setSubject(`Group Transport Inquiry / ${groupName || ''}`);
+      setOriginalProgramText(programText || '');
+      const dateLine = startDate && endDate ? `Dates: ${startDate} - ${endDate}\n` : '';
+      const destLine = destinations ? `Destinations: ${destinations}\n` : '';
+      setEmailBody(
+        `Dear Sir/Madam,\n\nWe kindly request a quotation for the following group:\n\nGroup: ${groupName || ''}\n${dateLine}${destLine}\n` +
+        `Program:\n${programText || ''}\n\nPlease let us know your availability and rates.\n\nBest regards,\nTour Pragenses / Orbis Europa DMC`
+      );
+    }
+  }, [navParams]);
 
   const addContact = () => setContacts(c => [...c, { name: '', role: '', email: '', phone: '' }]);
   const removeContact = (i) => setContacts(c => c.filter((_, idx) => idx !== i));
@@ -170,6 +200,64 @@ export default function Providers({ navigate, colors, navParams }) {
 
   const toggleExpand = (id) => setExpanded(e => ({ ...e, [id]: !e[id] }));
 
+  const toggleComposeSelect = (id) => setComposeSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+
+  const handleTranslate = async () => {
+    if (!originalProgramText.trim()) { alert('Není k dispozici žádný program k překladu.'); return; }
+    setTranslating(true);
+    try {
+      const translated = await translateToEnglish(originalProgramText);
+      setEmailBody(body => body.replace(originalProgramText, translated));
+      setOriginalProgramText(translated); // subsequent clicks won't re-translate already-translated text
+    } catch (err) {
+      alert('Překlad selhal: ' + err.message);
+    }
+    setTranslating(false);
+  };
+
+  const composeProviders = providers.filter(p => composeTypeFilter === 'all' || p.type === composeTypeFilter);
+
+  const handleSendInquiry = async () => {
+    if (!composeSelected.length) { alert('Vyber alespoň jednoho dodavatele.'); return; }
+    setSending(true);
+    setSendResult(null);
+    const sel = providers.filter(p => composeSelected.includes(p.id));
+    const recipients = [];
+    sel.forEach(p => (p.contacts || []).forEach(c => { if (c.email) recipients.push({ email: c.email, name: c.name || p.name, providerId: p.id, providerName: p.name }); }));
+    if (!recipients.length) { alert('Vybraní dodavatelé nemají žádný email v kontaktech.'); setSending(false); return; }
+    setSendProgress(`Odesílám ${recipients.length} emailů...`);
+    let sent = 0, failed = 0;
+    try {
+      const res = await fetch('https://tour-pragenses.com/mailer.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipients: recipients.map(r => ({ email: r.email, name: r.name })), subject, body: emailBody, from: senderFrom }),
+      });
+      const data = await res.json();
+      if (data.results) {
+        for (let i = 0; i < data.results.length; i++) {
+          const r = recipients[i];
+          if (data.results[i].ok) {
+            await addDoc(collection(db, 'providerEmailLog'), {
+              providerId: r.providerId, providerName: r.providerName, email: r.email,
+              subject, sentAt: serverTimestamp(), status: 'sent',
+            });
+            sent++;
+          } else { failed++; }
+        }
+      } else if (data.error) {
+        alert('Chyba: ' + data.error);
+        failed = recipients.length;
+      }
+    } catch (err) {
+      alert('Odeslání selhalo: ' + err.message);
+      failed = recipients.length;
+    }
+    setSendResult({ sent, failed });
+    setSending(false);
+    setSendProgress('');
+  };
+
   // Find bookings (orders) that use this provider by exact name match (case-insensitive)
   const getBookingsFor = (provider) => {
     const results = [];
@@ -220,6 +308,19 @@ export default function Providers({ navigate, colors, navParams }) {
         </button>
       </div>
 
+      <div style={{ display: 'flex', gap: 8, marginBottom: '1.25rem' }}>
+        <button onClick={() => setTab('list')}
+          style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${colors.border}`, background: tab === 'list' ? colors.primary : 'transparent', color: tab === 'list' ? colors.white : colors.muted, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+          📋 Databáze
+        </button>
+        <button onClick={() => setTab('compose')}
+          style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${colors.border}`, background: tab === 'compose' ? colors.primary : 'transparent', color: tab === 'compose' ? colors.white : colors.muted, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+          📨 Poptávka
+        </button>
+      </div>
+
+      {tab === 'list' && (
+      <>
       <div style={{ display: 'flex', gap: 10, marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="text" placeholder="Search by name or city..." defaultValue={search} onChange={e => setSearch(e.target.value)}
           style={{ padding: '7px 12px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'Georgia, serif', width: 220 }} />
@@ -420,6 +521,92 @@ export default function Providers({ navigate, colors, navParams }) {
           </div>
         )
       }
+      </>
+      )}
+
+      {tab === 'compose' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: '1.5rem', alignItems: 'start' }}>
+          <div>
+            <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
+              <h3 style={{ margin: '0 0 12px', fontSize: 15, color: colors.primary, fontWeight: 600 }}>Dodavatelé ({composeSelected.length} vybráno)</h3>
+              <select value={composeTypeFilter} onChange={e => setComposeTypeFilter(e.target.value)} style={{ ...iStyle, marginBottom: 8 }}>
+                <option value="all">Všechny typy</option>
+                {PROVIDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
+              </select>
+              <div style={{ maxHeight: 340, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: 6 }}>
+                {composeProviders.map(p => (
+                  <label key={p.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', cursor: 'pointer', borderBottom: `1px solid ${colors.border}`, background: composeSelected.includes(p.id) ? '#f0f7ff' : '#fff' }}>
+                    <input type="checkbox" checked={composeSelected.includes(p.id)} onChange={() => toggleComposeSelect(p.id)} style={{ marginTop: 2 }} />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 11, color: colors.muted }}>
+                        {PROVIDER_TYPES.find(t => t.value === p.type)?.icon} {p.city} · {(p.contacts || []).map(c => c.email).filter(Boolean).join(', ') || 'bez emailu'}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+                {composeProviders.length === 0 && <p style={{ padding: 12, color: colors.muted, fontSize: 12 }}>Žádní dodavatelé.</p>}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={() => setComposeSelected(composeProviders.filter(p => (p.contacts||[]).some(c=>c.email)).map(p => p.id))} style={{ fontSize: 11, color: colors.primary, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>Vybrat vše</button>
+                <button onClick={() => setComposeSelected([])} style={{ fontSize: 11, color: colors.muted, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>Odznačit</button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 15, color: colors.primary, fontWeight: 600 }}>Email</h3>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>Odesílat z</label>
+              <select value={senderFrom} onChange={e => setSenderFrom(e.target.value)} style={iStyle}>
+                <option value="grupos">grupos@tour-pragenses.com</option>
+                <option value="reservas3">reservas3@tour-pragenses.com</option>
+                <option value="info">info@tour-pragenses.com</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>Předmět</label>
+              <input value={subject} onChange={e => setSubject(e.target.value)} style={iStyle} />
+            </div>
+            {originalProgramText && (
+              <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10, background: '#f7f6f3', padding: '8px 10px', borderRadius: 6 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={translateEnabled} onChange={e => setTranslateEnabled(e.target.checked)} />
+                  Přeložit program do angličtiny
+                </label>
+                <button onClick={handleTranslate} disabled={!translateEnabled || translating}
+                  style={{ fontSize: 11, padding: '4px 10px', background: translateEnabled ? colors.primary : colors.border, color: '#fff', border: 'none', borderRadius: 5, cursor: translateEnabled ? 'pointer' : 'default' }}>
+                  {translating ? 'Překládám…' : '🌐 Přeložit teď'}
+                </button>
+              </div>
+            )}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, color: colors.muted, display: 'block', marginBottom: 3 }}>Text emailu</label>
+              <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} rows={16} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
+            </div>
+            {composeSelected.length > 0 && (
+              <div style={{ background: '#f7f6f3', borderRadius: 6, padding: '10px 14px', marginBottom: 12, fontSize: 13 }}>
+                <strong>Vybráno ({composeSelected.length}):</strong>
+                <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                  {providers.filter(p => composeSelected.includes(p.id)).map(p => (
+                    <li key={p.id} style={{ fontSize: 12 }}>{p.name} <span style={{ color: colors.muted }}>· {(p.contacts||[]).map(c=>c.email).filter(Boolean).join(', ')}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <button onClick={handleSendInquiry} disabled={!composeSelected.length || sending}
+              style={{ padding: '10px 24px', background: composeSelected.length && !sending ? colors.primary : colors.border, color: composeSelected.length && !sending ? '#fff' : colors.muted, border: 'none', borderRadius: 7, fontSize: 15, cursor: composeSelected.length && !sending ? 'pointer' : 'default', fontFamily: 'inherit' }}>
+              {sending ? sendProgress || 'Připravuji…' : `✉ Odeslat na ${composeSelected.length} dodavatel${composeSelected.length === 1 ? 'e' : composeSelected.length < 5 && composeSelected.length > 0 ? 'e' : 'ů'}`}
+            </button>
+            {sendResult && (
+              <div style={{ marginTop: 12, padding: '10px 14px', background: sendResult.failed ? '#fff3e0' : '#e8f5e9', borderRadius: 6, fontSize: 13 }}>
+                {sendResult.sent > 0 && <div style={{ color: colors.success || '#2d6a4f' }}>✓ Odesláno: <strong>{sendResult.sent}</strong> emailů</div>}
+                {sendResult.failed > 0 && <div style={{ color: '#854f0b', marginTop: 4 }}>⚠ Nepodařilo se: <strong>{sendResult.failed}</strong> emailů</div>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

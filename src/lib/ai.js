@@ -96,6 +96,14 @@ export async function parseClientText(text) {
   return callClaude(prompt, false);
 }
 
+// Translate free text (e.g. a Portuguese itinerary) into plain English, for inclusion in
+// supplier inquiry emails. No web search needed - straightforward translation task.
+export async function translateToEnglish(text) {
+  const prompt = `Translate the following travel itinerary / group program text into clear, natural English suitable for sending to a European transport company or supplier. Keep place names, dates and proper nouns accurate. Return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON, in the form {"translated": "..."} where the value is the full translated text.\n\nTEXT TO TRANSLATE:\n${text}`;
+  const result = await callClaude(prompt, false);
+  return result.translated || '';
+}
+
 async function getGeminiKey() {
   const snap = await getDoc(doc(db, 'settings', 'apiKeys'));
   return snap.exists() ? (snap.data().geminiKey || '') : '';
