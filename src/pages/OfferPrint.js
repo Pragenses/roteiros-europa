@@ -324,7 +324,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   // Helper to create a full A4 page with header/footer
   const Page = ({ children }) => (
-    <div className="op-page" style={{ ...PAGE, minHeight: '297mm', position: 'relative', overflow: 'hidden' }}>
+    <div className="op-page" style={{ ...PAGE, height: '297mm', position: 'relative', overflow: 'hidden' }}>
       <ScreenWatermark />
       <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
       <div style={CONTENT_STYLE}>
@@ -476,7 +476,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
       {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
       {roteiroParagraphs.length > 0 && (() => {
-        const CHUNK = 25;
+        const CHUNK = PARAS_PER_PAGE;
         const pages = [];
         for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
           pages.push(roteiroParagraphs.slice(i, i + CHUNK));
