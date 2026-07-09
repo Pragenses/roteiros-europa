@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { translateToEnglish } from '../lib/ai';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // TLD deliberately restricted to lowercase letters only: when busCompany entries are pasted with
@@ -133,6 +134,19 @@ export default function Bus({ navigate, colors, navParams }) {
   const [checkOut, setCheckOut]       = useState(prefill?.endDate || '');
   const [freeRatio, setFreeRatio]     = useState('20');
   const [programText, setProgramText] = useState(prefill?.programText || '');
+  const [translating, setTranslating] = useState(false);
+
+  const handleTranslate = async () => {
+    if (!programText.trim()) { alert('Není k dispozici žádný program k překladu.'); return; }
+    setTranslating(true);
+    try {
+      const translated = await translateToEnglish(programText);
+      setProgramText(translated);
+    } catch (err) {
+      alert('Překlad selhal: ' + err.message);
+    }
+    setTranslating(false);
+  };
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [editMode, setEditMode]       = useState('visual'); // 'visual' or 'code'
 
@@ -579,6 +593,12 @@ export default function Bus({ navigate, colors, navParams }) {
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={{ fontSize: 11, color: C.muted }}>Text emailu</label>
+                {programText && (
+                  <button onClick={handleTranslate} disabled={translating}
+                    style={{ fontSize: 11, padding: '3px 10px', background: translating ? C.border : C.primary, color: '#fff', border: 'none', borderRadius: 5, cursor: translating ? 'default' : 'pointer' }}>
+                    {translating ? '⏳ Překládám…' : '🌐 Přeložit program do AJ'}
+                  </button>
+                )}
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button onClick={() => setEditMode('visual')}
                     style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: `1px solid ${C.border}`, background: editMode === 'visual' ? C.primary : 'transparent', color: editMode === 'visual' ? '#fff' : C.muted, cursor: 'pointer' }}>
