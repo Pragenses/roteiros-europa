@@ -137,13 +137,17 @@ export default function Bus({ navigate, colors, navParams }) {
   const [translating, setTranslating] = useState(false);
 
   const handleTranslate = async () => {
-    if (!programText.trim()) { alert('Není k dispozici žádný program k překladu.'); return; }
+    console.log('handleTranslate called, programText length:', programText.length, 'first 100:', programText.slice(0, 100));
+    if (!programText.trim()) { alert('Není k dispozici žádný program k překladu. Přijdi sem přes tlačítko "Poslat poptávku bus" z nabídky.'); return; }
     setTranslating(true);
     try {
       const translated = await translateToEnglish(programText);
+      console.log('translated length:', translated.length, 'first 100:', translated.slice(0, 100));
+      if (!translated) throw new Error('Překlad vrátil prázdný výsledek');
       setProgramText(translated);
     } catch (err) {
-      alert('Překlad selhal: ' + err.message);
+      console.error('Translation error:', err);
+      alert('Překlad selhal: ' + (err.message || JSON.stringify(err)));
     }
     setTranslating(false);
   };
