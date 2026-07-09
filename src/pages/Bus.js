@@ -593,12 +593,6 @@ export default function Bus({ navigate, colors, navParams }) {
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={{ fontSize: 11, color: C.muted }}>Text emailu</label>
-                {programText && (
-                  <button onClick={handleTranslate} disabled={translating}
-                    style={{ fontSize: 11, padding: '3px 10px', background: translating ? C.border : C.primary, color: '#fff', border: 'none', borderRadius: 5, cursor: translating ? 'default' : 'pointer' }}>
-                    {translating ? '⏳ Překládám…' : '🌐 Přeložit program do AJ'}
-                  </button>
-                )}
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button onClick={() => setEditMode('visual')}
                     style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: `1px solid ${C.border}`, background: editMode === 'visual' ? C.primary : 'transparent', color: editMode === 'visual' ? '#fff' : C.muted, cursor: 'pointer' }}>
@@ -610,6 +604,15 @@ export default function Bus({ navigate, colors, navParams }) {
                   </button>
                 </div>
               </div>
+              {programText && (
+                <div style={{ background: '#f0f7ff', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 12, color: C.primary }}>Program je v původním jazyce.</span>
+                  <button onClick={handleTranslate} disabled={translating}
+                    style={{ padding: '5px 14px', background: translating ? C.border : C.primary, color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: translating ? 'default' : 'pointer', fontWeight: 500 }}>
+                    {translating ? '⏳ Překládám…' : '🌐 Přeložit do angličtiny'}
+                  </button>
+                </div>
+              )}
               {editMode === 'visual' ? (
                 <textarea
                   value={htmlToPlain(emailBody).replace('{{program}}', programText || '[PROGRAM]').replace('{{groupName}}', groupName || '').replace('{{checkIn}}', checkIn || '').replace('{{checkOut}}', checkOut || '')}
