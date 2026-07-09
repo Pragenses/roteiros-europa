@@ -483,13 +483,23 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
+      {/* PAGE 4+ — Roteiro split into pages by character count to prevent overflow */}
       {roteiroParagraphs.length > 0 && (() => {
-        const CHUNK = PARAS_PER_PAGE;
+        const MAX_CHARS = 1800;
         const pages = [];
-        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
-          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
+        let currentPage = [];
+        let currentChars = 0;
+        for (const para of roteiroParagraphs) {
+          const paraLen = para.replace(/<[^>]+>/g, '').length;
+          if (currentChars + paraLen > MAX_CHARS && currentPage.length > 0) {
+            pages.push(currentPage);
+            currentPage = [];
+            currentChars = 0;
+          }
+          currentPage.push(para);
+          currentChars += paraLen;
         }
+        if (currentPage.length > 0) pages.push(currentPage);
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
