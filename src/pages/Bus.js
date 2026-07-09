@@ -147,7 +147,7 @@ export default function Bus({ navigate, colors, navParams }) {
     .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '$1')
     .replace(/<b[^>]*>(.*?)<\/b>/gi, '$1')
     .replace(/<span[^>]*>(.*?)<\/span>/gi, '$1')
-    .replace(/<div[^>]*>(.*?)<\/div>/gi, '$1\n')
+    .replace(/<div[^>]*>/gi, '').replace(/<\/div>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
