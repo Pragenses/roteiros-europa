@@ -486,10 +486,32 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
       {/* PAGE 4+ — Roteiro split into pages by character count to prevent overflow */}
       {roteiroParagraphs.length > 0 && (() => {
         const MAX_CHARS = 1800;
+        // First, ensure no single paragraph exceeds MAX_CHARS — split oversized ones by sentence
+        const splitParas = [];
+        for (const para of roteiroParagraphs) {
+          const plain = para.replace(/<[^>]+>/g, '');
+          if (plain.length <= MAX_CHARS) {
+            splitParas.push(para);
+          } else {
+            // Split by sentence boundaries
+            const sentences = para.split(/(?<=[.!?])\s+/);
+            let chunk = '';
+            for (const s of sentences) {
+              if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
+                splitParas.push(chunk.trim());
+                chunk = s + ' ';
+              } else {
+                chunk += s + ' ';
+              }
+            }
+            if (chunk.trim()) splitParas.push(chunk.trim());
+          }
+        }
+        // Then group into pages
         const pages = [];
         let currentPage = [];
         let currentChars = 0;
-        for (const para of roteiroParagraphs) {
+        for (const para of splitParas) {
           const paraLen = para.replace(/<[^>]+>/g, '').length;
           if (currentChars + paraLen > MAX_CHARS && currentPage.length > 0) {
             pages.push(currentPage);
