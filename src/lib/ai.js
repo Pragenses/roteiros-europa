@@ -99,9 +99,17 @@ export async function parseClientText(text) {
 // Translate free text (e.g. a Portuguese itinerary) into plain English, for inclusion in
 // supplier inquiry emails. No web search needed - straightforward translation task.
 export async function translateToEnglish(text) {
-  const prompt = `Translate the following travel itinerary / group program text into clear, natural English suitable for sending to a European transport company or supplier. Keep place names, dates and proper nouns accurate. Return ONLY a valid JSON object, absolutely no markdown, no explanation, no code blocks - just the raw JSON, in the form {"translated": "..."} where the value is the full translated text.\n\nTEXT TO TRANSLATE:\n${text}`;
-  const result = await callClaude(prompt, false);
-  return result.translated || '';
+  const apiKey = await getApiKey();
+  if (!apiKey) throw new Error('No Anthropic API key configured. Go to Settings to add one.');
+  const prompt = `Translate the following travel itinerary / group program text into clear, natural English suitable for sending to a European transport company or supplier. Keep place names, dates and proper nouns accurate. Return ONLY the translated text, no explanations, no JSON, no markdown — just the plain translated text.\n\nTEXT TO TRANSLATE:\n${text}`;
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 8000, messages: [{ role: 'user', content: prompt }] })
+  });
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message || 'API error');
+  return (data.content || []).map(b => b.text || '').join('').trim();
 }
 
 async function getGeminiKey() {
