@@ -216,7 +216,13 @@ export default function Bus({ navigate, colors, navParams }) {
     .replace(/{{checkOut}}/g, checkOut||'[DATE TO]')
     .replace(/{{freeRatio}}/g, freeRatio||'20')
     .replace(/{{program}}/g, programText
-      ? programText.split('\n').filter(l => l.trim()).map(l => `<p style="margin:4px 0">${l.trim()}</p>`).join('')
+      ? programText.split('\n').filter(l => l.trim()).map(l => {
+          const line = l.trim();
+          const isDay = /^\d{1,2}[°º]\s*DIA\s*[–-]|^\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-|^📅/.test(line);
+          return isDay
+            ? `<p style="margin:8px 0 2px 0"><strong style="background-color:#FFD700;padding:2px 6px">${line}</strong></p>`
+            : `<p style="margin:2px 0 4px 0">${line}</p>`;
+        }).join('')
       : '[PROGRAM TO BE ADDED]');
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
