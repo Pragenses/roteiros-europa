@@ -149,6 +149,35 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [checkOut, setCheckOut]       = useState('');
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
+  const [editMode, setEditMode]       = useState('visual');
+
+  const htmlToPlain = (html) => html
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<ul[^>]*>|<\/ul>|<ol[^>]*>|<\/ol>/gi, '')
+    .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '$1')
+    .replace(/<b[^>]*>(.*?)<\/b>/gi, '$1')
+    .replace(/<span[^>]*>(.*?)<\/span>/gi, '$1')
+    .replace(/<div[^>]*>(.*?)<\/div>/gi, '$1\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const plainToHtml = (text) => {
+    const lines = text.split('\n');
+    return '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">' +
+      lines.map(l => {
+        const line = l.trim();
+        if (!line) return '';
+        if (line.startsWith('• ')) return '<li>' + line.slice(2) + '</li>';
+        return '<p style="margin:4px 0">' + line + '</p>';
+      }).filter(Boolean).join('') +
+    '</div>';
+  };
   const [subject, setSubject]         = useState('Group Accommodation Request');
   const [senderFrom, setSenderFrom]   = useState('grupos');
   React.useEffect(() => {
@@ -550,8 +579,30 @@ export default function Hotels({ navigate, colors, navParams }) {
               <input value={subject} onChange={e => setSubject(e.target.value)} style={inp()} />
             </div>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Text emailu</label>
-              <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} rows={16} style={{ ...inp(), resize: 'vertical', lineHeight: 1.6 }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={{ fontSize: 11, color: C.muted }}>Text emailu</label>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button onClick={() => setEditMode('visual')}
+                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: `1px solid ${C.border}`, background: editMode === 'visual' ? C.primary : 'transparent', color: editMode === 'visual' ? '#fff' : C.muted, cursor: 'pointer' }}>
+                    ✏️ Upravit
+                  </button>
+                  <button onClick={() => setEditMode('code')}
+                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: `1px solid ${C.border}`, background: editMode === 'code' ? C.primary : 'transparent', color: editMode === 'code' ? '#fff' : C.muted, cursor: 'pointer' }}>
+                    &lt;/&gt; HTML
+                  </button>
+                </div>
+              </div>
+              {editMode === 'visual' ? (
+                <textarea
+                  value={htmlToPlain(emailBody)}
+                  onChange={e => setEmailBody(plainToHtml(e.target.value))}
+                  rows={16}
+                  style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
+                  placeholder="Napiš nebo uprav text emailu..."
+                />
+              ) : (
+                <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} rows={16} style={{ ...inp(), resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace', fontSize: 11 }} />
+              )}
             </div>
             <details style={{ marginBottom: 12 }}>
               <summary style={{ fontSize: 12, color: C.primary, cursor: 'pointer' }}>Náhled s doplněnými údaji</summary>
