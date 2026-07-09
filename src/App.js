@@ -26,6 +26,7 @@ import OfferPrint from './pages/OfferPrint';
 import Providers from './pages/Providers';
 import Calendar from './pages/Calendar';
 import Hotels from './pages/Hotels';
+import Bus from './pages/Bus';
 import Declined from './pages/Declined';
 import History from './pages/History';
 import Settings from './pages/Settings';
@@ -52,6 +53,7 @@ const NAV = [
   { id: 'offers', label: 'Offers', icon: '◫' },
   { id: 'providers', label: 'Providers', icon: '◎' },
   { id: 'hotels',    label: 'Hotels',    icon: '🏨' },
+  { id: 'bus',       label: 'Bus',       icon: '🚌' },
   { id: 'declined',  label: 'Declined',  icon: '✕' },
   { id: 'history',   label: 'History',   icon: '🕐' },
   { id: 'settings',  label: 'Settings',  icon: '⚙' },
@@ -180,6 +182,7 @@ export default function App() {
     if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
     if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} navParams={navParams} />;
+    if (page === 'bus')       return <Bus navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
     if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
     if (page === 'settings')  return <Settings colors={COLORS} />;

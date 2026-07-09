@@ -1225,6 +1225,20 @@ export default function OfferDetail({ offerId, navigate, colors }) {
           </button>
           <button onClick={() => {
             const plainProgram = (offer.programText || '').replace(/<[^>]+>/g, '\n').replace(/\n{2,}/g, '\n').trim();
+            navigate('bus', {
+              prefill: {
+                groupName: offer.name || offer.clientName || '',
+                programText: plainProgram,
+                startDate: offer.startDate,
+                endDate: offer.endDate,
+              }
+            });
+          }}
+            style={{ padding: '8px 18px', background: colors.accent, color: '#fff', border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            🚌 Poslat poptávku bus
+          </button>
+          <button onClick={() => {
+            const plainProgram = (offer.programText || '').replace(/<[^>]+>/g, '\n').replace(/\n{2,}/g, '\n').trim();
             navigate('providers', {
               prefill: {
                 groupName: offer.name || offer.clientName || '',
