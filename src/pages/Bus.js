@@ -193,6 +193,12 @@ export default function Bus({ navigate, colors, navParams }) {
     if (composeCity) s += ' / ' + composeCity;
     setSubject(s);
   }, [groupName, composeCity]);
+
+  React.useEffect(() => {
+    if (navParams?.prefill?.programText) {
+      setProgramText(navParams.prefill.programText);
+    }
+  }, [navParams]);
   const [sendResult, setSendResult]   = useState(null);
   const [sending, setSending]           = useState(false);
   const [sendProgress, setSendProgress] = useState('');
