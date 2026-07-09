@@ -592,7 +592,7 @@ export default function Bus({ navigate, colors, navParams }) {
               </div>
               {editMode === 'visual' ? (
                 <textarea
-                  value={htmlToPlain(emailBody)}
+                  value={htmlToPlain(emailBody).replace('{{program}}', programText || '[PROGRAM]').replace('{{groupName}}', groupName || '').replace('{{checkIn}}', checkIn || '').replace('{{checkOut}}', checkOut || '')}
                   onChange={e => setEmailBody(plainToHtml(e.target.value))}
                   rows={16}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
