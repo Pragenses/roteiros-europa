@@ -324,7 +324,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   // Helper to create a full A4 page with header/footer
   const Page = ({ children }) => (
-    <div className="op-page" style={{ ...PAGE, height: '297mm', position: 'relative', overflow: 'hidden' }}>
+    <div className="op-page" style={{ ...PAGE, minHeight: '297mm', position: 'relative', overflow: 'hidden' }}>
       <ScreenWatermark />
       <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
       <div style={CONTENT_STYLE}>
@@ -336,7 +336,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   );
 
   // Split roteiro paragraphs into chunks that fit on a page (~25 paragraphs per page)
-  const PARAS_PER_PAGE = 20;
+  const PARAS_PER_PAGE = 8;
   const roteiroParagraphs = programParagraphs;
   const roteiroPagesCount = Math.ceil(roteiroParagraphs.length / PARAS_PER_PAGE);
   const roteiroPages = Array.from({ length: roteiroPagesCount }, (_, i) =>
@@ -345,20 +345,29 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   return (
     <div>
+      {/* Fixed header/footer elements — visible only when printing, appear on every physical page */}
+      <div className="op-print-header" style={{ display: 'none' }}><Header /></div>
+      <div className="op-print-footer" style={{ display: 'none' }}><Footer /></div>
       <style>{`
         @media print {
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
           .app-main { padding: 0 !important; background: white !important; }
-          @page { size: A4; margin: 0; }
+          @page { size: A4; margin: 16mm 14mm 20mm 14mm; }
           .op-page { page-break-after: always; }
           .op-page:last-child { page-break-after: auto; }
           .op-avoid-break { page-break-inside: avoid; }
-          .op-watermark-print {
-            display: none !important;
-          }
+          .op-watermark-print { display: none !important; }
+          .op-print-header { display: block !important; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
+          .op-print-footer { display: block !important; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; }
+          .op-header-spacer { display: block !important; }
+          .op-footer-spacer { display: block !important; }
         }
         @media screen {
+          .op-print-header { display: none !important; }
+          .op-print-footer { display: none !important; }
+          .op-header-spacer { display: none !important; }
+          .op-footer-spacer { display: none !important; }
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
         }
       `}</style>
