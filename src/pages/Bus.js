@@ -215,7 +215,9 @@ export default function Bus({ navigate, colors, navParams }) {
     .replace(/{{checkIn}}/g, checkIn||'[DATE FROM]')
     .replace(/{{checkOut}}/g, checkOut||'[DATE TO]')
     .replace(/{{freeRatio}}/g, freeRatio||'20')
-    .replace(/{{program}}/g, programText||'[PROGRAM TO BE ADDED]');
+    .replace(/{{program}}/g, programText
+      ? programText.split('\n').filter(l => l.trim()).map(l => `<p style="margin:4px 0">${l.trim()}</p>`).join('')
+      : '[PROGRAM TO BE ADDED]');
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
