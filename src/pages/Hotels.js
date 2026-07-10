@@ -151,7 +151,10 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [editMode, setEditMode]       = useState('visual');
 
-  const htmlToPlain = (html) => html
+  const htmlToPlain = (html) => {
+    // If stored as plain text (during editing), return as-is
+    if (html.startsWith('<PLAIN>')) return html.slice(7, -8);
+    return html
     .replace(/<p[^>]*>/gi, '')
     .replace(/<\/p>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -166,6 +169,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  };
 
   const plainToHtml = (text) => {
     const lines = text.split('\n');
@@ -254,7 +258,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     fetchHotels();
   };
 
-  const buildBody = () => emailBody
+  const buildBody = () => (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody)
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, checkIn||'[CHECK-IN]')
     .replace(/{{checkOut}}/g, checkOut||'[CHECK-OUT]')
@@ -595,7 +599,10 @@ export default function Hotels({ navigate, colors, navParams }) {
               {editMode === 'visual' ? (
                 <textarea
                   value={htmlToPlain(emailBody)}
-                  onChange={e => setEmailBody(plainToHtml(e.target.value))}
+                  onChange={e => {
+                    const plain = e.target.value;
+                    setEmailBody('<PLAIN>' + plain + '</PLAIN>');
+                  }}
                   rows={30}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
                   placeholder="Napiš nebo uprav text emailu..."

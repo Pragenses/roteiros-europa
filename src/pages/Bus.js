@@ -155,7 +155,10 @@ export default function Bus({ navigate, colors, navParams }) {
   const [editMode, setEditMode]       = useState('visual'); // 'visual' or 'code'
 
   // Convert HTML email body to plain editable text (strip tags, preserve structure)
-  const htmlToPlain = (html) => html
+  const htmlToPlain = (html) => {
+    // If stored as plain text (during editing), return as-is
+    if (html.startsWith('<PLAIN>')) return html.slice(7, -8);
+    return html
     .replace(/<p[^>]*>/gi, '')
     .replace(/<\/p>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -170,6 +173,7 @@ export default function Bus({ navigate, colors, navParams }) {
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  };
 
   // Convert plain text back to HTML for sending
   const plainToHtml = (text) => {
@@ -267,7 +271,7 @@ export default function Bus({ navigate, colors, navParams }) {
     fetchBus();
   };
 
-  const buildBody = () => emailBody
+  const buildBody = () => (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody)
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, checkIn||'[DATE FROM]')
     .replace(/{{checkOut}}/g, checkOut||'[DATE TO]')
@@ -631,7 +635,11 @@ export default function Bus({ navigate, colors, navParams }) {
               {editMode === 'visual' ? (
                 <textarea
                   value={htmlToPlain(emailBody).replace('{{program}}', programText || '[PROGRAM]').replace('{{groupName}}', groupName || '').replace('{{checkIn}}', checkIn || '').replace('{{checkOut}}', checkOut || '')}
-                  onChange={e => setEmailBody(plainToHtml(e.target.value))}
+                  onChange={e => {
+                    // Store as plain text while editing, only convert on send
+                    const plain = e.target.value;
+                    setEmailBody('<PLAIN>' + plain + '</PLAIN>');
+                  }}
                   rows={30}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
                   placeholder="Napiš nebo uprav text emailu..."
