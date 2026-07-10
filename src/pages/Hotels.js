@@ -596,7 +596,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                 <textarea
                   value={htmlToPlain(emailBody)}
                   onChange={e => setEmailBody(plainToHtml(e.target.value))}
-                  rows={16}
+                  rows={30}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
                   placeholder="Napiš nebo uprav text emailu..."
                 />
