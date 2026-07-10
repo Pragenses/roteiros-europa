@@ -312,10 +312,10 @@ export default function Bus({ navigate, colors, navParams }) {
       });
       const data = await res.json();
       if (data.results) {
-        for (let i = 0; i < data.results.length; i++) {
+        for (let i = 0; i < sel.length; i++) {
           const h = sel[i];
           setSendProgress(`Zaznamenávám ${i+1}/${sel.length}`);
-          if (data.results[i].ok) {
+          if (data.results[i] && data.results[i].ok) {
             await addDoc(collection(db, 'busEmailLog'), {
               busCompanyId: h.id, busCompanyName: h.name||h.email, busCompanyCity: h.city,
               email: h.email, subject, groupName, checkIn, checkOut,
@@ -323,6 +323,9 @@ export default function Bus({ navigate, colors, navParams }) {
             });
             sent++;
           } else { failed++; }
+        }
+        if (extraEmail.trim() && data.results[sel.length]) {
+          if (data.results[sel.length].ok) sent++; else failed++;
         }
       } else { alert('Chyba: ' + JSON.stringify(data)); failed = sel.length; }
     } catch (e) {
