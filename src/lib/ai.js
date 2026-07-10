@@ -101,15 +101,40 @@ export async function parseClientText(text) {
 export async function translateToEnglish(text) {
   const apiKey = await getApiKey();
   if (!apiKey) throw new Error('No Anthropic API key configured. Go to Settings to add one.');
-  const prompt = `Translate the following travel itinerary / group program text into clear, natural English suitable for sending to a European transport company or supplier. Keep place names, dates and proper nouns accurate. Return ONLY the translated text, no explanations, no JSON, no markdown — just the plain translated text.\n\nTEXT TO TRANSLATE:\n${text}`;
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 8000, messages: [{ role: 'user', content: prompt }] })
-  });
-  const data = await response.json();
-  if (data.error) throw new Error(data.error.message || 'API error');
-  return (data.content || []).map(b => b.text || '').join('').trim();
+  
+  // Split very long texts into chunks of ~2000 chars at paragraph boundaries
+  const CHUNK_SIZE = 2000;
+  let chunks = [];
+  if (text.length > CHUNK_SIZE) {
+    const paragraphs = text.split('\n');
+    let current = '';
+    for (const para of paragraphs) {
+      if ((current + para).length > CHUNK_SIZE && current.length > 0) {
+        chunks.push(current.trim());
+        current = para + '\n';
+      } else {
+        current += para + '\n';
+      }
+    }
+    if (current.trim()) chunks.push(current.trim());
+  } else {
+    chunks = [text];
+  }
+
+  const translateChunk = async (chunk) => {
+    const prompt = `Translate the following travel itinerary text into clear, natural English for a European transport company. Keep place names, dates and proper nouns accurate. Return ONLY the translated text, no explanations.\n\nTEXT:\n${chunk}`;
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message || 'API error');
+    return (data.content || []).map(b => b.text || '').join('').trim();
+  };
+
+  const results = await Promise.all(chunks.map(translateChunk));
+  return results.join('\n\n');
 }
 
 async function getGeminiKey() {
