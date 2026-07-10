@@ -172,7 +172,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     return '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">' +
       lines.map(l => {
         const line = l.trim();
-        if (!line) return '';
+        if (!line) return '<p style="margin:6px 0">&nbsp;</p>';
         if (line.startsWith('• ')) return '<li>' + line.slice(2) + '</li>';
         return '<p style="margin:4px 0">' + line + '</p>';
       }).filter(Boolean).join('') +

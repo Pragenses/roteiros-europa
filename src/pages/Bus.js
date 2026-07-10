@@ -177,7 +177,7 @@ export default function Bus({ navigate, colors, navParams }) {
     return '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">' +
       lines.map(l => {
         const line = l.trim();
-        if (!line) return '';
+        if (!line) return '<p style="margin:6px 0">&nbsp;</p>';
         const isDay = /^(\d{1,2}[°º]\s*DIA\s*[–\u2013-]|DAY\s+\d{1,2}\s*[–\u2013:-]|\d{1,2}(st|nd|rd|th)?\s*DAY\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3,9}\s+\d{4}\s*[–\u2013:-]|[A-Za-zÀ-ÿ]{3,9}\s+\d{1,2}[,\s]+\d{4}\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3}\s+\([A-Za-zÀ-ÿ\xC0-\xFF]{3}\)\s*-|📅)/i.test(line);
         if (isDay) return '<p style="margin:8px 0 2px 0"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
         if (line.startsWith('• ')) return '<li>' + line.slice(2) + '</li>';
