@@ -6,7 +6,6 @@ import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc
 import coverBase64 from '../lib/coverBase64';
 import watermarkBase64 from '../lib/watermarkBase64';
 import logoBase64 from '../lib/logoBase64';
-import { generateOfferPDF } from '../lib/generateOfferPDF';
 
 const ASSETS = process.env.PUBLIC_URL + '/offer-assets';
 const SPLIT_CURRENCIES = ['CHF', 'GBP'];
@@ -27,7 +26,6 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const [showVersionDialog, setShowVersionDialog] = useState(false);
   const [versionLabel, setVersionLabel] = useState('');
   const [savingVersion, setSavingVersion] = useState(false);
-  const [downloading, setDownloading] = useState(false);
   const [versionError, setVersionError] = useState('');
 
   const fetchData = useCallback(async () => {
@@ -372,29 +370,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3', flexWrap: 'wrap' }}>
         {!isPublic && <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>}
-        <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir</button>
-        <button onClick={async () => {
-          setDownloading(true);
-          try {
-            const hotelItems = (offer.items || []).filter(it => it.type === 'per_pax' && it.subType === 'hotel');
-            await generateOfferPDF(
-              offer,
-              programParagraphs,
-              hotelItems,
-              null,
-              hasSplit,
-              hasSplit ? splitData : null,
-              includedLines,
-              notIncludedLines,
-              rates,
-            );
-          } catch (err) {
-            alert('Chyba při generování PDF: ' + err.message);
-          }
-          setDownloading(false);
-        }} disabled={downloading} style={{ padding: '8px 16px', background: '#854f0b', color: '#fff', border: 'none', borderRadius: 7, cursor: downloading ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
-          {downloading ? '⏳ Generuji...' : '⬇ Stáhnout PDF'}
-        </button>
+        <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir / Salvar PDF</button>
         {!isPublic && <button onClick={() => { setVersionLabel(''); setVersionError(''); setShowVersionDialog(true); }} style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>📌 Salvar versão (NR)</button>}
         {!isPublic && createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
