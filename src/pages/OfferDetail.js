@@ -3,6 +3,7 @@ import { db, auth, storage } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
+import PagedEditor from '../components/PagedEditor';
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -1698,13 +1699,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ✕ Limpar
           </button>
         </div>
-        <div
-          contentEditable
-          suppressContentEditableWarning
-          onBlur={e => handleHeaderChange('programText', e.currentTarget.innerHTML)}
-          dangerouslySetInnerHTML={{ __html: offer.programText || '' }}
-          data-placeholder="📅 07/04/2027 • QUARTA-FEIRA • DIA 1: BRASIL / LISBOA / BERLIM (AÉREO)&#10;Apresentação no aeroporto para embarque..."
-          style={{ ...iStyle, minHeight: 220, resize: 'vertical', fontFamily: 'Georgia, serif', lineHeight: 1.5, overflowY: 'auto', whiteSpace: 'pre-wrap' }}
+        <PagedEditor
+          value={offer.programText || ''}
+          onChange={(html) => handleHeaderChange('programText', html)}
+          colors={colors}
         />
         <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
