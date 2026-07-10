@@ -125,6 +125,7 @@ export default function Bus({ navigate, colors, navParams }) {
   const [parsed, setParsed]           = useState([]);
   const [importing, setImporting]     = useState(false);
   const [importDone, setImportDone]   = useState(null);
+  const visualEditorRef = React.useRef(null);
 
   const [selected, setSelected]       = useState([]);
   const [composeCity, setComposeCity] = useState('');
@@ -271,7 +272,12 @@ export default function Bus({ navigate, colors, navParams }) {
     fetchBus();
   };
 
-  const buildBody = () => (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody)
+  const buildBody = () => {
+    const currentText = editMode === 'visual' && visualEditorRef.current
+      ? visualEditorRef.current.value
+      : (emailBody.startsWith('<PLAIN>') ? emailBody.slice(7, -8) : null);
+    const base = currentText ? plainToHtml(currentText) : (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody);
+    return base
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, checkIn||'[DATE FROM]')
     .replace(/{{checkOut}}/g, checkOut||'[DATE TO]')
@@ -285,6 +291,7 @@ export default function Bus({ navigate, colors, navParams }) {
             : `<p style="margin:2px 0 4px 0">${line}</p>`;
         }).join('')
       : '[PROGRAM TO BE ADDED]');
+  };
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
@@ -634,12 +641,9 @@ export default function Bus({ navigate, colors, navParams }) {
               )}
               {editMode === 'visual' ? (
                 <textarea
-                  value={htmlToPlain(emailBody).replace('{{program}}', programText || '[PROGRAM]').replace('{{groupName}}', groupName || '').replace('{{checkIn}}', checkIn || '').replace('{{checkOut}}', checkOut || '')}
-                  onChange={e => {
-                    // Store as plain text while editing, only convert on send
-                    const plain = e.target.value;
-                    setEmailBody('<PLAIN>' + plain + '</PLAIN>');
-                  }}
+                  ref={visualEditorRef}
+                  key={emailBody.slice(0, 50) + programText.slice(0, 20)}
+                  defaultValue={htmlToPlain(emailBody).replace('{{program}}', programText || '[PROGRAM]').replace('{{groupName}}', groupName || '').replace('{{checkIn}}', checkIn || '').replace('{{checkOut}}', checkOut || '')}
                   rows={30}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
                   placeholder="Napiš nebo uprav text emailu..."

@@ -140,6 +140,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [parsed, setParsed]           = useState([]);
   const [importing, setImporting]     = useState(false);
   const [importDone, setImportDone]   = useState(null);
+  const visualEditorRef = React.useRef(null);
 
   const [selected, setSelected]       = useState([]);
   const [composeCity, setComposeCity] = useState('');
@@ -258,11 +259,17 @@ export default function Hotels({ navigate, colors, navParams }) {
     fetchHotels();
   };
 
-  const buildBody = () => (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody)
+  const buildBody = () => {
+    const currentText = editMode === 'visual' && visualEditorRef.current
+      ? visualEditorRef.current.value
+      : null;
+    const base = currentText ? plainToHtml(currentText) : (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody);
+    return base
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, checkIn||'[CHECK-IN]')
     .replace(/{{checkOut}}/g, checkOut||'[CHECK-OUT]')
     .replace(/{{freeRatio}}/g, freeRatio||'20');
+  };
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
@@ -598,11 +605,9 @@ export default function Hotels({ navigate, colors, navParams }) {
               </div>
               {editMode === 'visual' ? (
                 <textarea
-                  value={htmlToPlain(emailBody)}
-                  onChange={e => {
-                    const plain = e.target.value;
-                    setEmailBody('<PLAIN>' + plain + '</PLAIN>');
-                  }}
+                  ref={visualEditorRef}
+                  key={emailBody.slice(0, 50)}
+                  defaultValue={htmlToPlain(emailBody)}
                   rows={30}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
                   placeholder="Napiš nebo uprav text emailu..."
