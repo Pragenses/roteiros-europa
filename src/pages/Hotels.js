@@ -194,6 +194,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [sendResult, setSendResult]   = useState(null);
   const [sending, setSending]           = useState(false);
   const [sendProgress, setSendProgress] = useState('');
+  const [extraEmail, setExtraEmail]     = useState('');
 
   const [logs, setLogs]               = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -285,7 +286,7 @@ export default function Hotels({ navigate, colors, navParams }) {
       const res = await fetch('https://tour-pragenses.com/mailer.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipients: sel.map(h => ({ email: h.email, name: h.name||h.email })), subject, body, from: senderFrom }),
+        body: JSON.stringify({ recipients: [...sel.map(h => ({ email: h.email, name: h.name||h.email })), ...(extraEmail.trim() ? [{ email: extraEmail.trim(), name: 'Extra' }] : [])], subject, body, from: senderFrom }),
       });
       const data = await res.json();
       if (data.results) {
@@ -630,6 +631,11 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </ul>
               </div>
             )}
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Odeslat také na (volitelné — např. testovací adresa)</label>
+              <input type="email" value={extraEmail} onChange={e => setExtraEmail(e.target.value)}
+                placeholder="test@mail-tester.com" style={{ ...inp() }} />
+            </div>
             <button onClick={handleSend} disabled={!selected.length || sending} style={{ ...btn(selected.length && !sending ? C.primary : C.border, selected.length && !sending ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
               {sending ? sendProgress || 'Připravuji...' : `✉ Odeslat na ${selected.length} hotel${selected.length===1?'':selected.length<5?'y':'ů'}`}
             </button>
