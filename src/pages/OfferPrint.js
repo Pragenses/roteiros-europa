@@ -183,12 +183,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     if (htmlParts.length > 3) return htmlParts;
     // Fallback: plain text with \n (Safari/Firefox contentEditable or copy-pasted text)
     const stripped = html.replace(/<[^>]+>/g, '');
-    // Strip repeating page header/footer lines that appear when text is pasted from a PDF
-    // (company name, website, phone, email, legal footer). These are safe to remove
-    // because they don't contain itinerary content.
-    const HEADER_FOOTER_RE = /^(TOUR PRAGENSES|www\.tour-pragenses|Pragenses s\.r\.o\.|info@tour-pragenses|\+420|orbis europa|orbis-europa)/i;
-    const strippedClean = stripped.split('\n').filter(l => !HEADER_FOOTER_RE.test(l.trim())).join('\n');
-    const plainParts = strippedClean
+    const plainParts = stripped
       .split(/\n+/)
       .map(p => p.trim())
       .filter(p => p);
@@ -197,10 +192,10 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     // 📅 emoji style, the "Nº DIA –" style (e.g. "2º DIA – 20/05/2027 – FRANKFURT"), or the
     // "DD Mmm (Wkday) -" style (e.g. "22 Jul (Qui) - EDIMBURGO"). The (?<!\d) guard stops
     // two-digit days like "10º DIA" or "22 Jul" from being mis-split between their digits.
-    const dayParts = strippedClean.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-]|(?<!\d)\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-)/i).map(p => p.trim()).filter(p => p);
+    const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-]|(?<!\d)\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-)/i).map(p => p.trim()).filter(p => p);
     return dayParts.length > 0 ? dayParts : [html];
   })();
-  const createdDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const versions = offer.pdfVersions || [];
 
   const loadHtml2Pdf = () => new Promise((resolve, reject) => {
@@ -336,7 +331,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   );
 
   // Split roteiro paragraphs into chunks that fit on a page (~25 paragraphs per page)
-  const PARAS_PER_PAGE = 8;
+  const PARAS_PER_PAGE = 20;
   const roteiroParagraphs = programParagraphs;
   const roteiroPagesCount = Math.ceil(roteiroParagraphs.length / PARAS_PER_PAGE);
   const roteiroPages = Array.from({ length: roteiroPagesCount }, (_, i) =>
@@ -345,29 +340,20 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   return (
     <div>
-      {/* Fixed header/footer elements — visible only when printing, appear on every physical page */}
-      <div className="op-print-header" style={{ display: 'none' }}><Header /></div>
-      <div className="op-print-footer" style={{ display: 'none' }}><Footer /></div>
       <style>{`
         @media print {
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
           .app-main { padding: 0 !important; background: white !important; }
-          @page { size: A4; margin: 16mm 14mm 20mm 14mm; }
+          @page { size: A4; margin: 0; }
           .op-page { page-break-after: always; }
           .op-page:last-child { page-break-after: auto; }
           .op-avoid-break { page-break-inside: avoid; }
-          .op-watermark-print { display: none !important; }
-          .op-print-header { display: block !important; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
-          .op-print-footer { display: block !important; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; }
-          .op-header-spacer { display: block !important; }
-          .op-footer-spacer { display: block !important; }
+          .op-watermark-print {
+            display: none !important;
+          }
         }
         @media screen {
-          .op-print-header { display: none !important; }
-          .op-print-footer { display: none !important; }
-          .op-header-spacer { display: none !important; }
-          .op-footer-spacer { display: none !important; }
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
         }
       `}</style>
@@ -483,45 +469,13 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro split into pages by character count to prevent overflow */}
+      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
       {roteiroParagraphs.length > 0 && (() => {
-        const MAX_CHARS = 1800;
-        // First, ensure no single paragraph exceeds MAX_CHARS — split oversized ones by sentence
-        const splitParas = [];
-        for (const para of roteiroParagraphs) {
-          const plain = para.replace(/<[^>]+>/g, '');
-          if (plain.length <= MAX_CHARS) {
-            splitParas.push(para);
-          } else {
-            // Split by sentence boundaries
-            const sentences = para.split(/(?<=[.!?])\s+/);
-            let chunk = '';
-            for (const s of sentences) {
-              if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
-                splitParas.push(chunk.trim());
-                chunk = s + ' ';
-              } else {
-                chunk += s + ' ';
-              }
-            }
-            if (chunk.trim()) splitParas.push(chunk.trim());
-          }
-        }
-        // Then group into pages
+        const CHUNK = 25;
         const pages = [];
-        let currentPage = [];
-        let currentChars = 0;
-        for (const para of splitParas) {
-          const paraLen = para.replace(/<[^>]+>/g, '').length;
-          if (currentChars + paraLen > MAX_CHARS && currentPage.length > 0) {
-            pages.push(currentPage);
-            currentPage = [];
-            currentChars = 0;
-          }
-          currentPage.push(para);
-          currentChars += paraLen;
+        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
+          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
         }
-        if (currentPage.length > 0) pages.push(currentPage);
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
