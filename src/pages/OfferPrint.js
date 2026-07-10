@@ -470,7 +470,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
       {/* PAGE 4+ — Roteiro: character-based splitting to prevent overflow */}
       {roteiroParagraphs.length > 0 && (() => {
-        const MAX_CHARS = 2500;
+        const MAX_CHARS = 1800;
         // First split any oversized paragraph at sentence boundaries
         const splitParas = [];
         for (const para of roteiroParagraphs) {
@@ -509,7 +509,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
-            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: p }} />)}
+            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap', fontSize: 11 }} dangerouslySetInnerHTML={{ __html: p.replace(/font-size:[^;"]+[;"]/g, 'font-size:11px;') }} />)}
             {pageIdx === pages.length - 1 && (
               <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
                 <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
