@@ -469,13 +469,48 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
+      {/* PAGE 4+ — Roteiro split by character count to prevent overflow and missing header/footer */}
       {roteiroParagraphs.length > 0 && (() => {
-        const CHUNK = 25;
-        const pages = [];
-        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
-          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
+        const MAX_CHARS = 1800;
+
+        // Step 1: split any single oversized paragraph by sentence boundaries
+        const splitParas = [];
+        for (const para of roteiroParagraphs) {
+          const plain = para.replace(/<[^>]+>/g, '');
+          if (plain.length <= MAX_CHARS) {
+            splitParas.push(para);
+          } else {
+            // Split on sentence endings
+            const sentences = para.split(/(?<=[.!?])\s+/);
+            let chunk = '';
+            for (const s of sentences) {
+              if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
+                splitParas.push(chunk.trim());
+                chunk = s + ' ';
+              } else {
+                chunk += s + ' ';
+              }
+            }
+            if (chunk.trim()) splitParas.push(chunk.trim());
+          }
         }
+
+        // Step 2: group into pages by character count
+        const pages = [];
+        let currentPage = [];
+        let currentChars = 0;
+        for (const para of splitParas) {
+          const paraLen = para.replace(/<[^>]+>/g, '').length;
+          if (currentChars + paraLen > MAX_CHARS && currentPage.length > 0) {
+            pages.push(currentPage);
+            currentPage = [];
+            currentChars = 0;
+          }
+          currentPage.push(para);
+          currentChars += paraLen;
+        }
+        if (currentPage.length > 0) pages.push(currentPage);
+
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
