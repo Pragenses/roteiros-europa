@@ -616,7 +616,7 @@ export default function Bus({ navigate, colors, navParams }) {
               </div>
               {programText && (
                 <div style={{ background: '#f0f7ff', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 12, color: C.primary }}>Program ({programText.length} znaků)</span>
+                  <span style={{ fontSize: 12, color: C.primary }}>Program je v původním jazyce.</span>
                   <button onClick={handleTranslate} disabled={translating}
                     style={{ padding: '5px 14px', background: translating ? C.border : C.primary, color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: translating ? 'default' : 'pointer', fontWeight: 500 }}>
                     {translating ? '⏳ Překládám…' : '🌐 Přeložit do angličtiny'}
