@@ -178,7 +178,7 @@ export default function Bus({ navigate, colors, navParams }) {
       lines.map(l => {
         const line = l.trim();
         if (!line) return '';
-        const isDay = /^\d{1,2}[°º]\s*DIA\s*[\u2013-]|^\d{1,2}\s+[A-Za-z\xC0-\xFF]{3}\s+\([A-Za-z\xC0-\xFF]{3}\)\s*-|^📅/.test(line);
+        const isDay = /^(\d{1,2}[°º]\s*DIA\s*[–\u2013-]|DAY\s+\d{1,2}\s*[–\u2013:-]|\d{1,2}(st|nd|rd|th)?\s*DAY\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3,9}\s+\d{4}\s*[–\u2013:-]|[A-Za-zÀ-ÿ]{3,9}\s+\d{1,2}[,\s]+\d{4}\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3}\s+\([A-Za-zÀ-ÿ\xC0-\xFF]{3}\)\s*-|📅)/i.test(line);
         if (isDay) return '<p style="margin:8px 0 2px 0"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
         if (line.startsWith('• ')) return '<li>' + line.slice(2) + '</li>';
         return '<p style="margin:4px 0">' + line + '</p>';
@@ -275,7 +275,7 @@ export default function Bus({ navigate, colors, navParams }) {
     .replace(/{{program}}/g, programText
       ? programText.split('\n').filter(l => l.trim()).map(l => {
           const line = l.trim();
-          const isDay = /^\d{1,2}[°º]\s*DIA\s*[–-]|^\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-|^📅/.test(line);
+          const isDay = /^(\d{1,2}[°º]\s*DIA\s*[\u2013–-]|DAY\s+\d{1,2}\s*[\u2013–:-]|\d{1,2}(st|nd|rd|th)?\s*DAY\s*[\u2013–:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3,9}\s+\d{4}\s*[\u2013–:-]|[A-Za-zÀ-ÿ]{3,9}\s+\d{1,2}[,\s]+\d{4}\s*[\u2013–:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3}\s+\([A-Za-zÀ-ÿ\xC0-\xFF]{3}\)\s*-|📅)/i.test(line);
           return isDay
             ? `<p style="margin:8px 0 2px 0"><strong style="background-color:#FFD700;padding:2px 6px">${line}</strong></p>`
             : `<p style="margin:2px 0 4px 0">${line}</p>`;
