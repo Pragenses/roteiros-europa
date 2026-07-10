@@ -1,3 +1,4 @@
+// force-rebuild-extraemail
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -121,6 +122,7 @@ VAT: CZ284 45 961</p>
 </div>`;
 
 export default function Hotels({ navigate, colors, navParams }) {
+  console.debug('Hotels v200-fix-extraemail');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
