@@ -319,13 +319,12 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   // Helper to create a full A4 page with header/footer
   const Page = ({ children }) => (
-    <div className="op-page" style={{ ...PAGE, minHeight: '297mm', position: 'relative', overflow: 'hidden' }}>
+    <div className="op-page" style={{ ...PAGE, height: '297mm', position: 'relative' }}>
       <ScreenWatermark />
       <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
-      <div style={CONTENT_STYLE}>
+      <div style={{ ...CONTENT_STYLE, overflow: 'hidden', maxHeight: `calc(297mm - ${HEADER_H} - ${FOOTER_H} - 8mm)` }}>
         {children}
       </div>
-      <div style={{ height: FOOTER_H }} />
       <Footer />
     </div>
   );
@@ -469,13 +468,44 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
+      {/* PAGE 4+ — Roteiro: character-based splitting to prevent overflow */}
       {roteiroParagraphs.length > 0 && (() => {
-        const CHUNK = 25;
-        const pages = [];
-        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
-          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
+        const MAX_CHARS = 2500;
+        // First split any oversized paragraph at sentence boundaries
+        const splitParas = [];
+        for (const para of roteiroParagraphs) {
+          const plain = para.replace(/<[^>]+>/g, '');
+          if (plain.length <= MAX_CHARS) {
+            splitParas.push(para);
+          } else {
+            const sentences = para.split(/(?<=[.!?])\s+/);
+            let chunk = '';
+            for (const s of sentences) {
+              if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
+                splitParas.push(chunk.trim());
+                chunk = s + ' ';
+              } else {
+                chunk += s + ' ';
+              }
+            }
+            if (chunk.trim()) splitParas.push(chunk.trim());
+          }
         }
+        // Then group into pages by total character count
+        const pages = [];
+        let currentPage = [];
+        let currentChars = 0;
+        for (const para of splitParas) {
+          const len = para.replace(/<[^>]+>/g, '').length;
+          if (currentChars + len > MAX_CHARS && currentPage.length > 0) {
+            pages.push(currentPage);
+            currentPage = [];
+            currentChars = 0;
+          }
+          currentPage.push(para);
+          currentChars += len;
+        }
+        if (currentPage.length > 0) pages.push(currentPage);
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
