@@ -171,10 +171,16 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const rows = computeAllCombinedEUR().rows;
 
   const hotels = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
+  const PAGE_BREAK_MARKER = '<!--PAGE_BREAK-->';
   // programText may contain HTML (rich text editor) or plain text with \n
   const programParagraphs = (() => {
     const html = offer.programText || '';
     if (!html.trim()) return [];
+    // If manual page breaks exist, use them directly — each section becomes one "paragraph"
+    // that the PDF splitting logic will keep together on its own page
+    if (html.includes(PAGE_BREAK_MARKER)) {
+      return html.split(PAGE_BREAK_MARKER).map(p => p.trim()).filter(p => p);
+    }
     // First try HTML splitting (contentEditable creates <div> per line in Chrome)
     const htmlParts = html
       .split(/<div>|<\/div>|<br\s*\/?>/i)
@@ -470,44 +476,51 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro: character-based splitting to prevent overflow */}
+      {/* PAGE 4+ — Roteiro: if manual page breaks exist, use 1 page per section; otherwise auto-split */}
       {roteiroParagraphs.length > 0 && (() => {
+        const hasManualBreaks = (offer.programText || '').includes('<!--PAGE_BREAK-->');
         const MAX_CHARS = 1500;
-        // First split any oversized paragraph at sentence boundaries
-        const splitParas = [];
-        for (const para of roteiroParagraphs) {
-          const plain = para.replace(/<[^>]+>/g, '');
-          if (plain.length <= MAX_CHARS) {
-            splitParas.push(para);
-          } else {
-            const sentences = para.split(/(?<=[.!?])\s+/);
-            let chunk = '';
-            for (const s of sentences) {
-              if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
-                splitParas.push(chunk.trim());
-                chunk = s + ' ';
-              } else {
-                chunk += s + ' ';
+        let pages;
+        if (hasManualBreaks) {
+          // Each paragraph = one page (manual page breaks already define pages)
+          pages = roteiroParagraphs.map(p => [p]);
+        } else {
+          // Auto-split: first break oversized paragraphs at sentence boundaries
+          const splitParas = [];
+          for (const para of roteiroParagraphs) {
+            const plain = para.replace(/<[^>]+>/g, '');
+            if (plain.length <= MAX_CHARS) {
+              splitParas.push(para);
+            } else {
+              const sentences = para.split(/(?<=[.!?])\s+/);
+              let chunk = '';
+              for (const s of sentences) {
+                if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
+                  splitParas.push(chunk.trim());
+                  chunk = s + ' ';
+                } else {
+                  chunk += s + ' ';
+                }
               }
+              if (chunk.trim()) splitParas.push(chunk.trim());
             }
-            if (chunk.trim()) splitParas.push(chunk.trim());
           }
-        }
-        // Then group into pages by total character count
-        const pages = [];
-        let currentPage = [];
-        let currentChars = 0;
-        for (const para of splitParas) {
-          const len = para.replace(/<[^>]+>/g, '').length;
-          if (currentChars + len > MAX_CHARS && currentPage.length > 0) {
-            pages.push(currentPage);
-            currentPage = [];
-            currentChars = 0;
+          // Group into pages by total character count
+          pages = [];
+          let currentPage = [];
+          let currentChars = 0;
+          for (const para of splitParas) {
+            const len = para.replace(/<[^>]+>/g, '').length;
+            if (currentChars + len > MAX_CHARS && currentPage.length > 0) {
+              pages.push(currentPage);
+              currentPage = [];
+              currentChars = 0;
+            }
+            currentPage.push(para);
+            currentChars += len;
           }
-          currentPage.push(para);
-          currentChars += len;
+          if (currentPage.length > 0) pages.push(currentPage);
         }
-        if (currentPage.length > 0) pages.push(currentPage);
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
