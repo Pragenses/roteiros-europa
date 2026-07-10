@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.js": "/roteiros-europa/static/js/main.0c7124f8.js",
+    "main.js": "/roteiros-europa/static/js/main.c751c46d.js",
     "index.html": "/roteiros-europa/index.html",
-    "main.0c7124f8.js.map": "/roteiros-europa/static/js/main.0c7124f8.js.map"
+    "main.c751c46d.js.map": "/roteiros-europa/static/js/main.c751c46d.js.map"
   },
   "entrypoints": [
-    "static/js/main.0c7124f8.js"
+    "static/js/main.c751c46d.js"
   ]
 }
