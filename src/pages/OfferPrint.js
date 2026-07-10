@@ -355,6 +355,8 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         @media screen {
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
         }
+        .op-roteiro-para * { font-size: 11px !important; }
+        .op-roteiro-para { font-size: 11px !important; }
       `}</style>
 
       <style>{`
@@ -470,7 +472,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
       {/* PAGE 4+ — Roteiro: character-based splitting to prevent overflow */}
       {roteiroParagraphs.length > 0 && (() => {
-        const MAX_CHARS = 1800;
+        const MAX_CHARS = 1500;
         // First split any oversized paragraph at sentence boundaries
         const splitParas = [];
         for (const para of roteiroParagraphs) {
@@ -509,7 +511,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
-            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap', fontSize: 11 }} dangerouslySetInnerHTML={{ __html: p.replace(/font-size:[^;"]+[;"]/g, 'font-size:11px;') }} />)}
+            {paras.map((p, i) => <p key={i} className="op-roteiro-para" style={{ ...P, whiteSpace: 'pre-wrap', fontSize: 11 }} dangerouslySetInnerHTML={{ __html: p.replace(/font-size:[^;"]+[;"]/g, 'font-size:11px;') }} />)}
             {pageIdx === pages.length - 1 && (
               <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
                 <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
