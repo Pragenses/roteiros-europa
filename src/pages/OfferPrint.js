@@ -511,7 +511,11 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
-            {paras.map((p, i) => <p key={i} className="op-roteiro-para" style={{ ...P, whiteSpace: 'pre-wrap', fontSize: 11 }} dangerouslySetInnerHTML={{ __html: p.replace(/font-size:[^;"]+[;"]/g, 'font-size:11px;') }} />)}
+            {paras.map((p, i) => {
+              // Strip ALL inline style attributes to force uniform font size
+              const cleaned = p.replace(/style="[^"]*"/gi, '').replace(/style='[^']*'/gi, '');
+              return <p key={i} className="op-roteiro-para" style={{ ...P, whiteSpace: 'pre-wrap', fontSize: 11 }} dangerouslySetInnerHTML={{ __html: cleaned }} />;
+            })}
             {pageIdx === pages.length - 1 && (
               <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
                 <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
