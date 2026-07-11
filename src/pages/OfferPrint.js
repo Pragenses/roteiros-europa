@@ -479,7 +479,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
       {/* PAGE 4+ — Roteiro: if manual page breaks exist, use 1 page per section; otherwise auto-split */}
       {roteiroParagraphs.length > 0 && (() => {
         const hasManualBreaks = (offer.programText || '').includes('<!--PAGE_BREAK-->');
-        const MAX_CHARS = 1500;
+        const MAX_CHARS = 2800;
         let pages;
         if (hasManualBreaks) {
           // Each paragraph = one page (manual page breaks already define pages)
