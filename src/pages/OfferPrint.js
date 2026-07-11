@@ -26,6 +26,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const [showVersionDialog, setShowVersionDialog] = useState(false);
   const [versionLabel, setVersionLabel] = useState('');
   const [savingVersion, setSavingVersion] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [versionError, setVersionError] = useState('');
 
   const fetchData = useCallback(async () => {
@@ -370,7 +371,47 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3', flexWrap: 'wrap' }}>
         {!isPublic && <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>}
-        <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir / Salvar PDF</button>
+        <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir</button>
+        <button onClick={async () => {
+          setDownloadingPdf(true);
+          try {
+            const payload = {
+              name: offer.name || '',
+              startDate: offer.startDate || '',
+              endDate: offer.endDate || '',
+              destinations: offer.destinations || '',
+              focType: offer.focType || 'dbl',
+              items: offer.items || [],
+              pricingData: hasSplit ? { splitData } : { singleData: null },
+              includedLines: offer.includedText || '',
+              notIncludedLines: offer.notIncludedText || '',
+              programText: offer.programText || '',
+            };
+            const res = await fetch('https://tour-pragenses.com/offer_pdf_api.php', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+              const errText = await res.text();
+              throw new Error('Erro do servidor: ' + errText.slice(0, 200));
+            }
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (offer.name || 'oferta').replace(/[^a-zA-Z0-9]/g, '_') + '.pdf';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+          } catch (err) {
+            alert('Erro ao gerar PDF: ' + err.message);
+          }
+          setDownloadingPdf(false);
+        }} disabled={downloadingPdf} style={{ padding: '8px 16px', background: '#854f0b', color: '#fff', border: 'none', borderRadius: 7, cursor: downloadingPdf ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+          {downloadingPdf ? '⏳ Gerando...' : '⬇ Gerar PDF (novo)'}
+        </button>
         {!isPublic && <button onClick={() => { setVersionLabel(''); setVersionError(''); setShowVersionDialog(true); }} style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>📌 Salvar versão (NR)</button>}
         {!isPublic && createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
