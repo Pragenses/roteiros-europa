@@ -171,16 +171,10 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const rows = computeAllCombinedEUR().rows;
 
   const hotels = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
-  const PAGE_BREAK_MARKER = '<!--PAGE_BREAK-->';
   // programText may contain HTML (rich text editor) or plain text with \n
   const programParagraphs = (() => {
     const html = offer.programText || '';
     if (!html.trim()) return [];
-    // If manual page breaks exist, use them directly — each section becomes one "paragraph"
-    // that the PDF splitting logic will keep together on its own page
-    if (html.includes(PAGE_BREAK_MARKER)) {
-      return html.split(PAGE_BREAK_MARKER).map(p => p.trim()).filter(p => p);
-    }
     // First try HTML splitting (contentEditable creates <div> per line in Chrome)
     const htmlParts = html
       .split(/<div>|<\/div>|<br\s*\/?>/i)
@@ -328,9 +322,10 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     <div className="op-page" style={{ ...PAGE, minHeight: '297mm', position: 'relative', overflow: 'hidden' }}>
       <ScreenWatermark />
       <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
-      <div style={{ ...CONTENT_STYLE, overflow: 'hidden', maxHeight: `calc(297mm - ${HEADER_H} - ${FOOTER_H} - 8mm)` }}>
+      <div style={CONTENT_STYLE}>
         {children}
       </div>
+      <div style={{ height: FOOTER_H }} />
       <Footer />
     </div>
   );
@@ -350,21 +345,17 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
           .app-main { padding: 0 !important; background: white !important; }
-          @page { size: A4; margin: 28mm 18mm 20mm 18mm; }
-          .op-page { page-break-after: always; break-after: page; }
-          .op-page:last-child { page-break-after: auto; break-after: auto; }
-          .op-avoid-break { page-break-inside: avoid; break-inside: avoid; }
-          .op-watermark-print { display: none !important; }
-          .op-header { position: running(header); }
-          .op-footer { position: running(footer); }
+          @page { size: A4; margin: 0; }
+          .op-page { page-break-after: always; }
+          .op-page:last-child { page-break-after: auto; }
+          .op-avoid-break { page-break-inside: avoid; }
+          .op-watermark-print {
+            display: none !important;
+          }
         }
         @media screen {
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
         }
-        .op-roteiro-para * { font-size: 11px !important; }
-        .op-roteiro-para { font-size: 11px !important; }
-        .op-roteiro-para * { font-size: 11px !important; }
-        .op-roteiro-para { font-size: 11px !important; }
       `}</style>
 
       <style>{`
@@ -478,61 +469,17 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro: if manual page breaks exist, use 1 page per section; otherwise auto-split */}
+      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
       {roteiroParagraphs.length > 0 && (() => {
-        const hasManualBreaks = (offer.programText || '').includes('<!--PAGE_BREAK-->');
-        const MAX_CHARS = 10000;
-        let pages;
-        if (hasManualBreaks) {
-          // Each paragraph = one page (manual page breaks already define pages)
-          pages = roteiroParagraphs.map(p => [p]);
-        } else {
-          // Auto-split: first break oversized paragraphs at sentence boundaries
-          const splitParas = [];
-          for (const para of roteiroParagraphs) {
-            const plain = para.replace(/<[^>]+>/g, '');
-            if (plain.length <= MAX_CHARS) {
-              splitParas.push(para);
-            } else {
-              const sentences = para.split(/(?<=[.!?])\s+/);
-              let chunk = '';
-              for (const s of sentences) {
-                if ((chunk + s).length > MAX_CHARS && chunk.length > 0) {
-                  splitParas.push(chunk.trim());
-                  chunk = s + ' ';
-                } else {
-                  chunk += s + ' ';
-                }
-              }
-              if (chunk.trim()) splitParas.push(chunk.trim());
-            }
-          }
-          // Group into pages by total character count
-          pages = [];
-          let currentPage = [];
-          let currentChars = 0;
-          for (const para of splitParas) {
-            const len = para.replace(/<[^>]+>/g, '').length;
-            if (currentChars + len > MAX_CHARS && currentPage.length > 0) {
-              pages.push(currentPage);
-              currentPage = [];
-              currentChars = 0;
-            }
-            currentPage.push(para);
-            currentChars += len;
-          }
-          if (currentPage.length > 0) pages.push(currentPage);
+        const CHUNK = 25;
+        const pages = [];
+        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
+          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
         }
         return pages.map((paras, pageIdx) => (
           <Page key={pageIdx}>
             {pageIdx === 0 && <H2>Roteiro</H2>}
-            {(() => {
-              // Join all paragraphs on this page into one block to eliminate excessive margins
-              const combined = paras
-                .map(p => p.replace(/style="[^"]*"/gi, '').replace(/style='[^']*'/gi, ''))
-                .join('<br>');
-              return <div className="op-roteiro-para" style={{ ...P, whiteSpace: 'pre-wrap', fontSize: 11 }} dangerouslySetInnerHTML={{ __html: combined }} />;
-            })()}
+            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: p }} />)}
             {pageIdx === pages.length - 1 && (
               <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
                 <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
