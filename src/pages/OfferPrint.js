@@ -325,7 +325,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   // Helper to create a full A4 page with header/footer
   const Page = ({ children }) => (
-    <div className="op-page" style={{ ...PAGE, height: '297mm', position: 'relative' }}>
+    <div className="op-page" style={{ ...PAGE, minHeight: '297mm', position: 'relative', overflow: 'hidden' }}>
       <ScreenWatermark />
       <div style={{ position: 'relative', zIndex: 2 }}><Header /></div>
       <div style={{ ...CONTENT_STYLE, overflow: 'hidden', maxHeight: `calc(297mm - ${HEADER_H} - ${FOOTER_H} - 8mm)` }}>
@@ -350,17 +350,19 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
           .op-no-print { display: none !important; }
           .app-sidebar { display: none !important; }
           .app-main { padding: 0 !important; background: white !important; }
-          @page { size: A4; margin: 0; }
-          .op-page { page-break-after: always; }
-          .op-page:last-child { page-break-after: auto; }
-          .op-avoid-break { page-break-inside: avoid; }
-          .op-watermark-print {
-            display: none !important;
-          }
+          @page { size: A4; margin: 28mm 18mm 20mm 18mm; }
+          .op-page { page-break-after: always; break-after: page; }
+          .op-page:last-child { page-break-after: auto; break-after: auto; }
+          .op-avoid-break { page-break-inside: avoid; break-inside: avoid; }
+          .op-watermark-print { display: none !important; }
+          .op-header { position: running(header); }
+          .op-footer { position: running(footer); }
         }
         @media screen {
           .op-page { max-width: 210mm; margin: 0 auto 20px; box-shadow: 0 2px 16px rgba(0,0,0,0.15); }
         }
+        .op-roteiro-para * { font-size: 11px !important; }
+        .op-roteiro-para { font-size: 11px !important; }
         .op-roteiro-para * { font-size: 11px !important; }
         .op-roteiro-para { font-size: 11px !important; }
       `}</style>
