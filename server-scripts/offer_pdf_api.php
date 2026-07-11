@@ -14,6 +14,13 @@ class OfferPDF extends TCPDF {
     public $showHeader = false;
     public function Header() {
         if (!$this->showHeader) return;
+        // Watermark background (drawn first, so text/logo sits on top)
+        $wmPath = __DIR__ . '/offer-assets/watermark.png';
+        if (file_exists($wmPath)) {
+            $this->SetAlpha(0.08);
+            $this->Image($wmPath, 0, 0, 210, 297, 'PNG');
+            $this->SetAlpha(1);
+        }
         $this->SetFont('helvetica', 'B', 8);
         $this->SetTextColor(34, 34, 34);
         $this->SetXY(18, 10);
