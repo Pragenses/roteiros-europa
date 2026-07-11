@@ -3,7 +3,6 @@ import { db, auth, storage } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
-import PagedEditor from '../components/PagedEditor';
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -1699,10 +1698,12 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             ✕ Limpar
           </button>
         </div>
-        <PagedEditor
-          value={offer.programText || ''}
-          onChange={(html) => handleHeaderChange('programText', html)}
-          colors={colors}
+        <div
+          contentEditable
+          suppressContentEditableWarning
+          onBlur={e => handleHeaderChange('programText', e.currentTarget.innerHTML)}
+          dangerouslySetInnerHTML={{ __html: offer.programText || '' }}
+          style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '12px', minHeight: 220, fontFamily: 'Georgia, serif', fontSize: 13, lineHeight: 1.6, color: colors.text, outline: 'none', whiteSpace: 'pre-wrap', marginBottom: 8 }}
         />
         <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
