@@ -114,41 +114,47 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
     }
   };
 
-  if (item.confirmationFileUrl) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <a href={item.confirmationFileUrl} target="_blank" rel="noopener noreferrer"
-          title={item.confirmationFileName}
-          style={{ fontSize: 10, color: colors.primary, textDecoration: 'underline', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          📎 {item.confirmationFileName || 'potvrzení'}
-        </a>
-        <button onClick={onRemove} title="Odebrat přílohu"
-          style={{ fontSize: 10, color: colors.danger, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>
-      </div>
-    );
-  }
+  // Combine legacy single-file field (older items) with the new attachments array,
+  // so nothing already uploaded ever disappears.
+  const files = [
+    ...(item.confirmationFileUrl ? [{ url: item.confirmationFileUrl, name: item.confirmationFileName, path: item.confirmationFilePath, legacy: true }] : []),
+    ...(item.attachments || []),
+  ];
 
   return (
-    <div
-      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={e => {
-        e.preventDefault(); setDragOver(false);
-        const file = e.dataTransfer.files && e.dataTransfer.files[0];
-        if (file) handleFile(file);
-      }}
-      onClick={() => !uploading && inputRef.current && inputRef.current.click()}
-      title={error || 'Přetáhni sem email/PDF potvrzení, nebo klikni pro výběr souboru'}
-      style={{
-        fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: uploading ? 'default' : 'pointer',
-        border: `1px dashed ${error ? colors.danger : dragOver ? colors.primary : colors.border}`,
-        background: dragOver ? '#f0f7ff' : 'transparent',
-        color: error ? colors.danger : colors.muted, whiteSpace: 'nowrap',
-        maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis',
-      }}>
-      {uploading ? `⏳ Nahrávám… ${progress}%` : error ? '⚠ ' + error : '📎 Potvrzení'}
-      <input ref={inputRef} type="file" style={{ display: 'none' }}
-        onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+      {files.map((f, i) => (
+        <div key={f.path || i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <a href={f.url} target="_blank" rel="noopener noreferrer"
+            title={f.name}
+            style={{ fontSize: 10, color: colors.primary, textDecoration: 'underline', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            📎 {f.name || 'potvrzení'}
+          </a>
+          <button onClick={() => onRemove(f)} title="Odebrat přílohu"
+            style={{ fontSize: 10, color: colors.danger, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>
+        </div>
+      ))}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => {
+          e.preventDefault(); setDragOver(false);
+          const file = e.dataTransfer.files && e.dataTransfer.files[0];
+          if (file) handleFile(file);
+        }}
+        onClick={() => !uploading && inputRef.current && inputRef.current.click()}
+        title={error || 'Přetáhni sem email/PDF potvrzení, nebo klikni pro výběr souboru'}
+        style={{
+          fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: uploading ? 'default' : 'pointer',
+          border: `1px dashed ${error ? colors.danger : dragOver ? colors.primary : colors.border}`,
+          background: dragOver ? '#f0f7ff' : 'transparent',
+          color: error ? colors.danger : colors.muted, whiteSpace: 'nowrap',
+          maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+        {uploading ? `⏳ Nahrávám… ${progress}%` : error ? '⚠ ' + error : (files.length > 0 ? '📎 + Další příloha' : '📎 Potvrzení')}
+        <input ref={inputRef} type="file" style={{ display: 'none' }}
+          onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
+      </div>
     </div>
   );
 };
@@ -666,6 +672,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const newItemRef = React.useRef(null);
   const [newItemId, setNewItemId] = React.useState(null);
+  const [noteOpenIds, setNoteOpenIds] = React.useState(() => new Set());
 
   React.useEffect(() => {
     if (newItemRef.current) {
@@ -764,7 +771,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   };
 
   // Upload a hotel confirmation (email saved as PDF, screenshot, voucher, etc.) to Firebase
-  // Storage and attach the resulting URL to the itinerary item.
+  // Storage and append it to the item's list of attachments (multiple files supported).
   const handleUploadConfirmation = (item, file, onProgress) => {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const path = `offers/${offerId}/confirmations/${item.id}_${Date.now()}_${safeName}`;
@@ -783,10 +790,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         async () => {
           try {
             const url = await getDownloadURL(task.snapshot.ref);
+            const current = itemsRef.current.find(x => x.id === item.id);
+            const existingAttachments = (current && current.attachments) || [];
             updateItemFields(item.id, {
-              confirmationFileUrl: url,
-              confirmationFileName: file.name,
-              confirmationFilePath: path,
+              attachments: [...existingAttachments, { url, name: file.name, path }],
             });
             resolve();
           } catch (err) {
@@ -797,17 +804,24 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     });
   };
 
-  const handleRemoveConfirmation = async (item) => {
+  const handleRemoveConfirmation = async (item, file) => {
     if (!window.confirm('Odebrat přiloženou přílohu?')) return;
-    if (item.confirmationFilePath) {
-      try { await deleteObject(storageRef(storage, item.confirmationFilePath)); }
+    if (file.path) {
+      try { await deleteObject(storageRef(storage, file.path)); }
       catch (e) { console.error('Storage delete failed (continuing anyway):', e); }
     }
-    updateItemFields(item.id, {
-      confirmationFileUrl: '',
-      confirmationFileName: '',
-      confirmationFilePath: '',
-    });
+    if (file.legacy) {
+      // Remove the old single-file fields
+      updateItemFields(item.id, {
+        confirmationFileUrl: '',
+        confirmationFileName: '',
+        confirmationFilePath: '',
+      });
+    } else {
+      const current = itemsRef.current.find(x => x.id === item.id);
+      const remaining = ((current && current.attachments) || []).filter(a => a.path !== file.path);
+      updateItemFields(item.id, { attachments: remaining });
+    }
   };
 
   const removeItem = (id) => {
@@ -1365,7 +1379,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const isEnabled = it.enabled !== false;
               const rowBg = isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               return (
-                <div key={it.id} ref={it.id === newItemId ? newItemRef : null}
+                <React.Fragment key={it.id}>
+                <div ref={it.id === newItemId ? newItemRef : null}
                   draggable
                   onDragStart={() => handleDragStart(idx)}
                   onDragEnter={() => handleDragEnter(idx)}
@@ -1451,9 +1466,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     {isHotel && (
                       <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
                         <select value={it.bookingStatus || ''} onChange={e => updateItem(it.id, 'bookingStatus', e.target.value)}
-                          style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'requested' ? '#854f0b' : colors.border}`, borderRadius: 4, background: it.bookingStatus === 'confirmed' ? '#e8f5e9' : it.bookingStatus === 'requested' ? '#fff8e1' : '#fff', color: it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'requested' ? '#854f0b' : colors.muted }}>
+                          style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'negotiating' ? '#c2410c' : it.bookingStatus === 'requested' ? '#854f0b' : colors.border}`, borderRadius: 4, background: it.bookingStatus === 'confirmed' ? '#e8f5e9' : it.bookingStatus === 'negotiating' ? '#ffedd5' : it.bookingStatus === 'requested' ? '#fff8e1' : '#fff', color: it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'negotiating' ? '#c2410c' : it.bookingStatus === 'requested' ? '#854f0b' : colors.muted }}>
                           <option value="">Stav?</option>
                           <option value="requested">🟡 Poptáno</option>
+                          <option value="negotiating">🟠 V jednání</option>
                           <option value="confirmed">🟢 Potvrzeno</option>
                         </select>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -1466,11 +1482,22 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                           <DateDMY dateKey={`cxl-${it.id}`} value={it.cancellationDeadline || ''} colors={colors}
                             onChange={v => updateItem(it.id, 'cancellationDeadline', v)} />
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          <span style={{ fontSize: 9, color: colors.muted }}>FOC:</span>
+                          <input type="text" placeholder="např. 20+1" value={it.focRatio || ''} onChange={e => updateItem(it.id, 'focRatio', e.target.value)}
+                            style={{ width: 60, fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }} />
+                          <select value={it.focRoomType || ''} onChange={e => updateItem(it.id, 'focRoomType', e.target.value)}
+                            style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }}>
+                            <option value="">pokoj?</option>
+                            <option value="sngl">SNGL</option>
+                            <option value="dbl">DBL</option>
+                          </select>
+                        </div>
                         <HotelAttachment
                           item={it}
                           colors={colors}
                           onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
-                          onRemove={() => handleRemoveConfirmation(it)}
+                          onRemove={(f) => handleRemoveConfirmation(it, f)}
                         />
                       </div>
                     )}
@@ -1480,7 +1507,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                           item={it}
                           colors={colors}
                           onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
-                          onRemove={() => handleRemoveConfirmation(it)}
+                          onRemove={(f) => handleRemoveConfirmation(it, f)}
                         />
                       </div>
                     )}
@@ -1532,8 +1559,23 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   )}
+                  <button onClick={() => setNoteOpenIds(prev => { const s = new Set(prev); s.has(it.id) ? s.delete(it.id) : s.add(it.id); return s; })}
+                    title={it.note ? 'Poznámka: ' + it.note : 'Přidat poznámku'}
+                    style={{ padding: '5px 8px', background: it.note ? '#fff8e1' : 'transparent', border: `1px solid ${it.note ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: it.note ? '#854f0b' : colors.muted }}>📝</button>
                   <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
                 </div>
+                {noteOpenIds.has(it.id) && (
+                  <div style={{ padding: '4px 8px 8px', background: rowBg === 'transparent' ? '#fafafa' : rowBg }}>
+                    <textarea
+                      value={it.note || ''}
+                      onChange={e => updateItem(it.id, 'note', e.target.value)}
+                      placeholder="Poznámka…"
+                      rows={2}
+                      style={{ ...iStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                )}
+                </React.Fragment>
               );
             })}
           </div>
