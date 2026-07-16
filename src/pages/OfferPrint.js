@@ -381,7 +381,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
               endDate: offer.endDate || '',
               destinations: offer.destinations || '',
               focType: offer.focType || 'dbl',
-              items: offer.items || [],
+              items: (offer.items || []).filter(it => it.enabled !== false),
               pricingData: hasSplit ? { splitData } : { singleData: null },
               includedLines: offer.includedText || '',
               notIncludedLines: offer.notIncludedText || '',
