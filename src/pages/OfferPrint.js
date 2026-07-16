@@ -196,7 +196,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-]|(?<!\d)\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-)/i).map(p => p.trim()).filter(p => p);
     return dayParts.length > 0 ? dayParts : [html];
   })();
-  const createdDate = offer.createdAt ? new Date(offer.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const createdDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const versions = offer.pdfVersions || [];
 
   const loadHtml2Pdf = () => new Promise((resolve, reject) => {
