@@ -6,14 +6,47 @@ header("Access-Control-Allow-Headers: Content-Type");
 if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") { exit(0); }
 if ($_SERVER["REQUEST_METHOD"] !== "POST") { http_response_code(405); exit; }
 
+function drawWatermark($pdf) {
+    $wmPath = __DIR__ . '/offer-assets/watermark.png';
+    if (file_exists($wmPath)) {
+        $pdf->SetAlpha(0.4);
+        $pdf->Image($wmPath, 0, 0, 210, 297, 'PNG');
+        $pdf->SetAlpha(1);
+    }
+}
+
 $raw = file_get_contents("php://input");
 $data = json_decode($raw, true);
 if (!$data) { http_response_code(400); echo json_encode(array("error" => "No data: " . json_last_error_msg())); exit; }
 
 class OfferPDF extends TCPDF {
     public $showHeader = false;
+    public function AcceptPageBreak() {
+        $result = parent::AcceptPageBreak();
+        if ($result && $this->showHeader) {
+            // A new page is about to be auto-added (e.g. long Roteiro text overflowing);
+            // draw the watermark on it too, same as explicit AddPage() calls.
+            $wmPath = __DIR__ . '/offer-assets/watermark.png';
+            if (file_exists($wmPath)) {
+                // Defer to after the page is actually created: TCPDF calls Header()
+                // right after adding the page, so hook it there via a flag.
+                $this->needsWatermark = true;
+            }
+        }
+        return $result;
+    }
+    public $needsWatermark = false;
     public function Header() {
         if (!$this->showHeader) return;
+        if ($this->needsWatermark) {
+            $wmPath = __DIR__ . '/offer-assets/watermark.png';
+            if (file_exists($wmPath)) {
+                $this->SetAlpha(0.4);
+                $this->Image($wmPath, 0, 0, 210, 297, 'PNG');
+                $this->SetAlpha(1);
+            }
+            $this->needsWatermark = false;
+        }
         $this->SetFont('helvetica', 'B', 8);
         $this->SetTextColor(34, 34, 34);
         $this->SetXY(18, 10);
@@ -89,6 +122,7 @@ if (file_exists($coverPath)) {
 // ---- PAGE 2+: Content with header/footer ----
 $pdf->showHeader = true;
 $pdf->AddPage();
+drawWatermark($pdf);
 
 $name = isset($data['name']) ? $data['name'] : '';
 $startDate = isset($data['startDate']) ? fmt_date($data['startDate']) : '';
@@ -211,6 +245,7 @@ $notIncluded = isset($data['notIncludedLines']) ? array_filter(array_map('trim',
 
 if (count($included) > 0 || count($notIncluded) > 0) {
     $pdf->AddPage();
+    drawWatermark($pdf);
     if (count($included) > 0) {
         $pdf->SetDrawColor(192, 57, 43);
         $pdf->Line(18, $pdf->GetY(), 192, $pdf->GetY());
@@ -246,6 +281,7 @@ if (count($included) > 0 || count($notIncluded) > 0) {
 $programHtml = isset($data['programText']) ? $data['programText'] : '';
 if ($programHtml) {
     $pdf->AddPage();
+    drawWatermark($pdf);
     $pdf->SetDrawColor(192, 57, 43);
     $pdf->Line(18, $pdf->GetY(), 192, $pdf->GetY());
     $pdf->Ln(2);
@@ -277,6 +313,7 @@ if ($programHtml) {
         }
         if ($idx < $secCount - 1) {
             $pdf->AddPage();
+            drawWatermark($pdf);
         }
     }
 
