@@ -381,7 +381,21 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
               endDate: offer.endDate || '',
               destinations: offer.destinations || '',
               focType: offer.focType || 'dbl',
-              items: (offer.items || []).filter(it => it.enabled !== false),
+              items: (() => {
+                const enabledOnly = (offer.items || []).filter(it => it.enabled !== false && it.enabled !== 'false');
+                // Remove hotel items with no name at all (incomplete entries)
+                const withNames = enabledOnly.filter(it => it.subType !== 'hotel' || (it.name && it.name.trim()));
+                // Also remove exact duplicate hotel entries (same name+city+dates) in case
+                // the offer data itself contains accidental duplicates.
+                const seen = new Set();
+                return withNames.filter(it => {
+                  if (it.subType !== 'hotel') return true;
+                  const key = [it.city, it.name, it.dateFrom, it.dateTo].join('|');
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+              })(),
               pricingData: hasSplit ? { splitData } : { singleData: null },
               includedLines: offer.includedText || '',
               notIncludedLines: offer.notIncludedText || '',
