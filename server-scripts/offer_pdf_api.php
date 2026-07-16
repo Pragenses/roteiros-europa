@@ -14,13 +14,6 @@ class OfferPDF extends TCPDF {
     public $showHeader = false;
     public function Header() {
         if (!$this->showHeader) return;
-        // Watermark background (pre-faded PNG, no SetAlpha needed - avoids TCPDF transparency bug)
-        $wmPath = __DIR__ . '/offer-assets/watermark_faded.png';
-        if (file_exists($wmPath)) {
-            // resize=true forces TCPDF to stretch exactly to 210x297mm, ignoring the
-            // image's own embedded DPI metadata (which was causing incorrect sizing).
-            $this->Image($wmPath, 0, 0, 210, 297, 'PNG', '', '', true, 300, '', false, false, 0, false, false, false);
-        }
         $this->SetFont('helvetica', 'B', 8);
         $this->SetTextColor(34, 34, 34);
         $this->SetXY(18, 10);
