@@ -21,32 +21,8 @@ if (!$data) { http_response_code(400); echo json_encode(array("error" => "No dat
 
 class OfferPDF extends TCPDF {
     public $showHeader = false;
-    public function AcceptPageBreak() {
-        $result = parent::AcceptPageBreak();
-        if ($result && $this->showHeader) {
-            // A new page is about to be auto-added (e.g. long Roteiro text overflowing);
-            // draw the watermark on it too, same as explicit AddPage() calls.
-            $wmPath = __DIR__ . '/offer-assets/watermark.png';
-            if (file_exists($wmPath)) {
-                // Defer to after the page is actually created: TCPDF calls Header()
-                // right after adding the page, so hook it there via a flag.
-                $this->needsWatermark = true;
-            }
-        }
-        return $result;
-    }
-    public $needsWatermark = false;
     public function Header() {
         if (!$this->showHeader) return;
-        if ($this->needsWatermark) {
-            $wmPath = __DIR__ . '/offer-assets/watermark.png';
-            if (file_exists($wmPath)) {
-                $this->SetAlpha(0.4);
-                $this->Image($wmPath, 0, 0, 210, 297, 'PNG');
-                $this->SetAlpha(1);
-            }
-            $this->needsWatermark = false;
-        }
         $this->SetFont('helvetica', 'B', 8);
         $this->SetTextColor(34, 34, 34);
         $this->SetXY(18, 10);
