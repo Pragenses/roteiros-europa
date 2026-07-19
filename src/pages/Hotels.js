@@ -181,6 +181,13 @@ export default function Hotels({ navigate, colors, navParams }) {
         const line = l.trim();
         if (!line) return '<p style="margin:6px 0">&nbsp;</p>';
         if (line.startsWith('• ')) return '<li>' + line.slice(2) + '</li>';
+        // Detect day-marker lines (Portuguese "Nº DIA –", "DD Mmm (Wkday) -", English "DAY N –",
+        // date-first formats, or the 📅 emoji) and highlight them bold + yellow, same as the
+        // Roteiro PDF does.
+        const isDay = /^(\d{1,2}[°º]?\s*DIA\s*[–\u2013:-]|DAY\s+\d{1,2}\s*[–\u2013:-]|\d{1,2}(st|nd|rd|th)?\s*DAY\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ]{3,9}\s+\d{4}\s*[–\u2013:-]|[A-Za-z]{3,9}\s+\d{1,2}[,\s]+\d{4}\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-|📅)/i.test(line);
+        if (isDay) {
+          return '<p style="margin:8px 0 2px 0"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
+        }
         return '<p style="margin:4px 0">' + line + '</p>';
       }).filter(Boolean).join('') +
     '</div>';
