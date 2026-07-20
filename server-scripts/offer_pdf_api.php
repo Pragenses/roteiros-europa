@@ -12,6 +12,9 @@ function drawWatermark($pdf) {
         $pdf->SetAlpha(0.4);
         $pdf->Image($wmPath, 0, 0, 210, 297, 'PNG');
         $pdf->SetAlpha(1);
+        // Required after drawing a background image: marks where page content
+        // "starts" so borders/fills render correctly on top of it.
+        $pdf->setPageMark();
     }
 }
 
