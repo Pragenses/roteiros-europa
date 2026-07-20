@@ -273,6 +273,15 @@ export default function Bus({ navigate, colors, navParams }) {
     fetchBus();
   };
 
+  // Convert YYYY-MM-DD (HTML date input format) to DD/MM/YYYY, since European
+  // recipients read day-first dates and the ISO format was confusing them.
+  const fmtDateEU = (d) => {
+    if (!d) return '';
+    const parts = d.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    return d;
+  };
+
   const buildBody = () => {
     const currentText = editMode === 'visual' && visualEditorRef.current
       ? visualEditorRef.current.value
@@ -280,8 +289,8 @@ export default function Bus({ navigate, colors, navParams }) {
     const base = currentText ? plainToHtml(currentText) : (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody);
     return base
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
-    .replace(/{{checkIn}}/g, checkIn||'[DATE FROM]')
-    .replace(/{{checkOut}}/g, checkOut||'[DATE TO]')
+    .replace(/{{checkIn}}/g, fmtDateEU(checkIn)||'[DATE FROM]')
+    .replace(/{{checkOut}}/g, fmtDateEU(checkOut)||'[DATE TO]')
     .replace(/{{freeRatio}}/g, freeRatio||'20')
     .replace(/{{program}}/g, programText
       ? programText.split('\n').filter(l => l.trim()).map(l => {
