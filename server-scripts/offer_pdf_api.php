@@ -7,9 +7,9 @@ if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") { exit(0); }
 if ($_SERVER["REQUEST_METHOD"] !== "POST") { http_response_code(405); exit; }
 
 function drawWatermark($pdf) {
-    $wmPath = __DIR__ . '/offer-assets/watermark.png';
+    $wmPath = __DIR__ . '/offer-assets/watermark_full.png';
     if (file_exists($wmPath)) {
-        $pdf->SetAlpha(0.4);
+        $pdf->SetAlpha(0.6);
         $pdf->Image($wmPath, 0, 0, 210, 297, 'PNG');
         $pdf->SetAlpha(1);
         // Required after drawing a background image: marks where page content
