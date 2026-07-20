@@ -396,7 +396,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
                   return true;
                 });
               })(),
-              pricingData: hasSplit ? { splitData } : { singleData: null },
+              pricingData: hasSplit ? { splitData } : { singleData: computeAllCombinedEUR() },
               includedLines: offer.includedText || '',
               notIncludedLines: offer.notIncludedText || '',
               programText: offer.programText || '',
