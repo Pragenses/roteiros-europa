@@ -178,24 +178,40 @@ export default function Hotels({ navigate, colors, navParams }) {
     const lines = text.split('\n');
     const sectionHeaders = /^(GROUP DETAILS|SPECIAL REQUESTS|BOOKING CONDITIONS|MEAL PLAN OPTIONS|PROGRAM|WE KINDLY REQUEST)\s*:?\s*$/i;
     const dayMarker = /^(\d{1,2}[°º]?\s*DIA\s*[–\u2013:-]|DAY\s+\d{1,2}\s*[–\u2013:-]|\d{1,2}(st|nd|rd|th)?\s*DAY\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ]{3,9}\s+\d{4}\s*[–\u2013:-]|[A-Za-z]{3,9}\s+\d{1,2}[,\s]+\d{4}\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-|📅)/i;
+    // "Label: rest of the sentence" — bold just the label part
+    const boldLabel = (s) => s.replace(/^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{2,30}?:)/, '<strong>$1</strong>');
+
+    // Trim leading/trailing blank lines, and collapse blank lines that sit
+    // BETWEEN two bullet ("• ") lines — those are just formatting artifacts
+    // from the source template, not intended paragraph breaks.
+    const trimmed = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) {
+        const prevBullet = trimmed.length > 0 && trimmed[trimmed.length - 1].startsWith('• ');
+        const nextLine = lines.slice(i + 1).find(l => l.trim())?.trim() || '';
+        const nextBullet = nextLine.startsWith('• ');
+        if (prevBullet && nextBullet) continue; // skip gap between bullets
+      }
+      trimmed.push(line);
+    }
 
     let html = '';
     let inList = false;
     const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
 
-    lines.forEach(l => {
-      const line = l.trim();
+    trimmed.forEach(line => {
       if (!line) { closeList(); html += '<p style="margin:4px 0;line-height:1">&nbsp;</p>'; return; }
       if (line.startsWith('• ')) {
         if (!inList) { html += '<ul style="margin:2px 0;padding-left:20px">'; inList = true; }
-        html += '<li style="margin:2px 0">' + line.slice(2) + '</li>';
+        html += '<li style="margin:2px 0">' + boldLabel(line.slice(2)) + '</li>';
         return;
       }
       closeList();
       if (dayMarker.test(line) || sectionHeaders.test(line)) {
         html += '<p style="margin:8px 0 2px 0;line-height:1.4"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
       } else {
-        html += '<p style="margin:2px 0;line-height:1.4">' + line + '</p>';
+        html += '<p style="margin:2px 0;line-height:1.4">' + boldLabel(line) + '</p>';
       }
     });
     closeList();
