@@ -196,14 +196,14 @@ export default function Hotels({ navigate, colors, navParams }) {
     nonBlank.forEach(line => {
       if (line.startsWith('• ')) {
         if (!inList) { html += '<ul style="margin:0;padding-left:20px">'; inList = true; }
-        html += '<li style="margin:0;padding:1px 0">' + boldLabel(line.slice(2)) + '</li>';
+        html += '<li style="margin:0;padding:1px 0;mso-line-height-rule:exactly">' + boldLabel(line.slice(2)) + '</li>';
         return;
       }
       closeList();
       if (dayMarker.test(line) || sectionHeaders.test(line)) {
-        html += '<p style="margin:10px 0 2px 0;line-height:1.3"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
+        html += '<p style="margin:10px 0 2px 0;line-height:1.3;mso-line-height-rule:exactly;mso-margin-top-alt:10px;mso-margin-bottom-alt:2px"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
       } else {
-        html += '<p style="margin:2px 0;line-height:1.3">' + boldLabel(line) + '</p>';
+        html += '<p style="margin:2px 0;line-height:1.3;mso-line-height-rule:exactly;mso-margin-top-alt:2px;mso-margin-bottom-alt:2px">' + boldLabel(line) + '</p>';
       }
     });
     closeList();
