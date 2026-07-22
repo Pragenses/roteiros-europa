@@ -183,38 +183,27 @@ export default function Bus({ navigate, colors, navParams }) {
     const dayMarker = /^(\d{1,2}[°º]\s*DIA\s*[–\u2013-]|DAY\s+\d{1,2}\s*[–\u2013:-]|\d{1,2}(st|nd|rd|th)?\s*DAY\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3,9}\s+\d{4}\s*[–\u2013:-]|[A-Za-zÀ-ÿ]{3,9}\s+\d{1,2}[,\s]+\d{4}\s*[–\u2013:-]|\d{1,2}\s+[A-Za-zÀ-ÿ\xC0-\xFF]{3}\s+\([A-Za-zÀ-ÿ\xC0-\xFF]{3}\)\s*-|📅)/i;
     const boldLabel = (s) => s.replace(/^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{2,30}?:)/, '<strong>$1</strong>');
 
-    const trimmed = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) {
-        const prevBullet = trimmed.length > 0 && trimmed[trimmed.length - 1].startsWith('• ');
-        const nextLine = lines.slice(i + 1).find(l => l.trim())?.trim() || '';
-        const nextBullet = nextLine.startsWith('• ');
-        if (prevBullet && nextBullet) continue;
-      }
-      trimmed.push(line);
-    }
+    const nonBlank = lines.map(l => l.trim()).filter(l => l);
 
     let html = '';
     let inList = false;
     const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
 
-    trimmed.forEach(line => {
-      if (!line) { closeList(); html += '<p style="margin:4px 0;line-height:1">&nbsp;</p>'; return; }
+    nonBlank.forEach(line => {
       if (line.startsWith('• ')) {
-        if (!inList) { html += '<ul style="margin:2px 0;padding-left:20px">'; inList = true; }
-        html += '<li style="margin:2px 0">' + boldLabel(line.slice(2)) + '</li>';
+        if (!inList) { html += '<ul style="margin:0;padding-left:20px">'; inList = true; }
+        html += '<li style="margin:0;padding:1px 0">' + boldLabel(line.slice(2)) + '</li>';
         return;
       }
       closeList();
       if (dayMarker.test(line) || sectionHeaders.test(line)) {
-        html += '<p style="margin:8px 0 2px 0;line-height:1.4"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
+        html += '<p style="margin:10px 0 2px 0;line-height:1.3"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
       } else {
-        html += '<p style="margin:2px 0;line-height:1.4">' + boldLabel(line) + '</p>';
+        html += '<p style="margin:2px 0;line-height:1.3">' + boldLabel(line) + '</p>';
       }
     });
     closeList();
-    return '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#222;max-width:650px">' + html + '</div>';
+    return '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.3;color:#222;max-width:650px">' + html + '</div>';
   };
   const [subject, setSubject]         = useState('Group Transport Inquiry');
   const [senderFrom, setSenderFrom]   = useState('grupos');

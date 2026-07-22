@@ -184,38 +184,30 @@ export default function Hotels({ navigate, colors, navParams }) {
     // Trim leading/trailing blank lines, and collapse blank lines that sit
     // BETWEEN two bullet ("• ") lines — those are just formatting artifacts
     // from the source template, not intended paragraph breaks.
-    const trimmed = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) {
-        const prevBullet = trimmed.length > 0 && trimmed[trimmed.length - 1].startsWith('• ');
-        const nextLine = lines.slice(i + 1).find(l => l.trim())?.trim() || '';
-        const nextBullet = nextLine.startsWith('• ');
-        if (prevBullet && nextBullet) continue; // skip gap between bullets
-      }
-      trimmed.push(line);
-    }
+    // Drop ALL blank lines entirely — this template is a compact inquiry
+    // form, not prose, and every blank line in the source was just visual
+    // formatting for the editor, never meant to become a visible email gap.
+    const nonBlank = lines.map(l => l.trim()).filter(l => l);
 
     let html = '';
     let inList = false;
     const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
 
-    trimmed.forEach(line => {
-      if (!line) { closeList(); html += '<p style="margin:4px 0;line-height:1">&nbsp;</p>'; return; }
+    nonBlank.forEach(line => {
       if (line.startsWith('• ')) {
-        if (!inList) { html += '<ul style="margin:2px 0;padding-left:20px">'; inList = true; }
-        html += '<li style="margin:2px 0">' + boldLabel(line.slice(2)) + '</li>';
+        if (!inList) { html += '<ul style="margin:0;padding-left:20px">'; inList = true; }
+        html += '<li style="margin:0;padding:1px 0">' + boldLabel(line.slice(2)) + '</li>';
         return;
       }
       closeList();
       if (dayMarker.test(line) || sectionHeaders.test(line)) {
-        html += '<p style="margin:8px 0 2px 0;line-height:1.4"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
+        html += '<p style="margin:10px 0 2px 0;line-height:1.3"><strong style="background-color:#FFD700;padding:2px 6px">' + line + '</strong></p>';
       } else {
-        html += '<p style="margin:2px 0;line-height:1.4">' + boldLabel(line) + '</p>';
+        html += '<p style="margin:2px 0;line-height:1.3">' + boldLabel(line) + '</p>';
       }
     });
     closeList();
-    return '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#222;max-width:650px">' + html + '</div>';
+    return '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.3;color:#222;max-width:650px">' + html + '</div>';
   };
   const [subject, setSubject]         = useState('Group Accommodation Request');
   const [senderFrom, setSenderFrom]   = useState('grupos');
