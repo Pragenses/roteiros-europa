@@ -193,7 +193,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     // 📅 emoji style, the "Nº DIA –" style (e.g. "2º DIA – 20/05/2027 – FRANKFURT"), or the
     // "DD Mmm (Wkday) -" style (e.g. "22 Jul (Qui) - EDIMBURGO"). The (?<!\d) guard stops
     // two-digit days like "10º DIA" or "22 Jul" from being mis-split between their digits.
-    const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-]|(?<!\d)\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-)/i).map(p => p.trim()).filter(p => p);
+    const dayParts = stripped.split(/(?=📅|(?<!\d)\d{1,2}º\s*DIA\s*[–-]|(?<!\d)\d{1,2}\s+[A-Za-zÀ-ÿ]{3}\s+\([A-Za-zÀ-ÿ]{3}\)\s*-|(?<!\d)\d{1,2}\.\d{1,2}\.\d{2,4}\s*[–-])/i).map(p => p.trim()).filter(p => p);
     return dayParts.length > 0 ? dayParts : [html];
   })();
   const createdDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
