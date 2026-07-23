@@ -676,6 +676,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [resendModalItem, setResendModalItem] = React.useState(null);
   const [resendSending, setResendSending] = React.useState(false);
   const [resendError, setResendError] = React.useState('');
+  const [resendBodyText, setResendBodyText] = React.useState('');
 
   React.useEffect(() => {
     if (newItemRef.current) {
@@ -829,8 +830,37 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const fmtDateResend = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
 
+  const buildResendDefaultText = (item) => {
+    const label = item.name || item.city || 'reserva';
+    const dateStr = item.dateFrom ? `${fmtDateResend(item.dateFrom)}${item.dateTo ? ' – ' + fmtDateResend(item.dateTo) : ''}` : '';
+    const priceStr = item.costDbl || item.cost || item.price
+      ? `${item.currency || ''} ${item.costDbl || item.cost || item.price}`.trim()
+      : '';
+    let lines = [
+      'Dear Sir or Madam,',
+      '',
+      'Please find below the details of our reservation:',
+      '',
+      `Reference: ${label}`,
+    ];
+    if (dateStr) lines.push(`Dates: ${dateStr}`);
+    if (priceStr) lines.push(`Price: ${priceStr}`);
+    lines.push('');
+    lines.push('Please find the confirmation document attached.');
+    lines.push('');
+    lines.push('Best regards,');
+    lines.push('--');
+    lines.push('Helena Dlasková, sales');
+    lines.push('TOUR PRAGENSES, PRAGENSES s.r.o.');
+    lines.push('Lipnická 688, Praha 9 - Kyje, Czech Republic');
+    lines.push('Tlf - whatsapp : +420 777 079 997');
+    lines.push('VAT: CZ284 45 961');
+    return lines.join('\n');
+  };
+
   const openResendModal = (item) => {
     setResendError('');
+    setResendBodyText(buildResendDefaultText(item));
     setResendModalItem(item);
   };
 
@@ -845,17 +875,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         ...(item.attachments || []),
       ];
       const label = item.name || item.city || 'reserva';
-      const dateStr = item.dateFrom ? `${fmtDateResend(item.dateFrom)}${item.dateTo ? ' – ' + fmtDateResend(item.dateTo) : ''}` : '';
-      const priceStr = item.costDbl || item.cost || item.price
-        ? `${item.currency || ''} ${item.costDbl || item.cost || item.price}`.trim()
-        : '';
-      let bodyHtml = `<p>Dear Sir or Madam,</p><p>Please find below the details of our reservation:</p><ul>`;
-      bodyHtml += `<li><b>Reference:</b> ${label}</li>`;
-      if (dateStr) bodyHtml += `<li><b>Dates:</b> ${dateStr}</li>`;
-      if (priceStr) bodyHtml += `<li><b>Price:</b> ${priceStr}</li>`;
-      bodyHtml += `</ul>`;
-      if (files.length > 0) bodyHtml += `<p>Please find the confirmation document attached.</p>`;
-      bodyHtml += `<p>Best regards,<br>Tour Pragenses</p>`;
+      // Convert the edited plain text back to simple HTML paragraphs
+      const bodyHtml = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">' +
+        resendBodyText.split('\n').map(l => l.trim() ? `<p style="margin:2px 0">${l}</p>` : '<p style="margin:6px 0">&nbsp;</p>').join('') +
+        '</div>';
 
       // Fetch each attachment as base64 to send along with the email
       const attachmentsPayload = [];
@@ -1244,20 +1267,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       {/* Resend/forward booking modal */}
       {resendModalItem && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 440, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📧 Přeposlat rezervaci</div>
             <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Komu:</div>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{resendModalItem.contactEmail}</div>
-            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Obsah emailu:</div>
-            <div style={{ background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 8, padding: 12, fontSize: 13, marginBottom: 12 }}>
-              <div><b>Reference:</b> {resendModalItem.name || resendModalItem.city || '—'}</div>
-              {resendModalItem.dateFrom && (
-                <div><b>Dates:</b> {fmtDateResend(resendModalItem.dateFrom)}{resendModalItem.dateTo ? ` – ${fmtDateResend(resendModalItem.dateTo)}` : ''}</div>
-              )}
-              {(resendModalItem.costDbl || resendModalItem.cost || resendModalItem.price) && (
-                <div><b>Price:</b> {resendModalItem.currency || ''} {resendModalItem.costDbl || resendModalItem.cost || resendModalItem.price}</div>
-              )}
-            </div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Text emailu (uprav podle potřeby):</div>
+            <textarea value={resendBodyText} onChange={e => setResendBodyText(e.target.value)}
+              rows={16}
+              style={{ width: '100%', boxSizing: 'border-box', padding: 10, border: `1px solid ${colors.border}`, borderRadius: 8, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5, marginBottom: 12, resize: 'vertical' }} />
             <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Přílohy:</div>
             <div style={{ fontSize: 13, marginBottom: 16 }}>
               {[
