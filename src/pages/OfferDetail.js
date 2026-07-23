@@ -1674,7 +1674,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                   )}
                   <input type="email" value={it.contactEmail || ''} onChange={e => updateItem(it.id, 'contactEmail', e.target.value)}
                     placeholder="email dodavatele" title="Email dodavatele — klikni na 📧 pro přeposlání rezervace"
-                    style={{ ...iStyle, width: 130, fontSize: 11 }} />
+                    style={{ ...iStyle, width: 200, fontSize: 11 }} />
                   {it.contactEmail && (
                     <button onClick={() => openResendModal(it)}
                       title="Přeposlat rezervaci (datum, cena, příloha) na tento email"
