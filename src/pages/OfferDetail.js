@@ -1672,18 +1672,21 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   )}
+
+                  <button onClick={() => setNoteOpenIds(prev => { const s = new Set(prev); s.has(it.id) ? s.delete(it.id) : s.add(it.id); return s; })}
+                    title={it.note ? 'Poznámka: ' + it.note : 'Přidat poznámku'}
+                    style={{ padding: '5px 8px', background: it.note ? '#fff8e1' : 'transparent', border: `1px solid ${it.note ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: it.note ? '#854f0b' : colors.muted }}>📝</button>
+                  <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px 6px 34px' }}>
                   <input type="email" value={it.contactEmail || ''} onChange={e => updateItem(it.id, 'contactEmail', e.target.value)}
                     placeholder="email dodavatele" title="Email dodavatele — klikni na 📧 pro přeposlání rezervace"
-                    style={{ ...iStyle, width: 200, fontSize: 11 }} />
+                    style={{ ...iStyle, width: 260, fontSize: 11 }} />
                   {it.contactEmail && (
                     <button onClick={() => openResendModal(it)}
                       title="Přeposlat rezervaci (datum, cena, příloha) na tento email"
                       style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
                   )}
-                  <button onClick={() => setNoteOpenIds(prev => { const s = new Set(prev); s.has(it.id) ? s.delete(it.id) : s.add(it.id); return s; })}
-                    title={it.note ? 'Poznámka: ' + it.note : 'Přidat poznámku'}
-                    style={{ padding: '5px 8px', background: it.note ? '#fff8e1' : 'transparent', border: `1px solid ${it.note ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: it.note ? '#854f0b' : colors.muted }}>📝</button>
-                  <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
                 </div>
                 {noteOpenIds.has(it.id) && (
                   <div style={{ padding: '4px 8px 8px', background: rowBg === 'transparent' ? '#fafafa' : rowBg }}>
