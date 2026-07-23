@@ -34,17 +34,46 @@ function ok250($r) { return substr($r,0,3) === "250"; }
 function makeMessageId($domain) {
   return "<" . bin2hex(random_bytes(16)) . "@" . $domain . ">";
 }
-function buildEmailData($fromLabel, $fromEmail, $to, $subject, $body) {
+// $attachments: array of {filename, content (base64)} — optional. When empty,
+// this produces EXACTLY the same output as before (plain text/html email).
+function buildEmailData($fromLabel, $fromEmail, $to, $subject, $body, $attachments = array()) {
   $messageId = makeMessageId("tour-pragenses.com");
-  $date = date("r"); // RFC 2822 formatted date
-  return "From: " . $fromLabel . " <" . $fromEmail . ">\r\n" .
-         "To: " . $to . "\r\n" .
-         "Subject: " . $subject . "\r\n" .
-         "Date: " . $date . "\r\n" .
-         "Message-ID: " . $messageId . "\r\n" .
-         "MIME-Version: 1.0\r\n" .
+  $date = date("r");
+  $headers = "From: " . $fromLabel . " <" . $fromEmail . ">\r\n" .
+             "To: " . $to . "\r\n" .
+             "Subject: " . $subject . "\r\n" .
+             "Date: " . $date . "\r\n" .
+             "Message-ID: " . $messageId . "\r\n" .
+             "MIME-Version: 1.0\r\n";
+
+  if (empty($attachments)) {
+    return $headers .
+           "Content-Type: text/html; charset=UTF-8\r\n" .
+           "\r\n" . $body . "\r\n.\r\n";
+  }
+
+  // Build a multipart/mixed message: HTML body + one or more attachments
+  $boundary = "TPB_" . bin2hex(random_bytes(12));
+  $msg = $headers .
+         "Content-Type: multipart/mixed; boundary=\"" . $boundary . "\"\r\n\r\n" .
+         "--" . $boundary . "\r\n" .
          "Content-Type: text/html; charset=UTF-8\r\n" .
-         "\r\n" . $body . "\r\n.\r\n";
+         "Content-Transfer-Encoding: 8bit\r\n\r\n" .
+         $body . "\r\n\r\n";
+
+  foreach ($attachments as $att) {
+    $filename = isset($att["filename"]) ? $att["filename"] : "attachment";
+    $content = isset($att["content"]) ? $att["content"] : "";
+    // Re-wrap base64 to 76-char lines per RFC 2045, in case the client sent it unwrapped
+    $content = rtrim(chunk_split($content, 76, "\r\n"));
+    $msg .= "--" . $boundary . "\r\n" .
+            "Content-Type: application/octet-stream; name=\"" . $filename . "\"\r\n" .
+            "Content-Transfer-Encoding: base64\r\n" .
+            "Content-Disposition: attachment; filename=\"" . $filename . "\"\r\n\r\n" .
+            $content . "\r\n\r\n";
+  }
+  $msg .= "--" . $boundary . "--\r\n.\r\n";
+  return $msg;
 }
 $t = stream_socket_client("ssl://smtp.svethostingu.cz:465", $errno, $errstr, 30);
 if (!$t) { echo json_encode(array("error" => $errstr)); exit; }
@@ -54,6 +83,7 @@ sr($t,"AUTH LOGIN");
 sr($t,base64_encode($authUser));
 $authResp = sr($t,base64_encode($authPass));
 if (substr($authResp,0,3) !== "235") { echo json_encode(array("error" => "AUTH failed: ".trim($authResp))); sr($t,"QUIT"); fclose($t); exit; }
+$attachments = isset($data["attachments"]) && is_array($data["attachments"]) ? $data["attachments"] : array();
 $results = array();
 if (isset($data["recipients"]) && is_array($data["recipients"])) {
   foreach ($data["recipients"] as $r) {
@@ -64,7 +94,7 @@ if (isset($data["recipients"]) && is_array($data["recipients"])) {
     $rc = sr($t,"RCPT TO:<".$to.">");
     if (!ok250($rc)) { $results[] = array("ok" => false, "error" => trim($rc)); continue; }
     sr($t,"DATA");
-    fputs($t, buildEmailData($fromLabel, $fromEmail, $to, $subject, $body));
+    fputs($t, buildEmailData($fromLabel, $fromEmail, $to, $subject, $body, $attachments));
     $resp = rd($t);
     $results[] = array("ok" => strpos($resp,"250") !== false, "error" => strpos($resp,"250") !== false ? null : trim($resp));
   }
@@ -75,7 +105,7 @@ if (isset($data["recipients"]) && is_array($data["recipients"])) {
   $rc = sr($t,"RCPT TO:<".$to.">");
   if (!ok250($rc)) { echo json_encode(array("error" => trim($rc))); sr($t,"QUIT"); fclose($t); exit; }
   sr($t,"DATA");
-  fputs($t, buildEmailData($fromLabel, $fromEmail, $to, $subject, $body));
+  fputs($t, buildEmailData($fromLabel, $fromEmail, $to, $subject, $body, $attachments));
   $resp = rd($t);
   sr($t,"QUIT"); fclose($t);
   if (strpos($resp,"250") !== false) { echo json_encode(array("ok" => true)); } else { echo json_encode(array("error" => trim($resp))); }
