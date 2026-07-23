@@ -677,6 +677,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [resendSending, setResendSending] = React.useState(false);
   const [resendError, setResendError] = React.useState('');
   const [resendBodyText, setResendBodyText] = React.useState('');
+  const [resendCheckedEmails, setResendCheckedEmails] = React.useState([]);
+  const [resendExtraEmail, setResendExtraEmail] = React.useState('');
 
   React.useEffect(() => {
     if (newItemRef.current) {
@@ -861,12 +863,15 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const openResendModal = (item) => {
     setResendError('');
     setResendBodyText(buildResendDefaultText(item));
+    setResendCheckedEmails(item.contactEmails || (item.contactEmail ? [item.contactEmail] : []));
+    setResendExtraEmail('');
     setResendModalItem(item);
   };
 
   const sendResendEmail = async () => {
     const item = resendModalItem;
-    if (!item || !item.contactEmail) return;
+    const recipients = [...resendCheckedEmails, ...(resendExtraEmail.trim() ? [resendExtraEmail.trim()] : [])];
+    if (!item || recipients.length === 0) return;
     setResendSending(true);
     setResendError('');
     try {
@@ -902,7 +907,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          to: item.contactEmail,
+          recipients: recipients.map(email => ({ email })),
           subject: `Reservation details / ${label}`,
           body: bodyHtml,
           from: 'reservas3',
@@ -911,6 +916,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      const failed = (data.results || []).filter(r => !r.ok);
+      if (failed.length > 0) throw new Error(`${failed.length} z ${recipients.length} emailů se nepodařilo odeslat`);
       setResendModalItem(null);
     } catch (e) {
       setResendError(e.message || 'Falha ao enviar');
@@ -1269,8 +1276,20 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📧 Přeposlat rezervaci</div>
-            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Komu:</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{resendModalItem.contactEmail}</div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Komu odeslat:</div>
+            <div style={{ marginBottom: 8 }}>
+              {(resendModalItem.contactEmails || (resendModalItem.contactEmail ? [resendModalItem.contactEmail] : [])).map((email, ei) => (
+                <label key={ei} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 4, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={resendCheckedEmails.includes(email)}
+                    onChange={e => setResendCheckedEmails(prev => e.target.checked ? [...prev, email] : prev.filter(x => x !== email))} />
+                  {email}
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Přidat další email (jen pro toto odeslání):</div>
+            <input type="email" value={resendExtraEmail} onChange={e => setResendExtraEmail(e.target.value)}
+              placeholder="např. jina.osoba@hotel.com"
+              style={{ width: '100%', boxSizing: 'border-box', padding: 8, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, marginBottom: 12 }} />
             <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Text emailu (uprav podle potřeby):</div>
             <textarea value={resendBodyText} onChange={e => setResendBodyText(e.target.value)}
               rows={16}
@@ -1287,7 +1306,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             </div>
             {resendError && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>⚠ {resendError}</div>}
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={sendResendEmail} disabled={resendSending}
+              <button onClick={sendResendEmail} disabled={resendSending || (resendCheckedEmails.length === 0 && !resendExtraEmail.trim())}
                 style={{ flex: 1, padding: '10px', background: resendSending ? colors.border : colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: resendSending ? 'default' : 'pointer', fontWeight: 600 }}>
                 {resendSending ? '⏳ Odesílám…' : '✉ Odeslat'}
               </button>
@@ -1695,13 +1714,29 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     style={{ padding: '5px 8px', background: it.note ? '#fff8e1' : 'transparent', border: `1px solid ${it.note ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: it.note ? '#854f0b' : colors.muted }}>📝</button>
                   <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px 6px 34px' }}>
-                  <input type="email" value={it.contactEmail || ''} onChange={e => updateItem(it.id, 'contactEmail', e.target.value)}
-                    placeholder="email dodavatele" title="Email dodavatele — klikni na 📧 pro přeposlání rezervace"
-                    style={{ ...iStyle, width: 260, fontSize: 11 }} />
-                  {it.contactEmail && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px 6px 34px', flexWrap: 'wrap' }}>
+                  {(it.contactEmails || (it.contactEmail ? [it.contactEmail] : [])).map((email, ei) => (
+                    <span key={ei} style={{ display: 'flex', alignItems: 'center', gap: 3, background: '#eef2f7', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '2px 4px 2px 8px', fontSize: 11 }}>
+                      {email}
+                      <button onClick={() => {
+                        const current = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
+                        updateItem(it.id, 'contactEmails', current.filter((_, i) => i !== ei));
+                      }} style={{ background: 'none', border: 'none', color: colors.danger, cursor: 'pointer', fontSize: 11, padding: '0 2px' }}>✕</button>
+                    </span>
+                  ))}
+                  <input type="email" placeholder="+ přidat email" title="Napiš email a stiskni Enter"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        e.preventDefault();
+                        const current = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
+                        updateItem(it.id, 'contactEmails', [...current, e.target.value.trim()]);
+                        e.target.value = '';
+                      }
+                    }}
+                    style={{ ...iStyle, width: 140, fontSize: 11 }} />
+                  {(it.contactEmails?.length > 0 || it.contactEmail) && (
                     <button onClick={() => openResendModal(it)}
-                      title="Přeposlat rezervaci (datum, cena, příloha) na tento email"
+                      title="Přeposlat rezervaci (datum, cena, příloha)"
                       style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
                   )}
                 </div>
