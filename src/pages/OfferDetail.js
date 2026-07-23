@@ -673,6 +673,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const newItemRef = React.useRef(null);
   const [newItemId, setNewItemId] = React.useState(null);
   const [noteOpenIds, setNoteOpenIds] = React.useState(() => new Set());
+  const [resendModalItem, setResendModalItem] = React.useState(null);
+  const [resendSending, setResendSending] = React.useState(false);
+  const [resendError, setResendError] = React.useState('');
 
   React.useEffect(() => {
     if (newItemRef.current) {
@@ -822,6 +825,74 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       const remaining = ((current && current.attachments) || []).filter(a => a.path !== file.path);
       updateItemFields(item.id, { attachments: remaining });
     }
+  };
+
+  const fmtDateResend = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
+
+  const openResendModal = (item) => {
+    setResendError('');
+    setResendModalItem(item);
+  };
+
+  const sendResendEmail = async () => {
+    const item = resendModalItem;
+    if (!item || !item.contactEmail) return;
+    setResendSending(true);
+    setResendError('');
+    try {
+      const files = [
+        ...(item.confirmationFileUrl ? [{ url: item.confirmationFileUrl, name: item.confirmationFileName }] : []),
+        ...(item.attachments || []),
+      ];
+      const label = item.name || item.city || 'reserva';
+      const dateStr = item.dateFrom ? `${fmtDateResend(item.dateFrom)}${item.dateTo ? ' – ' + fmtDateResend(item.dateTo) : ''}` : '';
+      const priceStr = item.costDbl || item.cost || item.price
+        ? `${item.currency || ''} ${item.costDbl || item.cost || item.price}`.trim()
+        : '';
+      let bodyHtml = `<p>Dear Sir or Madam,</p><p>Please find below the details of our reservation:</p><ul>`;
+      bodyHtml += `<li><b>Reference:</b> ${label}</li>`;
+      if (dateStr) bodyHtml += `<li><b>Dates:</b> ${dateStr}</li>`;
+      if (priceStr) bodyHtml += `<li><b>Price:</b> ${priceStr}</li>`;
+      bodyHtml += `</ul>`;
+      if (files.length > 0) bodyHtml += `<p>Please find the confirmation document attached.</p>`;
+      bodyHtml += `<p>Best regards,<br>Tour Pragenses</p>`;
+
+      // Fetch each attachment as base64 to send along with the email
+      const attachmentsPayload = [];
+      for (const f of files) {
+        try {
+          const res = await fetch(f.url);
+          const blob = await res.blob();
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          attachmentsPayload.push({ filename: f.name || 'anexo', content: base64 });
+        } catch (e) {
+          console.error('Failed to fetch attachment for resend:', e);
+        }
+      }
+
+      const res = await fetch('https://tour-pragenses.com/mailer.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: item.contactEmail,
+          subject: `Reservation details / ${label}`,
+          body: bodyHtml,
+          from: 'reservas3',
+          attachments: attachmentsPayload,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setResendModalItem(null);
+    } catch (e) {
+      setResendError(e.message || 'Falha ao enviar');
+    }
+    setResendSending(false);
   };
 
   const removeItem = (id) => {
@@ -1166,6 +1237,48 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                 🔑 Nouzové odemčení (zapomenutý PIN)
               </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Resend/forward booking modal */}
+      {resendModalItem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 440, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📧 Přeposlat rezervaci</div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Komu:</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{resendModalItem.contactEmail}</div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Obsah emailu:</div>
+            <div style={{ background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 8, padding: 12, fontSize: 13, marginBottom: 12 }}>
+              <div><b>Reference:</b> {resendModalItem.name || resendModalItem.city || '—'}</div>
+              {resendModalItem.dateFrom && (
+                <div><b>Dates:</b> {fmtDateResend(resendModalItem.dateFrom)}{resendModalItem.dateTo ? ` – ${fmtDateResend(resendModalItem.dateTo)}` : ''}</div>
+              )}
+              {(resendModalItem.costDbl || resendModalItem.cost || resendModalItem.price) && (
+                <div><b>Price:</b> {resendModalItem.currency || ''} {resendModalItem.costDbl || resendModalItem.cost || resendModalItem.price}</div>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Přílohy:</div>
+            <div style={{ fontSize: 13, marginBottom: 16 }}>
+              {[
+                ...(resendModalItem.confirmationFileUrl ? [resendModalItem.confirmationFileName || 'potvrzení'] : []),
+                ...((resendModalItem.attachments || []).map(a => a.name)),
+              ].map((n, i) => <div key={i}>📎 {n}</div>)}
+              {!resendModalItem.confirmationFileUrl && (!resendModalItem.attachments || resendModalItem.attachments.length === 0) && (
+                <div style={{ color: colors.muted }}>Žádná příloha</div>
+              )}
+            </div>
+            {resendError && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>⚠ {resendError}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={sendResendEmail} disabled={resendSending}
+                style={{ flex: 1, padding: '10px', background: resendSending ? colors.border : colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: resendSending ? 'default' : 'pointer', fontWeight: 600 }}>
+                {resendSending ? '⏳ Odesílám…' : '✉ Odeslat'}
+              </button>
+              <button onClick={() => setResendModalItem(null)} disabled={resendSending}
+                style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>
+                Zrušit
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1558,6 +1671,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
                       {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
+                  )}
+                  <input type="email" value={it.contactEmail || ''} onChange={e => updateItem(it.id, 'contactEmail', e.target.value)}
+                    placeholder="email dodavatele" title="Email dodavatele — klikni na 📧 pro přeposlání rezervace"
+                    style={{ ...iStyle, width: 130, fontSize: 11 }} />
+                  {it.contactEmail && (
+                    <button onClick={() => openResendModal(it)}
+                      title="Přeposlat rezervaci (datum, cena, příloha) na tento email"
+                      style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
                   )}
                   <button onClick={() => setNoteOpenIds(prev => { const s = new Set(prev); s.has(it.id) ? s.delete(it.id) : s.add(it.id); return s; })}
                     title={it.note ? 'Poznámka: ' + it.note : 'Přidat poznámku'}
