@@ -1756,12 +1756,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                       }
                     }}
                     style={{ ...iStyle, width: 140, fontSize: 11 }} />
-                  {(it.contactEmails?.length > 0 || it.contactEmail) && (
-                    <button onClick={() => openResendModal(it, 'forward')}
-                      title="Přeposlat rezervaci (datum, cena, příloha)"
-                      style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
-                  )}
-                  {(it.contactEmails?.length > 0 || it.contactEmail) && !it.cancelled && (
+                  <button onClick={() => openResendModal(it, 'forward')}
+                    title="Přeposlat rezervaci (datum, cena, příloha)"
+                    style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
+                  {!it.cancelled && (
                     <button onClick={() => openResendModal(it, 'cancel')}
                       title="Zrušit tuto službu (odešle storno email dodavateli)"
                       style={{ padding: '5px 8px', background: '#fee2e2', border: '1px solid #dc2626', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#dc2626' }}>🚫</button>
