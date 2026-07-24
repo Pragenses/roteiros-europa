@@ -679,6 +679,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [resendBodyText, setResendBodyText] = React.useState('');
   const [resendCheckedEmails, setResendCheckedEmails] = React.useState([]);
   const [resendExtraEmail, setResendExtraEmail] = React.useState('');
+  const [resendMode, setResendMode] = React.useState('forward'); // 'forward' | 'cancel'
 
   React.useEffect(() => {
     if (newItemRef.current) {
@@ -832,23 +833,40 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   const fmtDateResend = (d) => { if (!d || d.length < 10) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
 
-  const buildResendDefaultText = (item) => {
+  const buildResendDefaultText = (item, mode = 'forward') => {
     const label = item.name || item.city || 'reserva';
     const dateStr = item.dateFrom ? `${fmtDateResend(item.dateFrom)}${item.dateTo ? ' – ' + fmtDateResend(item.dateTo) : ''}` : '';
     const priceStr = item.costDbl || item.cost || item.price
       ? `${item.currency || ''} ${item.costDbl || item.cost || item.price}`.trim()
       : '';
-    let lines = [
-      'Dear Sir or Madam,',
-      '',
-      'Please find below the details of our reservation:',
-      '',
-      `Reference: ${label}`,
-    ];
-    if (dateStr) lines.push(`Dates: ${dateStr}`);
-    if (priceStr) lines.push(`Price: ${priceStr}`);
-    lines.push('');
-    lines.push('Please find the confirmation document attached.');
+    let lines;
+    if (mode === 'cancel') {
+      lines = [
+        'Dear Sir or Madam,',
+        '',
+        'We regret to inform you that we need to cancel the following reservation:',
+        '',
+        `Reference: ${label}`,
+      ];
+      if (dateStr) lines.push(`Dates: ${dateStr}`);
+      if (priceStr) lines.push(`Price: ${priceStr}`);
+      lines.push('');
+      lines.push('Please confirm the cancellation and let us know if any cancellation fee applies according to the booking conditions.');
+      lines.push('');
+      lines.push('We apologize for any inconvenience and thank you for your understanding.');
+    } else {
+      lines = [
+        'Dear Sir or Madam,',
+        '',
+        'Please find below the details of our reservation:',
+        '',
+        `Reference: ${label}`,
+      ];
+      if (dateStr) lines.push(`Dates: ${dateStr}`);
+      if (priceStr) lines.push(`Price: ${priceStr}`);
+      lines.push('');
+      lines.push('Please find the confirmation document attached.');
+    }
     lines.push('');
     lines.push('Best regards,');
     lines.push('--');
@@ -860,9 +878,10 @@ export default function OfferDetail({ offerId, navigate, colors }) {
     return lines.join('\n');
   };
 
-  const openResendModal = (item) => {
+  const openResendModal = (item, mode = 'forward') => {
     setResendError('');
-    setResendBodyText(buildResendDefaultText(item));
+    setResendMode(mode);
+    setResendBodyText(buildResendDefaultText(item, mode));
     setResendCheckedEmails(item.contactEmails || (item.contactEmail ? [item.contactEmail] : []));
     setResendExtraEmail('');
     setResendModalItem(item);
@@ -908,7 +927,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recipients: recipients.map(email => ({ email })),
-          subject: `Reservation details / ${label}`,
+          subject: resendMode === 'cancel' ? `Cancellation / ${label}` : `Reservation details / ${label}`,
           body: bodyHtml,
           from: 'reservas3',
           attachments: attachmentsPayload,
@@ -918,6 +937,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       if (data.error) throw new Error(data.error);
       const failed = (data.results || []).filter(r => !r.ok);
       if (failed.length > 0) throw new Error(`${failed.length} z ${recipients.length} emailů se nepodařilo odeslat`);
+      if (resendMode === 'cancel') updateItem(item.id, 'cancelled', true);
       setResendModalItem(null);
     } catch (e) {
       setResendError(e.message || 'Falha ao enviar');
@@ -1275,7 +1295,9 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       {resendModalItem && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📧 Přeposlat rezervaci</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, color: resendMode === 'cancel' ? '#dc2626' : colors.text }}>
+              {resendMode === 'cancel' ? '🚫 Zrušit službu' : '📧 Přeposlat rezervaci'}
+            </div>
             <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Komu odeslat:</div>
             <div style={{ marginBottom: 8 }}>
               {(resendModalItem.contactEmails || (resendModalItem.contactEmail ? [resendModalItem.contactEmail] : [])).map((email, ei) => (
@@ -1307,8 +1329,8 @@ export default function OfferDetail({ offerId, navigate, colors }) {
             {resendError && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>⚠ {resendError}</div>}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={sendResendEmail} disabled={resendSending || (resendCheckedEmails.length === 0 && !resendExtraEmail.trim())}
-                style={{ flex: 1, padding: '10px', background: resendSending ? colors.border : colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: resendSending ? 'default' : 'pointer', fontWeight: 600 }}>
-                {resendSending ? '⏳ Odesílám…' : '✉ Odeslat'}
+                style={{ flex: 1, padding: '10px', background: resendSending ? colors.border : (resendMode === 'cancel' ? '#dc2626' : colors.primary), color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: resendSending ? 'default' : 'pointer', fontWeight: 600 }}>
+                {resendSending ? '⏳ Odesílám…' : (resendMode === 'cancel' ? '🚫 Odeslat storno' : '✉ Odeslat')}
               </button>
               <button onClick={() => setResendModalItem(null)} disabled={resendSending}
                 style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>
@@ -1526,7 +1548,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : (isGuideHotel || isDriverHotel) ? '60px 2fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               const isEnabled = it.enabled !== false;
-              const rowBg = isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
+              const rowBg = it.cancelled ? '#FEE2E2' : isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               return (
                 <React.Fragment key={it.id}>
                 <div ref={it.id === newItemId ? newItemRef : null}
@@ -1735,9 +1757,19 @@ export default function OfferDetail({ offerId, navigate, colors }) {
                     }}
                     style={{ ...iStyle, width: 140, fontSize: 11 }} />
                   {(it.contactEmails?.length > 0 || it.contactEmail) && (
-                    <button onClick={() => openResendModal(it)}
+                    <button onClick={() => openResendModal(it, 'forward')}
                       title="Přeposlat rezervaci (datum, cena, příloha)"
                       style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
+                  )}
+                  {(it.contactEmails?.length > 0 || it.contactEmail) && !it.cancelled && (
+                    <button onClick={() => openResendModal(it, 'cancel')}
+                      title="Zrušit tuto službu (odešle storno email dodavateli)"
+                      style={{ padding: '5px 8px', background: '#fee2e2', border: '1px solid #dc2626', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#dc2626' }}>🚫</button>
+                  )}
+                  {it.cancelled && (
+                    <button onClick={() => updateItem(it.id, 'cancelled', false)}
+                      title="Vrátit zpět (zrušit označení 'zrušeno')"
+                      style={{ padding: '5px 8px', background: '#dc2626', border: '1px solid #dc2626', borderRadius: 5, fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>ZRUŠENO ✕</button>
                   )}
                 </div>
                 {noteOpenIds.has(it.id) && (
