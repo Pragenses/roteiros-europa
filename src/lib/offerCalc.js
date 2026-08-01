@@ -73,13 +73,9 @@ export const computeOfferPricing = (items, margin, paxList, rates) => {
   const guideHotelTotalEUR = guideHotelItems.reduce((sum, it) => sum + getGuideHotelCost(it), 0);
   const groupTotalEUR = regularGroupTotalEUR + guideHotelTotalEUR;
 
-  // FOC: previously this always added 1 free person's cost automatically.
-  // Per explicit instruction, FOC must NEVER be calculated automatically —
-  // it only applies when a specific focCount is set by the user (see
-  // OfferDetail.js / OfferPrint.js, which have their own focCount-aware
-  // calculations and are what the app actually uses; this function is
-  // currently unused elsewhere).
-  const focPoolEUR = 0;
+  // FOC: the free person's cost is the sum of ALL per-pax items (hotels, meals, tickets, city tax, boats, trains...)
+  // on a DBL basis, divided across the paying pax (always 1 FOC by default, per Helena's explicit instruction).
+  const focPoolEUR = perPaxDblEUR;
 
   const paxCounts = (paxList || '').split(',').map(s => parseInt(s.trim())).filter(n => n > 0);
 

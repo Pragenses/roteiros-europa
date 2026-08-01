@@ -172,7 +172,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
   const [pinError, setPinError] = useState('');
   const [margin, setMargin] = useState(15);
   const [paxList, setPaxList] = useState('15,20,25,30,35');
-  const [focCount, setFocCount] = useState(0);
+  const [focCount, setFocCount] = useState(1);
   const [focType, setFocType] = useState('dbl');
   const [showShareLink, setShowShareLink] = useState(false);
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
@@ -193,7 +193,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
       setIsLocked(data.locked || false);
       setMargin(data.margin ?? 15);
       setPaxList(data.paxList || '15,20,25,30,35');
-      setFocCount(data.focCount ?? 0);
+      setFocCount(data.focCount ?? 1);
       setFocType(data.focType || 'dbl');
       setShowSplit(data.showSplit ?? false);
     }
@@ -978,7 +978,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
         }
       }
       await updateDoc(doc(db, 'offers', offerId), {
-        items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 0, focType,
+        items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
         updatedAt: new Date().toISOString(),
       });
       setLastSavedItems(currentItems);
@@ -1164,7 +1164,7 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   // FOC pool: DBL = per-pax DBL cost, SNGL = per-pax SNGL cost
   const focPoolEUR = focType === 'sngl' ? perPaxSnglEUR : perPaxDblEUR;
-  const focCountNum = parseInt(focCount) || 0;
+  const focCountNum = parseInt(focCount) || 1;
 
   // Compute per-currency breakdown (only CHF, GBP — other currencies stay in EUR)
   const SPLIT_CURRENCIES = ['CHF', 'GBP'];
