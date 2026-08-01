@@ -340,11 +340,15 @@ export default function Bus({ navigate, colors, navParams }) {
           const h = sel[i];
           setSendProgress(`Zaznamenávám ${i+1}/${sel.length}`);
           if (data.results[i] && data.results[i].ok) {
-            await addDoc(collection(db, 'busEmailLog'), {
-              busCompanyId: h.id, busCompanyName: h.name||h.email, busCompanyCity: h.city,
-              email: h.email, subject, groupName, checkIn, checkOut,
-              sentAt: serverTimestamp(), status: 'sent',
-            });
+            try {
+              await addDoc(collection(db, 'busEmailLog'), {
+                busCompanyId: h.id, busCompanyName: h.name||h.email, busCompanyCity: h.city,
+                email: h.email, subject, groupName, checkIn, checkOut,
+                sentAt: serverTimestamp(), status: 'sent',
+              });
+            } catch (logErr) {
+              console.error('Failed to write busEmailLog entry (email was still sent):', logErr);
+            }
             sent++;
           } else { failed++; }
         }

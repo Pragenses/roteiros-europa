@@ -329,11 +329,18 @@ export default function Hotels({ navigate, colors, navParams }) {
           const h = sel[i];
           setSendProgress(`Zaznamenávám ${i+1}/${sel.length}`);
           if (data.results[i] && data.results[i].ok) {
-            await addDoc(collection(db, 'hotelEmailLog'), {
-              hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
-              email: h.email, subject, groupName, checkIn, checkOut,
-              sentAt: serverTimestamp(), status: 'sent',
-            });
+            try {
+              await addDoc(collection(db, 'hotelEmailLog'), {
+                hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
+                email: h.email, subject, groupName, checkIn, checkOut,
+                sentAt: serverTimestamp(), status: 'sent',
+              });
+            } catch (logErr) {
+              // The email itself was sent successfully (mailer.php confirmed it) —
+              // a failure to write the log entry must never be reported as a
+              // failed send.
+              console.error('Failed to write hotelEmailLog entry (email was still sent):', logErr);
+            }
             sent++;
           } else { failed++; }
         }
