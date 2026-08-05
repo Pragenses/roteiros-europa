@@ -176,6 +176,22 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const programParagraphs = (() => {
     const html = offer.programText || '';
     if (!html.trim()) return [];
+    const stripped = html.replace(/<[^>]+>/g, '');
+    // Day-marker patterns that reliably indicate a new day/paragraph — the
+    // 📅 emoji style, "Nº DIA –" style, "DD Mmm (Wkday) -" style, "DD.MM.YY –"
+    // style, or "Month DD –" style (e.g. "May 11 – Trf in..."). The (?<!\d)
+    // guard stops two-digit days like "10º DIA" from being mis-split.
+    const MONTHS_RE = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December|Janeiro|Fevereiro|Março|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro';
+    const dayMarkerRegex = new RegExp('(?=📅|(?<!\\d)\\d{1,2}º\\s*DIA\\s*[–-]|(?<!\\d)\\d{1,2}\\s+[A-Za-zÀ-ÿ]{3}\\s+\\([A-Za-zÀ-ÿ]{3}\\)\\s*-|(?<!\\d)\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}\\s*[–-]|(?:' + MONTHS_RE + ')\\s+\\d{1,2}\\s*[–-](?!\\d))', 'gi');
+    // If day-markers are actually present in the text, they are the most
+    // reliable signal of true paragraph boundaries — use them regardless of
+    // how the text happens to be formatted (glued together, has stray
+    // newlines from pasting, etc.), rather than falling back to a naive
+    // newline split that might cut mid-sentence instead of at day breaks.
+    if (dayMarkerRegex.test(stripped)) {
+      const dayParts = stripped.split(dayMarkerRegex).map(p => p.trim()).filter(p => p);
+      if (dayParts.length > 1) return dayParts;
+    }
     // First try HTML splitting (contentEditable creates <div> per line in Chrome)
     const htmlParts = html
       .split(/<div>|<\/div>|<br\s*\/?>/i)
@@ -183,19 +199,12 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
       .filter(p => p && p !== '&nbsp;');
     if (htmlParts.length > 3) return htmlParts;
     // Fallback: plain text with \n (Safari/Firefox contentEditable or copy-pasted text)
-    const stripped = html.replace(/<[^>]+>/g, '');
     const plainParts = stripped
       .split(/\n+/)
       .map(p => p.trim())
       .filter(p => p);
     if (plainParts.length > 3) return plainParts;
-    // Last resort: split on a day-marker that always starts a new paragraph — the
-    // 📅 emoji style, the "Nº DIA –" style (e.g. "2º DIA – 20/05/2027 – FRANKFURT"), or the
-    // "DD Mmm (Wkday) -" style (e.g. "22 Jul (Qui) - EDIMBURGO"). The (?<!\d) guard stops
-    // two-digit days like "10º DIA" or "22 Jul" from being mis-split between their digits.
-    const MONTHS_RE = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December|Janeiro|Fevereiro|Março|Abril|Maio|Junho|Julho|Agosto|Setembro|Outubro|Novembro|Dezembro';
-    const dayParts = stripped.split(new RegExp('(?=📅|(?<!\\d)\\d{1,2}º\\s*DIA\\s*[–-]|(?<!\\d)\\d{1,2}\\s+[A-Za-zÀ-ÿ]{3}\\s+\\([A-Za-zÀ-ÿ]{3}\\)\\s*-|(?<!\\d)\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}\\s*[–-]|(?:' + MONTHS_RE + ')\\s+\\d{1,2}\\s*[–-](?!\\d))', 'i')).map(p => p.trim()).filter(p => p);
-    return dayParts.length > 0 ? dayParts : [html];
+    return [html];
   })();
   const createdDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const versions = offer.pdfVersions || [];
