@@ -78,7 +78,7 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
-  const userRole = user ? (USER_ROLES[user.email] || 'limited') : null;
+  const userRole = user ? (USER_ROLES[user.email] === 'limited' ? 'limited' : 'owner') : null;
 
   // Route-level protection: if a limited-role user somehow lands on an
   // owner-only page (stale sessionStorage, direct link, etc.), bounce them
