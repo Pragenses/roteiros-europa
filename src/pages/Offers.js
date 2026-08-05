@@ -21,7 +21,7 @@ const CLIENT_PALETTE = [
   '#E0F7FA', '#FFF3E0', '#F9FBE7', '#EDE7F6', '#E8EAF6',
 ];
 
-export default function Offers({ navigate, colors }) {
+export default function Offers({ navigate, colors, userRole, userEmail }) {
   const [offers, setOffers] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -35,13 +35,19 @@ export default function Offers({ navigate, colors }) {
       getDocs(collection(db, 'clients'))
     ]);
     // Only active (non-declined) offers
-    const allOffers = offSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+    let allOffers = offSnap.docs.map(d => ({ id: d.id, ...d.data() }))
       .filter(o => !o.declined)
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    // Limited-role users (e.g. a restricted employee) only ever see offers
+    // that have been explicitly granted to their email — everything else
+    // must not exist for them, not even as a hidden/greyed-out row.
+    if (userRole === 'limited') {
+      allOffers = allOffers.filter(o => (o.allowedUsers || []).includes(userEmail));
+    }
     setOffers(allOffers);
     setClients(cliSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     setLoading(false);
-  }, []);
+  }, [userRole, userEmail]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 

@@ -45,10 +45,20 @@ const COLORS = {
   info: '#0c447c',
 };
 
+const ALLOWED_EMAILS = ['helena.maria.brito@gmail.com', 'filipdlask@gmail.com', 'skorkovska@gmail.com'];
+// 'owner' = full access to everything. 'limited' = restricted employee role:
+// no Clients, no Calendar, and Offers are only visible when explicitly
+// granted per-offer (see offer.allowedUsers in OfferDetail.js).
+const USER_ROLES = {
+  'helena.maria.brito@gmail.com': 'owner',
+  'filipdlask@gmail.com': 'owner',
+  'skorkovska@gmail.com': 'limited',
+};
+
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '◈' },
-  { id: 'calendar', label: 'Calendar', icon: '◷' },
-  { id: 'clients', label: 'Clients', icon: '◉' },
+  { id: 'calendar', label: 'Calendar', icon: '◷', ownerOnly: true },
+  { id: 'clients', label: 'Clients', icon: '◉', ownerOnly: true },
   { id: 'orders', label: 'Orders', icon: '◧' },
   { id: 'offers', label: 'Offers', icon: '◫' },
   { id: 'providers', label: 'Providers', icon: '◎' },
@@ -68,6 +78,17 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
+  const userRole = user ? (USER_ROLES[user.email] || 'limited') : null;
+
+  // Route-level protection: if a limited-role user somehow lands on an
+  // owner-only page (stale sessionStorage, direct link, etc.), bounce them
+  // back to the dashboard rather than relying on the sidebar alone.
+  useEffect(() => {
+    if (userRole === 'limited' && NAV.find(n => n.id === page)?.ownerOnly) {
+      setPage('dashboard');
+      sessionStorage.setItem('currentPage', 'dashboard');
+    }
+  }, [userRole, page]);
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
@@ -85,8 +106,6 @@ export default function App() {
       setLoginError('Incorrect email or password.');
     }
   };
-
-  const ALLOWED_EMAILS = ['helena.maria.brito@gmail.com', 'filipdlask@gmail.com'];
 
   const handleGoogleLogin = async () => {
     setLoginError('');
@@ -166,11 +185,11 @@ export default function App() {
 
   const renderPage = () => {
     if (page === 'order-detail') return <OrderDetail orderId={selectedOrder} navigate={navigate} colors={COLORS} />;
-    if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} />;
+    if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
     if (page === 'offer-detail') {
       const oid = selectedOfferRef.current || selectedOffer;
       return oid
-        ? <OfferDetail offerId={oid} navigate={navigate} colors={COLORS} />
+        ? <OfferDetail offerId={oid} navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />
         : <div style={{ padding: 40, color: COLORS.muted }}>
             <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
           </div>;
@@ -189,6 +208,8 @@ export default function App() {
     return <Dashboard navigate={navigate} colors={COLORS} />;
   };
 
+  const visibleNav = NAV.filter(n => !n.ownerOnly || userRole === 'owner');
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
       <style>{`@media print { .app-sidebar { display: none !important; } .app-main { margin: 0 !important; padding: 0 !important; } }`}</style>
@@ -198,7 +219,7 @@ export default function App() {
           <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.white }}>Roteiros Europa</div>
         </div>
         <nav style={{ flex: 1, padding: '1rem 0' }}>
-          {NAV.map(n => (
+          {visibleNav.map(n => (
             <button key={n.id} onClick={() => navigate(n.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 1.25rem', background: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? 'rgba(200,168,75,0.15)' : 'transparent', border: 'none', borderLeft: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? `3px solid ${COLORS.accent}` : '3px solid transparent', color: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? COLORS.accent : 'rgba(255,255,255,0.65)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
               <span style={{ fontSize: 16 }}>{n.icon}</span>

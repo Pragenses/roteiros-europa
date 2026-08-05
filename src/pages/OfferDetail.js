@@ -159,7 +159,7 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
   );
 };
 
-export default function OfferDetail({ offerId, navigate, colors }) {
+export default function OfferDetail({ offerId, navigate, colors, userRole, userEmail }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
   const [items, setItems] = useState([]);
@@ -1124,6 +1124,14 @@ export default function OfferDetail({ offerId, navigate, colors }) {
 
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
+  if (userRole === 'limited' && !(offer.allowedUsers || []).includes(userEmail)) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: colors.muted }}>
+        <div style={{ fontSize: 15, marginBottom: 12 }}>🔒 Nemáte přístup k této nabídce.</div>
+        <button onClick={() => navigate('offers')} style={{ color: colors.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
+      </div>
+    );
+  }
 
   const activeItems = items.filter(it => it.enabled !== false);
   const groupItems = activeItems.filter(it => it.type === 'group');
@@ -1338,6 +1346,25 @@ export default function OfferDetail({ offerId, navigate, colors }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {userRole === 'owner' && (
+        <div style={{ background: (offer.allowedUsers || []).includes('skorkovska@gmail.com') ? '#e8f5e9' : '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 10, padding: '10px 16px', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+          <span style={{ color: colors.muted }}>Přístup Helena Škorkovská:</span>
+          <button onClick={() => {
+            const current = offer.allowedUsers || [];
+            const has = current.includes('skorkovska@gmail.com');
+            const next = has ? current.filter(e => e !== 'skorkovska@gmail.com') : [...current, 'skorkovska@gmail.com'];
+            updateDoc(doc(db, 'offers', offerId), { allowedUsers: next }).catch(err => console.error('Failed to update allowedUsers:', err));
+            setOffer(o => ({ ...o, allowedUsers: next }));
+          }} style={{
+            padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+            background: (offer.allowedUsers || []).includes('skorkovska@gmail.com') ? '#2d6a4f' : colors.border,
+            color: (offer.allowedUsers || []).includes('skorkovska@gmail.com') ? '#fff' : colors.text,
+          }}>
+            {(offer.allowedUsers || []).includes('skorkovska@gmail.com') ? '✓ Povoleno' : 'Zamezeno'}
+          </button>
         </div>
       )}
 
