@@ -64,7 +64,7 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
       endDate: f.endDate.value,
       status: 'draft',
       margin: parseFloat(f.margin.value) || 15,
-      focCount: parseInt(f.focCount.value) || 0,
+      focCount: (f.focCount.value === '' || f.focCount.value === undefined || f.focCount.value === null) ? 1 : (parseInt(f.focCount.value) || 0),
       paxList: '15,20,25,30,35',
       items: [],
       notes: f.notes.value,

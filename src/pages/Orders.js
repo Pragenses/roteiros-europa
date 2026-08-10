@@ -69,7 +69,7 @@ export default function Orders({ navigate, colors }) {
       paxCount: f.paxCount.value || '',
       status: f.status.value,
       destinations: f.destinations.value,
-      focCount: parseInt(f.focCount.value) || 1,
+      focCount: (f.focCount.value === '' || f.focCount.value === undefined || f.focCount.value === null) ? 1 : (parseInt(f.focCount.value) || 0),
       focType: f.focType.value,
       margin: parseFloat(f.margin.value) || 15,
       notes: f.notes.value,
@@ -192,7 +192,7 @@ export default function Orders({ navigate, colors }) {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{o.name}</div>
-                  <div style={{ fontSize: 12, color: colors.muted }}>{o.clientName} · {o.destinations || ''}{o.paxCount ? ` · ${o.paxCount} pax` : ''} · FOC {o.focCount || 1} ({o.focType || 'dbl'})</div>
+                  <div style={{ fontSize: 12, color: colors.muted }}>{o.clientName} · {o.destinations || ''}{o.paxCount ? ` · ${o.paxCount} pax` : ''} · FOC {o.focCount ?? 1} ({o.focType || 'dbl'})</div>
                 </div>
                 <Badge status={o.status} />
                 <button onClick={e => { e.stopPropagation(); handleDelete(o); }}

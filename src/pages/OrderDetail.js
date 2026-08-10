@@ -850,7 +850,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         <div style={{ flex: 1 }}>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: colors.primary, margin: 0 }}>{order.name}</h1>
           <div style={{ fontSize: 13, color: colors.muted }}>
-            {order.clientName} · {order.startDate} – {order.endDate} · {order.paxCount ? order.paxCount + ' pax' : 'pax TBC'} · FOC {order.focCount || 1} ({order.focType || 'dbl'}) · Margin {order.margin || 15}%
+            {order.clientName} · {order.startDate} – {order.endDate} · {order.paxCount ? order.paxCount + ' pax' : 'pax TBC'} · FOC {order.focCount ?? 1} ({order.focType || 'dbl'}) · Margin {order.margin || 15}%
           </div>
         </div>
         <button onClick={() => setEditingOrder(!editingOrder)} style={{ padding: '6px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 12, cursor: 'pointer', color: colors.muted, fontFamily: 'inherit' }}>
