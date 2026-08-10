@@ -61,7 +61,7 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const paxList = offer.paxList || '15,20,25,30,35';
   const activeItems = items.filter(it => it.enabled !== false);
 
-  const focCountNum = parseInt(offer.focCount) || 1;
+  const focCountNum = (offer.focCount === '' || offer.focCount === undefined || offer.focCount === null) ? 1 : (parseInt(offer.focCount) || 0);
   const focType = offer.focType || 'dbl';
 
   const activeCurrencies = [...new Set(activeItems.map(it => it.currency))].filter(c => SPLIT_CURRENCIES.includes(c));

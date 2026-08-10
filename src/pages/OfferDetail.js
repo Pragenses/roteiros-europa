@@ -978,7 +978,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         }
       }
       await updateDoc(doc(db, 'offers', offerId), {
-        items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: parseInt(focCount) || 1, focType,
+        items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: (focCount === '' || focCount === undefined || focCount === null) ? 1 : (parseInt(focCount) || 0), focType,
         updatedAt: new Date().toISOString(),
       });
       setLastSavedItems(currentItems);
@@ -1172,7 +1172,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   // FOC pool: DBL = per-pax DBL cost, SNGL = per-pax SNGL cost
   const focPoolEUR = focType === 'sngl' ? perPaxSnglEUR : perPaxDblEUR;
-  const focCountNum = parseInt(focCount) || 1;
+  const focCountNum = (focCount === '' || focCount === undefined || focCount === null) ? 1 : (parseInt(focCount) || 0);
 
   // Compute per-currency breakdown (only CHF, GBP — other currencies stay in EUR)
   const SPLIT_CURRENCIES = ['CHF', 'GBP'];
