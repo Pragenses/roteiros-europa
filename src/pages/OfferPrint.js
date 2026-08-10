@@ -506,7 +506,12 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         <div className="op-avoid-break">
           <H2>Investimento</H2>
           <p style={{ ...P, fontSize: 13, lineHeight: 1.4, marginBottom: 10 }}>
-            Valores por pessoa. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro. Pax gratis no quarto {focType.toUpperCase()}.
+            Valores por pessoa. Inclui hotéis, taxas municipais, refeições e ingressos indicados, transporte e guias durante o roteiro.{' '}
+            {focCountNum === 0
+              ? 'Sem pax gratuito.'
+              : focCountNum === 1
+              ? `Pax gratis no quarto ${focType.toUpperCase()}.`
+              : `${focCountNum} pax gratis no quarto ${focType.toUpperCase()}.`}
           </p>
           {hasSplit ? splitData.map(({ cur, rows: sRows }) => (
             <TableInvestimento key={cur} curLabel={`${CUR_FLAG[cur]} Serviços faturados em ${cur}`} symbol={CUR_SYMBOL[cur]} tRows={sRows} />
