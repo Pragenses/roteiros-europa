@@ -619,6 +619,18 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           }
         }
 
+        // Format F: DD a DD/MM/YYYY City: HOTEL (all on one line, colon between city and hotel, no dash)
+        const fmtFsingle = cleanLine.match(/^(\d{1,2})\s+a\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+([^:]+):\s*(.+)/i);
+        if (!dateFrom && fmtFsingle) {
+          const [, d1, d2, m2, y2raw, city, hotel] = fmtFsingle;
+          const y2 = y2raw.length === 2 ? '20' + y2raw : y2raw;
+          lastYear = y2;
+          dateFrom = `${y2}-${m2.padStart(2,'0')}-${d1.padStart(2,'0')}`;
+          dateTo = `${y2}-${m2.padStart(2,'0')}-${d2.padStart(2,'0')}`;
+          cityRaw = city.trim();
+          hotelName = hotel.trim();
+        }
+
         // Format B: DD/MM a DD/MM/YY – CITY: HOTEL (Portuguese style)
         const fmtB = cleanLine.match(/(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\s+a\s+(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s*-+\s*([^:]+)(?::\s*(.+))?/i);
         if (!dateFrom && fmtB) {
