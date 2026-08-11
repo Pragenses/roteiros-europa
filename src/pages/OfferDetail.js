@@ -458,7 +458,13 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
     // Split on newlines first, then also split lines that have multiple date patterns
     // Also split on DD/MM a DD/MM pattern (Format F) that may appear on same line
-    const normalized2 = normalized.replace(/(\d{1,2}\/\d{1,2}\s+a\s+\d{1,2}\/\d{1,2}\s+)/g, '\n$1').trim();
+    // Strip embedded numbered-list markers ("2. ", "3. "...) that sometimes survive
+    // copy-paste as glued-in text rather than real line breaks, then insert a line
+    // break before every "DD a DD/MM/YYYY" date-range occurrence so multi-hotel text
+    // that arrived as one giant unbroken line still gets split into one row per hotel.
+    const noListMarkers = normalized.replace(/\s+\d{1,2}\.\s+(?=\d{1,2}\s+a\s+\d{1,2}\/\d{1,2}\/\d{2,4})/g, ' ');
+    const withDateBreaks = noListMarkers.replace(/(\d{1,2}\s+a\s+\d{1,2}\/\d{1,2}\/\d{2,4})/g, '\n$1').trim();
+    const normalized2 = withDateBreaks.replace(/(\d{1,2}\/\d{1,2}\s+a\s+\d{1,2}\/\d{1,2}\s+)/g, '\n$1').trim();
     const rawLines = normalized2.split('\n').map(l => l.trim()).filter(l => l);
 
     // Split each line before any new date-range pattern (DD.MM. YYYY - or DD.MM.YYYY -)
