@@ -69,13 +69,27 @@ const NAV = [
   { id: 'settings',  label: 'Settings',  icon: '⚙' },
 ];
 
+// Kde uživatel je, se zapisuje do adresy jako hash, např. #offer-detail/abc123.
+// Hash je na GitHub Pages bezpečný (prohlížeč se na něj serveru neptá) a dává
+// prohlížeči skutečnou historii — zpět, vpřed i F5 pak fungují normálně.
+const parseHash = () => {
+  const raw = (window.location.hash || '').replace(/^#\/?/, '');
+  if (!raw) return { page: 'dashboard', id: null };
+  const [p, id] = raw.split('/');
+  const page = p || 'dashboard';
+  const needsId = page === 'offer-detail' || page === 'offer-print' || page === 'order-detail';
+  if (needsId && !id) return { page: 'dashboard', id: null };
+  return { page, id: id || null };
+};
+
 export default function App() {
+  const initial = parseHash();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedOrder, setSelectedOrder] = useState(null);
-  const [selectedOffer, setSelectedOffer] = useState(null);
-  const selectedOfferRef = React.useRef(null);
-  const [page, setPage] = useState('dashboard');
+  const [selectedOrder, setSelectedOrder] = useState(initial.page === 'order-detail' ? initial.id : null);
+  const [selectedOffer, setSelectedOffer] = useState(initial.page === 'offer-detail' || initial.page === 'offer-print' ? initial.id : null);
+  const selectedOfferRef = React.useRef(initial.page === 'offer-detail' || initial.page === 'offer-print' ? initial.id : null);
+  const [page, setPage] = useState(initial.page);
   const [navParams, setNavParams] = useState({});
   const [email, setEmail] = useState('');
   const userRole = user ? (USER_ROLES[user.email] === 'limited' ? 'limited' : 'owner') : null;
@@ -85,8 +99,8 @@ export default function App() {
   // back to the dashboard rather than relying on the sidebar alone.
   useEffect(() => {
     if (userRole === 'limited' && NAV.find(n => n.id === page)?.ownerOnly) {
+      window.history.replaceState(null, '', '#dashboard');
       setPage('dashboard');
-      sessionStorage.setItem('currentPage', 'dashboard');
     }
   }, [userRole, page]);
   const [password, setPassword] = useState('');
@@ -123,16 +137,34 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  const navigate = (p, data) => {
-    setPage(p);
-    sessionStorage.setItem('currentPage', p);
-    if (data?.orderId) setSelectedOrder(data.orderId);
-    if (data?.offerId) { 
-      selectedOfferRef.current = data.offerId;
-      setSelectedOffer(data.offerId); 
-      sessionStorage.setItem('selectedOffer', data.offerId); 
+  // Načte adresu do stavu. Spustí se při zpět, vpřed i jakékoli změně hashe.
+  const applyHash = React.useCallback(() => {
+    const { page: p, id } = parseHash();
+    if (id) {
+      if (p === 'offer-detail' || p === 'offer-print') {
+        selectedOfferRef.current = id;
+        setSelectedOffer(id);
+      }
+      if (p === 'order-detail') setSelectedOrder(id);
     }
+    setPage(p);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, [applyHash]);
+
+  // Změna hashe je to, co přidá položku do historie; applyHash pak dopraví stav.
+  const navigate = (p, data) => {
     setNavParams(data || {});
+    const id = data?.offerId || data?.orderId || null;
+    const target = '#' + p + (id ? '/' + id : '');
+    if (window.location.hash === target) {
+      applyHash();
+    } else {
+      window.location.hash = target;
+    }
   };
 
   const publicOfferId = new URLSearchParams(window.location.search).get('oferta');
