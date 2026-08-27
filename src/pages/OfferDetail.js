@@ -1071,6 +1071,29 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'ok', 'error'
 
+  // Marže / FOC / pax list se dosud ukládaly POUZE tlačítkem Uložit, takže
+  // změna a odchod ze stránky je tiše zahodila. Debounce stejný jako u položek.
+  // Výraz pro focCount je doslovná kopie z handleSave, aby explicitní 0 zůstala
+  // nulou — viz chyba s nepravdivými hodnotami FOC. Nezjednodušovat.
+  const settingsFirstRunRef = React.useRef(true);
+  const settingsTimerRef = React.useRef(null);
+  useEffect(() => {
+    if (loading || isLocked) return;
+    if (settingsFirstRunRef.current) { settingsFirstRunRef.current = false; return; }
+    // Prázdná marže znamená, že ji uživatel právě přepisuje; uložit by znamenalo zapsat 0.
+    if (margin === '' || margin === null || margin === undefined) return;
+    if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    settingsTimerRef.current = setTimeout(() => {
+      updateDoc(doc(db, 'offers', offerId), {
+        margin: parseFloat(margin) || 0,
+        paxList,
+        focCount: (focCount === '' || focCount === undefined || focCount === null) ? 1 : (parseInt(focCount) || 0),
+        focType,
+        updatedAt: new Date().toISOString(),
+      }).catch(err => console.error('Auto-save pricing settings failed:', err));
+    }, 800);
+  }, [margin, paxList, focCount, focType, loading, isLocked, offerId]);
+
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
     if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
