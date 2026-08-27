@@ -11,6 +11,99 @@ const STATUS_OPTS = [
   { value: 'lost', label: 'Lost / declined' },
 ];
 
+// Booking status of ONE line item — not to be confused with STATUS_OPTS above,
+// which is the status of the whole offer. This used to be written inline inside
+// the hotel row, which is why only hotels could carry a status; pulling it out
+// lets every item type (bus, guide, ticket, guide/driver hotel) use the very
+// same three states, labels and colours.
+const BOOKING_STATUS = [
+  { value: '',            label: 'Stav?',        border: null,      bg: '#fff',    color: null },
+  { value: 'requested',   label: '🟡 Poptáno',   border: '#854f0b', bg: '#fff8e1', color: '#854f0b' },
+  { value: 'negotiating', label: '🟠 V jednání', border: '#c2410c', bg: '#ffedd5', color: '#c2410c' },
+  { value: 'confirmed',   label: '🟢 Potvrzeno', border: '#2d6a4f', bg: '#e8f5e9', color: '#2d6a4f' },
+];
+
+// Deposit actually PAID OUT to the supplier for one line item. Not to be
+// confused with the client ledger in Clients.js, which tracks money coming IN.
+// Field names deliberately match the ones services already carry in
+// OrderDetail (depositAmount / depositDate), so a future offer→order
+// conversion can move them across without a translation table. depositMethod
+// is new — no part of the app recorded HOW something was paid until now.
+const PAYMENT_METHODS = [
+  { value: '',     label: 'čím?' },
+  { value: 'cash', label: 'Hotovost' },
+  { value: 'card', label: 'Kartou' },
+  { value: 'fio',  label: 'FIO banka' },
+  { value: 'kb',   label: 'KB banka' },
+];
+
+const DepositRows = ({ item, onChange, colors }) => {
+  // Deposits are paid in INSTALMENTS — hotels and buses alike — so this is a
+  // list, not a single amount. Stored on the item as `deposits`; the currency
+  // is not repeated per row because it always follows the item's own currency.
+  const rows = Array.isArray(item.deposits) ? item.deposits : [];
+  const set = (next) => onChange('deposits', next);
+  const add = () => set([...rows, { id: Date.now() + Math.random(), amount: '', date: '', method: '' }]);
+  const upd = (id, field, v) => set(rows.map(r => (r.id === id ? { ...r, [field]: v } : r)));
+  const del = (id) => set(rows.filter(r => r.id !== id));
+  const total = rows.reduce((s, r) => s + (parseFloat(String(r.amount || '').replace(',', '.')) || 0), 0);
+
+  const small = { fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 };
+  const lbl = { fontSize: 9, color: colors.muted };
+  const cur = item.currency || 'EUR';
+
+  return (
+    <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
+      {rows.map((r, i) => {
+        const filled = String(r.amount || '').trim() !== '';
+        return (
+          <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+                                   padding: '1px 5px', borderRadius: 4,
+                                   background: filled ? '#e8f5e9' : 'transparent' }}>
+            <span style={{ ...lbl, width: 46 }}>{i === 0 ? 'Zálohy:' : ''}</span>
+            <input type="text" inputMode="decimal" placeholder="0" value={r.amount || ''}
+              onInput={decimalInput}
+              onChange={e => upd(r.id, 'amount', e.target.value)}
+              style={{ ...small, width: 56, textAlign: 'right' }} />
+            <span style={lbl}>{cur}</span>
+            <span style={{ ...lbl, marginLeft: 2 }}>zaplaceno:</span>
+            <DateDMY dateKey={`dep-${item.id}-${r.id}`} value={r.date || ''} colors={colors}
+              onChange={v => upd(r.id, 'date', v)} />
+            <select value={r.method || ''} onChange={e => upd(r.id, 'method', e.target.value)}
+              title="Čím bylo zaplaceno" style={small}>
+              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+            <button type="button" onClick={() => del(r.id)} title="Smazat tuto splátku"
+              style={{ ...small, cursor: 'pointer', color: '#b91c1c', background: '#fff', lineHeight: 1 }}>✕</button>
+          </div>
+        );
+      })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ ...lbl, width: 46 }}>{rows.length === 0 ? 'Zálohy:' : ''}</span>
+        <button type="button" onClick={add}
+          style={{ ...small, cursor: 'pointer', background: '#fff', color: colors.primary }}>+ splátka</button>
+        {rows.length > 1 && (
+          <span style={{ fontSize: 10, color: colors.text, fontWeight: 600 }}>
+            celkem {Math.round(total * 100) / 100} {cur}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+function BookingStatusSelect({ value, onChange, colors }) {
+  const s = BOOKING_STATUS.find(o => o.value === (value || '')) || BOOKING_STATUS[0];
+  return (
+    <select value={value || ''} onChange={e => onChange(e.target.value)} title="Stav této položky"
+      style={{ fontSize: 10, padding: '2px 4px', borderRadius: 4,
+               border: `1px solid ${s.border || colors.border}`,
+               background: s.bg, color: s.color || colors.muted }}>
+      {BOOKING_STATUS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
 const decimalInput = (e) => {
   const val = e.target.value;
   const normalized = val.replace(/,/g, '.');
@@ -1681,13 +1774,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     )}
                     {isHotel && (
                       <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <select value={it.bookingStatus || ''} onChange={e => updateItem(it.id, 'bookingStatus', e.target.value)}
-                          style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'negotiating' ? '#c2410c' : it.bookingStatus === 'requested' ? '#854f0b' : colors.border}`, borderRadius: 4, background: it.bookingStatus === 'confirmed' ? '#e8f5e9' : it.bookingStatus === 'negotiating' ? '#ffedd5' : it.bookingStatus === 'requested' ? '#fff8e1' : '#fff', color: it.bookingStatus === 'confirmed' ? '#2d6a4f' : it.bookingStatus === 'negotiating' ? '#c2410c' : it.bookingStatus === 'requested' ? '#854f0b' : colors.muted }}>
-                          <option value="">Stav?</option>
-                          <option value="requested">🟡 Poptáno</option>
-                          <option value="negotiating">🟠 V jednání</option>
-                          <option value="confirmed">🟢 Potvrzeno</option>
-                        </select>
+                        <BookingStatusSelect value={it.bookingStatus} onChange={v => updateItem(it.id, 'bookingStatus', v)} colors={colors} />
+                        <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                           <span style={{ fontSize: 9, color: colors.muted }}>Option:</span>
                           <DateDMY dateKey={`opt-${it.id}`} value={it.optionDate || ''} colors={colors}
@@ -1717,14 +1805,21 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                         />
                       </div>
                     )}
-                    {(isTicket || isTransportGroup) && (
-                      <div style={{ display: 'flex', marginTop: 4 }}>
-                        <HotelAttachment
-                          item={it}
-                          colors={colors}
-                          onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
-                          onRemove={(f) => handleRemoveConfirmation(it, f)}
-                        />
+                    {/* Every non-hotel line gets the same status control the hotel row
+                        has above. Kept as ONE row so buses and tickets do not grow a
+                        second line just for the attachment they already had. */}
+                    {!isHotel && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <BookingStatusSelect value={it.bookingStatus} onChange={v => updateItem(it.id, 'bookingStatus', v)} colors={colors} />
+                        <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} />
+                        {(isTicket || isTransportGroup) && (
+                          <HotelAttachment
+                            item={it}
+                            colors={colors}
+                            onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
+                            onRemove={(f) => handleRemoveConfirmation(it, f)}
+                          />
+                        )}
                       </div>
                     )}
                   </div>

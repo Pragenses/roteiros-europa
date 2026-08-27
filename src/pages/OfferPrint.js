@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { db, storage } from '../lib/firebase';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -18,6 +18,203 @@ const fmtDate = (d) => {
   if (!y || !m || !day) return d;
   return `${day}/${m}/${y}`;
 };
+
+/**
+ * Roteiro pagination.
+ *
+ * The old implementation cut the roteiro into fixed slices of 25 paragraphs.
+ * Paragraph COUNT says nothing about paragraph HEIGHT: 25 one-line paragraphs
+ * fit on A4, 25 full descriptive ones do not. When a slice did not fit, its
+ * .op-page div grew past 297mm and the browser broke it in the middle — and
+ * because the header sits at the top of that div and the footer is
+ * position:absolute;bottom:0, the spilled page came out with NO header and the
+ * footer floating in the middle of the sheet, followed by half a blank page.
+ *
+ * This measures the real rendered height of every paragraph in an off-screen
+ * container that is exactly as wide as the printed content area, then fills
+ * each page until the next paragraph would not fit. No magic numbers.
+ */
+function RoteiroPages({ paragraphs, renderPage, renderH2, pStyle, contentWidth, availableHeight, closingBlock }) {
+  const measureRef = useRef(null);
+  const [layout, setLayout] = useState(null);
+  // `items` is `paragraphs` after any single paragraph that is taller than a
+  // whole page has been broken up. A roteiro pasted as one unbroken block ends
+  // up as exactly one enormous paragraph (see programParagraphs' last-resort
+  // `return [html]`), and no paragraph-level packing can fit that on a sheet.
+  const [items, setItems] = useState(paragraphs);
+  const parasKey = paragraphs.join('\n');
+  // Compare by CONTENT, not array identity: the parent rebuilds this array on
+  // every render (exchange-rate refresh, dialog state), so resetting on identity
+  // would throw away a finished layout. The ref also skips the mount run, where
+  // a reset would clear the layout the effect below has just computed.
+  const prevKey = useRef(parasKey);
+
+  useEffect(() => {
+    if (prevKey.current === parasKey) return;
+    prevKey.current = parasKey;
+    setItems(paragraphs);
+    setLayout(null);
+  }, [parasKey, paragraphs]);
+
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+
+    // Convert the available content height (mm) to px via a real probe element,
+    // so this stays correct at any zoom / device pixel ratio.
+    // 3mm safety: the first paragraph on a continuation page contributes its own
+    // top margin, which the edge arithmetic below only accounts for on page one.
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:absolute;visibility:hidden;width:1mm;height:calc(${availableHeight} - 3mm)`;
+    el.appendChild(probe);
+    const AVAIL = probe.getBoundingClientRect().height;
+    el.removeChild(probe);
+
+    const kids = Array.from(el.children);
+    if (kids.length < 2) return; // h2 + closing are always present
+    const rect = el.getBoundingClientRect();
+    const tops = kids.map(k => k.getBoundingClientRect().top);
+    // Advance = distance to the next block, so collapsed vertical margins are
+    // already included. Measuring the FIRST block from the container's top edge
+    // (rather than its own border top) is what makes the heading's 20px top
+    // margin count — it occupies real page space, and leaving it out was enough
+    // to push the page 3mm over A4. The last block measures to the bottom edge.
+    const edges = [rect.top, ...tops.slice(1), rect.bottom];
+    const advance = kids.map((k, i) => edges[i + 1] - edges[i]);
+
+    const h2H = advance[0];
+    const closeH = advance[kids.length - 1];
+    const paraH = advance.slice(1, kids.length - 1);
+
+    // Pass 1 — is any single paragraph taller than a whole page? Packing whole
+    // paragraphs cannot help there, so break it up and re-run. This is the
+    // roteiro-pasted-as-one-unbroken-block case, which arrives as ONE paragraph
+    // full of markup — so the split has to happen over DOM nodes, not raw text.
+    if (paraH.some(h => h > AVAIL)) {
+      const scratch = el.querySelector('p').cloneNode(false);
+      el.appendChild(scratch);
+      const budget = AVAIL - 16; // room for the paragraph's own vertical margins
+      const fits = (holder) => {
+        scratch.innerHTML = holder.innerHTML;
+        return scratch.getBoundingClientRect().height <= budget;
+      };
+
+      const splitOne = (html) => {
+        const src = document.createElement('div');
+        src.innerHTML = html;
+        const chunks = [];
+        let cur = document.createElement('div');
+        const flush = () => {
+          if (cur.innerHTML.trim()) chunks.push(cur.innerHTML);
+          cur = document.createElement('div');
+        };
+        const place = (node) => {
+          cur.appendChild(node);
+          if (fits(cur)) return;
+          cur.removeChild(node);
+          if (cur.childNodes.length > 0) { flush(); cur.appendChild(node); if (fits(cur)) return; cur.removeChild(node); }
+          // A single node still too tall: fall back to its words. Nested markup
+          // inside one over-a-page-long element is lost, everything else is not.
+          const words = (node.textContent || '').split(/(\s+)/);
+          const wrap = node.nodeType === 1 ? node.cloneNode(false) : null;
+          let buf = [];
+          const emit = () => {
+            if (!buf.join('').trim()) { buf = []; return; }
+            const piece = wrap ? wrap.cloneNode(false) : document.createElement('span');
+            piece.textContent = buf.join('');
+            cur.appendChild(piece);
+            buf = [];
+          };
+          words.forEach(w => {
+            buf.push(w);
+            const probeEl = wrap ? wrap.cloneNode(false) : document.createElement('span');
+            probeEl.textContent = buf.join('');
+            cur.appendChild(probeEl);
+            const ok = fits(cur);
+            cur.removeChild(probeEl);
+            if (!ok && buf.length > 1) { buf.pop(); emit(); flush(); buf = [w]; }
+          });
+          emit();
+        };
+        Array.from(src.childNodes).forEach(n => place(n));
+        flush();
+        return chunks.length > 0 ? chunks : [html];
+      };
+
+      const next = [];
+      items.forEach((html, i) => {
+        if (paraH[i] <= AVAIL) next.push(html);
+        else next.push(...splitOne(html));
+      });
+      el.removeChild(scratch);
+      // No progress means nothing here can be broken down any further. Setting
+      // state anyway would re-run this effect forever (React error #185), so
+      // fall through and lay out what we have rather than hanging the page.
+      if (next.length > items.length) {
+        setItems(next);
+        return; // this effect re-runs against the re-rendered measurer
+      }
+    }
+
+    const pages = [];
+    let cur = [];
+    let used = h2H; // page 1 also carries the "Roteiro" heading
+    paraH.forEach((h, i) => {
+      if (cur.length > 0 && used + h > AVAIL) {
+        pages.push(cur);
+        cur = [];
+        used = 0;
+      }
+      cur.push(i);
+      used += h;
+    });
+    if (cur.length > 0) pages.push(cur);
+
+    const closingOwnPage = pages.length === 0 || used + closeH > AVAIL;
+    setLayout({ pages, closingOwnPage });
+  }, [items, availableHeight]);
+
+  const para = (p, i) => (
+    <p key={i} style={{ ...pStyle, whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: p }} />
+  );
+
+  // Off-screen measuring copy. position:fixed keeps it out of the document
+  // flow (no phantom scroll area) and .op-no-print removes it from print —
+  // an absolutely positioned leftover would otherwise emit a blank page.
+  // display:flow-root establishes a block formatting context: without it the
+  // first child's top margin and the last child's bottom margin collapse OUT
+  // of this container, the measurement comes out ~5mm short, and the real page
+  // is pushed past 297mm again — the exact bug this component exists to fix.
+  const measurer = (
+    <div
+      ref={measureRef}
+      className="op-no-print"
+      aria-hidden="true"
+      style={{ position: 'fixed', left: '-10000px', top: 0, width: contentWidth, display: 'flow-root', visibility: 'hidden', pointerEvents: 'none', zIndex: -1 }}
+    >
+      {renderH2()}
+      {items.map((p, i) => para(p, i))}
+      <div>{closingBlock}</div>
+    </div>
+  );
+
+  if (!layout) return measurer;
+
+  const { pages, closingOwnPage } = layout;
+  const rendered = pages.map((idxs, pageIdx) =>
+    renderPage(
+      <>
+        {pageIdx === 0 && renderH2()}
+        {idxs.map(i => para(items[i], i))}
+        {!closingOwnPage && pageIdx === pages.length - 1 && closingBlock}
+      </>,
+      `r${pageIdx}`
+    )
+  );
+  if (closingOwnPage) rendered.push(renderPage(closingBlock, 'r-close'));
+
+  return <>{measurer}{rendered}</>;
+}
 
 export default function OfferPrint({ offerId, navigate, colors, isPublic = false }) {
   const [offer, setOffer] = useState(null);
@@ -341,12 +538,16 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     </div>
   );
 
-  // Split roteiro paragraphs into chunks that fit on a page (~25 paragraphs per page)
-  const PARAS_PER_PAGE = 20;
   const roteiroParagraphs = programParagraphs;
-  const roteiroPagesCount = Math.ceil(roteiroParagraphs.length / PARAS_PER_PAGE);
-  const roteiroPages = Array.from({ length: roteiroPagesCount }, (_, i) =>
-    roteiroParagraphs.slice(i * PARAS_PER_PAGE, (i + 1) * PARAS_PER_PAGE)
+  // Height a page can give to content: A4 minus header, minus the footer
+  // spacer, minus the content block's own top padding (see CONTENT_STYLE).
+  const CONTENT_AVAIL = `calc(297mm - ${HEADER_H} - ${FOOTER_H} - 4mm)`;
+  const CONTENT_W = `calc(210mm - ${MARGIN_H} - ${MARGIN_H})`;
+  const ClosingBlock = (
+    <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
+      <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
+      <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
+    </div>
   );
 
   return (
@@ -539,37 +740,19 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
         </Page>
       )}
 
-      {/* PAGE 4+ — Roteiro split into pages of 25 paragraphs */}
-      {roteiroParagraphs.length > 0 && (() => {
-        const CHUNK = 25;
-        const pages = [];
-        for (let i = 0; i < roteiroParagraphs.length; i += CHUNK) {
-          pages.push(roteiroParagraphs.slice(i, i + CHUNK));
-        }
-        return pages.map((paras, pageIdx) => (
-          <Page key={pageIdx}>
-            {pageIdx === 0 && <H2>Roteiro</H2>}
-            {paras.map((p, i) => <p key={i} style={{ ...P, whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: p }} />)}
-            {pageIdx === pages.length - 1 && (
-              <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
-                <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
-                <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
-              </div>
-            )}
-          </Page>
-        ));
-      })()}
+      {/* PAGE 4+ — Roteiro, paginated by measured height (see RoteiroPages).
+          Handles the empty-roteiro case too: it then emits just the closing page. */}
+      <RoteiroPages
+        paragraphs={roteiroParagraphs}
+        renderPage={(children, key) => <Page key={key}>{children}</Page>}
+        renderH2={() => <H2>Roteiro</H2>}
+        pStyle={P}
+        contentWidth={CONTENT_W}
+        availableHeight={CONTENT_AVAIL}
+        closingBlock={ClosingBlock}
+      />
 
-      {/* If no roteiro, add closing page */}
-      {roteiroPages.length === 0 && (
-        <Page>
-          <div style={{ marginTop: 24, textAlign: 'center', paddingBottom: 20 }}>
-            <p style={{ ...P, fontWeight: 700 }}>Equipe Tour Pragenses</p>
-            <p style={{ ...P, fontStyle: 'italic', color: '#666' }}>Seu parceiro na Europa.</p>
-          </div>
-        </Page>
-      )}
     </div>
   );
 }
-// BUILD_1782348416
+// BUILD_1782348420_deposit_instalments
