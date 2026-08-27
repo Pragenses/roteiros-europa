@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth, storage } from '../lib/firebase';
-import { doc, getDoc, getDocs, collection, updateDoc, addDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocs, collection, updateDoc, addDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
+
+// Po pěti minutách bez činnosti se přítomnost přestane počítat.
+const PRESENCE_TIMEOUT_MS = 5 * 60 * 1000;
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -1082,6 +1085,71 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     });
   };
 
+  // --- Kdo je v nabídce ---------------------------------------------------
+  // První fáze: pouze se zaznamenává a zobrazuje, kdo má nabídku otevřenou.
+  // Nic zatím neblokuje. Teprve až se ověří, že se přítomnost hlásí správně,
+  // se na tohle navěsí předávání úprav (štafeta).
+  //
+  // Každý zapisuje jen svůj vlastní záznam v podsložce presence u nabídky,
+  // aby si dva lidé nemohli přepsat data navzájem.
+  //
+  // lastActiveAt se obnovuje jen při skutečné činnosti (psaní, klikání).
+  // Otevřená záložka bez práce se po pěti minutách přestane počítat, takže
+  // notebook nechaný přes noc nikoho neblokuje.
+  const [othersPresent, setOthersPresent] = useState([]);
+  const lastActivityRef = React.useRef(Date.now());
+
+  useEffect(() => {
+    if (!userEmail || !offerId) return;
+    const myKey = userEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    const myRef = doc(db, 'offers', offerId, 'presence', myKey);
+    let cancelled = false;
+
+    const timeZone = (() => {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; }
+    })();
+
+    const announce = () => setDoc(myRef, {
+      email: userEmail,
+      timeZone,
+      joinedAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+    }, { merge: true }).catch(err => console.error('Přítomnost se nepodařilo zapsat:', err));
+
+    announce();
+
+    const noteActivity = () => { lastActivityRef.current = Date.now(); };
+    window.addEventListener('keydown', noteActivity);
+    window.addEventListener('mousedown', noteActivity);
+
+    // Tep každých 30 s, ale jen pokud uživatel v poslední půlminutě něco dělal.
+    const beat = setInterval(() => {
+      if (cancelled) return;
+      if (Date.now() - lastActivityRef.current > 30000) return;
+      updateDoc(myRef, { lastActiveAt: new Date().toISOString() })
+        .catch(err => console.error('Tep přítomnosti selhal:', err));
+    }, 30000);
+
+    const unsub = onSnapshot(collection(db, 'offers', offerId, 'presence'), snap => {
+      if (cancelled) return;
+      const now = Date.now();
+      const list = snap.docs
+        .map(d => d.data())
+        .filter(p => p && p.email && p.email !== userEmail)
+        .filter(p => p.lastActiveAt && (now - new Date(p.lastActiveAt).getTime()) < PRESENCE_TIMEOUT_MS);
+      setOthersPresent(list);
+    }, err => console.error('Sledování přítomnosti selhalo:', err));
+
+    return () => {
+      cancelled = true;
+      clearInterval(beat);
+      window.removeEventListener('keydown', noteActivity);
+      window.removeEventListener('mousedown', noteActivity);
+      unsub();
+      deleteDoc(myRef).catch(() => {});
+    };
+  }, [offerId, userEmail]);
+
   const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'ok', 'error'
 
   // Marže / FOC / pax list se dosud ukládaly POUZE tlačítkem Uložit, takže
@@ -1419,6 +1487,13 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             : 'Zatím neuloženo')}
         </span>
         <div style={{ flex: 1 }} />
+        {othersPresent.length > 0 && (
+          <span style={{ color: colors.info, fontWeight: 600 }}>
+            {othersPresent.length === 1
+              ? othersPresent[0].email.split('@')[0] + ' je také v této nabídce'
+              : othersPresent.length + ' další lidé jsou v této nabídce'}
+          </span>
+        )}
         <button onClick={handleSave} disabled={isLocked}
           style={{ padding: '5px 14px', background: isLocked ? colors.border : colors.primary, color: isLocked ? colors.muted : colors.white, border: 'none', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: isLocked ? 'default' : 'pointer', fontWeight: 500 }}>
           Uložit
