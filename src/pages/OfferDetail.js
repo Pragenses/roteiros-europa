@@ -280,6 +280,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     if (snap.exists()) {
       const data = snap.data();
       setOffer({ id: snap.id, ...data });
+      // Lišta má ukazovat správný čas hned po otevření, ne až po prvním uložení.
+      if (data.updatedAt) setLastSavedAt(new Date(data.updatedAt));
       setItems(data.items || []);
       itemsRef.current = data.items || [];
       setLastSavedItems(data.items || []);
@@ -318,7 +320,18 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
 
   // 30-second interval autosave DISABLED — debounced per-field auto-save (updateItem) now handles this more reliably
-  const [lastAutoSave] = useState(null);
+  // Jediné místo, přes které se nabídka ukládá. Díky tomu lišta nahoře vždycky
+  // ví, jestli se ukládá, kdy se uložilo naposledy, a jestli něco selhalo.
+  // Dřív se chyby automatického ukládání vypisovaly jen do konzole a uživatel
+  // se o nich nedozvěděl.
+  const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'ok' | 'error'
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const trackedUpdate = React.useCallback((payload) => {
+    setSaveState('saving');
+    return updateDoc(doc(db, 'offers', offerId), payload)
+      .then(() => { setLastSavedAt(new Date()); setSaveState('ok'); return true; })
+      .catch(err => { setSaveState('error'); console.error('Uložení selhalo:', err); return false; });
+  }, [offerId]);
 
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
@@ -334,7 +347,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleLock = async () => {
     if (!pinInput || pinInput.length < 4) { setPinError('Zadejte minimálně 4 znaky.'); return; }
-    await updateDoc(doc(db, 'offers', offerId), { locked: true, pinHash: hashPin(pinInput), updatedAt: new Date().toISOString() });
+    await trackedUpdate({ locked: true, pinHash: hashPin(pinInput), updatedAt: new Date().toISOString() });
     setIsLocked(true);
     setShowLockDialog(false);
     setPinInput('');
@@ -343,7 +356,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleUnlock = async () => {
     if (hashPin(pinInput) !== offer?.pinHash) { setPinError('Nesprávný PIN.'); return; }
-    await updateDoc(doc(db, 'offers', offerId), { locked: false, updatedAt: new Date().toISOString() });
+    await trackedUpdate({ locked: false, updatedAt: new Date().toISOString() });
     setIsLocked(false);
     setShowUnlockDialog(false);
     setPinInput('');
@@ -352,7 +365,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleEmergencyUnlock = async () => {
     if (!window.confirm('Nouzové odemčení — PIN bude vymazán. Pokračovat?')) return;
-    await updateDoc(doc(db, 'offers', offerId), { locked: false, pinHash: null, updatedAt: new Date().toISOString() });
+    await trackedUpdate({ locked: false, pinHash: null, updatedAt: new Date().toISOString() });
     setIsLocked(false);
     setShowUnlockDialog(false);
     setPinInput('');
@@ -484,7 +497,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           newItems.splice(insertAt, 0, ...newHotelsBlock);
           itemsRef.current = newItems;
           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-          updateDoc(doc(db, 'offers', offerId), { items: newItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
+          trackedUpdate({ items: newItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
           return newItems;
         });
         setItineraryText('');
@@ -541,7 +554,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           newItems.splice(insertAt, 0, ...newHotelsBlockD);
           itemsRef.current = newItems;
           if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-          updateDoc(doc(db, 'offers', offerId), { items: newItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
+          trackedUpdate({ items: newItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
           return newItems;
         });
         setItineraryText('');
@@ -774,7 +787,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     existingItems.splice(insertAt, 0, ...newHotels);
     setItems(existingItems);
     itemsRef.current = existingItems;
-    updateDoc(doc(db, 'offers', offerId), { items: existingItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
+    trackedUpdate({ items: existingItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
     setItineraryText('');
   };
 
@@ -822,7 +835,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       itemsRef.current = newItems;
       // Cancel any pending debounced save (it has stale data) and save immediately
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      updateDoc(doc(db, 'offers', offerId), {
+      trackedUpdate({
         items: newItems,
         updatedAt: new Date().toISOString(),
       }).catch(err => console.error('Auto-save new item failed:', err));
@@ -862,7 +875,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       // Debounced auto-save for any field change (prevents data loss like the Munich nights bug)
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        updateDoc(doc(db, 'offers', offerId), {
+        trackedUpdate({
           items: itemsRef.current,
           updatedAt: new Date().toISOString(),
         }).catch(err => console.error('Auto-save item field failed:', err));
@@ -879,7 +892,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       itemsRef.current = newItems;
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        updateDoc(doc(db, 'offers', offerId), {
+        trackedUpdate({
           items: itemsRef.current,
           updatedAt: new Date().toISOString(),
         }).catch(err => console.error('Auto-save item fields failed:', err));
@@ -1061,7 +1074,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       const newItems = prev.filter(it => it.id !== id);
       itemsRef.current = newItems;
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      updateDoc(doc(db, 'offers', offerId), {
+      trackedUpdate({
         items: newItems,
         updatedAt: new Date().toISOString(),
       }).catch(err => console.error('Auto-save remove failed:', err));
@@ -1084,7 +1097,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     if (margin === '' || margin === null || margin === undefined) return;
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
     settingsTimerRef.current = setTimeout(() => {
-      updateDoc(doc(db, 'offers', offerId), {
+      trackedUpdate({
         margin: parseFloat(margin) || 0,
         paxList,
         focCount: (focCount === '' || focCount === undefined || focCount === null) ? 1 : (parseInt(focCount) || 0),
@@ -1111,13 +1124,18 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           return;
         }
       }
-      await updateDoc(doc(db, 'offers', offerId), {
+      const ok = await trackedUpdate({
         items: currentItems, margin: parseFloat(margin) || 0, paxList, focCount: (focCount === '' || focCount === undefined || focCount === null) ? 1 : (parseInt(focCount) || 0), focType,
         updatedAt: new Date().toISOString(),
       });
-      setLastSavedItems(currentItems);
-      setSaveStatus('ok');
-      setTimeout(() => setSaveStatus(''), 5000);
+      if (ok) {
+        setLastSavedItems(currentItems);
+        setSaveStatus('ok');
+        setTimeout(() => setSaveStatus(''), 5000);
+      } else {
+        setSaveStatus('error');
+        alert('❌ Uložení se nepovedlo. Zkontrolujte připojení a zkuste to znovu.');
+      }
     } catch (err) {
       setSaveStatus('error');
       alert('❌ Chyba při ukládání: ' + err.message);
@@ -1127,12 +1145,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleHeaderChange = async (field, value) => {
     setOffer(prev => ({ ...prev, [field]: value }));
-    await updateDoc(doc(db, 'offers', offerId), { [field]: value, updatedAt: new Date().toISOString() });
+    await trackedUpdate({ [field]: value, updatedAt: new Date().toISOString() });
   };
 
   const handleDecline = async () => {
     if (!window.confirm('Move this offer to Declined?')) return;
-    await updateDoc(doc(db, 'offers', offerId), { declined: true });
+    await trackedUpdate({ declined: true });
     navigate('offers');
   };
 
@@ -1140,7 +1158,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleEnableShare = async () => {
     if (!offer.publicShareEnabled) {
-      await updateDoc(doc(db, 'offers', offerId), { publicShareEnabled: true });
+      await trackedUpdate({ publicShareEnabled: true });
       setOffer(prev => ({ ...prev, publicShareEnabled: true }));
     }
     setShowShareLink(true);
@@ -1149,7 +1167,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleDisableShare = async () => {
     if (!window.confirm('Zrušit sdílení? Odkaz přestane fungovat.')) return;
-    await updateDoc(doc(db, 'offers', offerId), { publicShareEnabled: false });
+    await trackedUpdate({ publicShareEnabled: false });
     setOffer(prev => ({ ...prev, publicShareEnabled: false }));
     setShowShareLink(false);
   };
@@ -1381,6 +1399,32 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   return (
     <div>
+      {/* Lišta se stavem ukládání. Drží se nahoře i při rolování a nikdy nemizí —
+          čas posledního uložení je vidět pořád, ne jen pět vteřin po uložení.
+          Sem později přibude i informace, kdo je v nabídce a kdo ji upravuje. */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 900,
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '8px 14px', marginBottom: '0.75rem',
+        borderRadius: 8, fontSize: 13,
+        background: saveState === 'error' ? '#FEF2F2' : colors.white,
+        border: `1px solid ${saveState === 'error' ? '#dc2626' : colors.border}`,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+      }}>
+        <span style={{ color: saveState === 'error' ? '#dc2626' : colors.muted, fontWeight: saveState === 'error' ? 700 : 400 }}>
+          {saveState === 'saving' && 'Ukládám…'}
+          {saveState === 'error' && '⚠ Uložení selhalo — zkontrolujte připojení a uložte znovu'}
+          {saveState !== 'saving' && saveState !== 'error' && (lastSavedAt
+            ? 'Uloženo ' + lastSavedAt.toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : 'Zatím neuloženo')}
+        </span>
+        <div style={{ flex: 1 }} />
+        <button onClick={handleSave} disabled={isLocked}
+          style={{ padding: '5px 14px', background: isLocked ? colors.border : colors.primary, color: isLocked ? colors.muted : colors.white, border: 'none', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: isLocked ? 'default' : 'pointer', fontWeight: 500 }}>
+          Uložit
+        </button>
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <button onClick={() => navigate('offers')} style={{ padding: '6px 14px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
           ← Back to Offers
@@ -1490,7 +1534,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             const current = offer.allowedUsers || [];
             const has = current.includes('skorkovska@gmail.com');
             const next = has ? current.filter(e => e !== 'skorkovska@gmail.com') : [...current, 'skorkovska@gmail.com'];
-            updateDoc(doc(db, 'offers', offerId), { allowedUsers: next }).catch(err => console.error('Failed to update allowedUsers:', err));
+            trackedUpdate({ allowedUsers: next }).catch(err => console.error('Failed to update allowedUsers:', err));
             setOffer(o => ({ ...o, allowedUsers: next }));
           }} style={{
             padding: '5px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
@@ -1988,9 +2032,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           <button onClick={handleSave} disabled={saving || loading} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: (saving || loading) ? 0.6 : 1 }}>
             {saving ? 'Ukládám...' : '💾 Save offer'}
           </button>
-          {saveStatus === 'ok' && <div style={{ fontSize: 13, color: 'green', fontWeight: 600 }}>✓ Uloženo v {new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>}
-          {saveStatus === 'error' && <div style={{ fontSize: 13, color: 'red', fontWeight: 600 }}>❌ Chyba uložení!</div>}
-          {lastAutoSave && <div style={{ fontSize: 11, color: colors.muted }}>✓ Automaticky uloženo v {lastAutoSave}</div>}
+          {/* Stav ukládání se ukazuje v liště nahoře, která nemizí. */}
           <div style={{ fontSize: 12, color: colors.muted }}>
             Exchange rates (→ EUR){ratesUpdatedAt ? ` · ECB ${ratesUpdatedAt}` : ''}: {Object.entries(rates).map(([c, r]) => `${c} ${r.toFixed(4)}`).join(' · ')}
           </div>
@@ -2001,7 +2043,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>💰 Selling price per pax</div>
           {hasSplit && (
-            <button onClick={() => { const newVal = !showSplit; setShowSplit(newVal); updateDoc(doc(db, 'offers', offerId), { showSplit: newVal }).catch(()=>{}); }} style={{ padding: '5px 12px', background: showSplit ? colors.primary : colors.white, color: showSplit ? colors.white : colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            <button onClick={() => { const newVal = !showSplit; setShowSplit(newVal); trackedUpdate({ showSplit: newVal }).catch(()=>{}); }} style={{ padding: '5px 12px', background: showSplit ? colors.primary : colors.white, color: showSplit ? colors.white : colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 7, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
               {showSplit ? '📊 Zobrazit celkem (EUR)' : `📊 Rozdělit podle měn (${activeCurrencies.join(' + ')} + EUR)`}
             </button>
           )}
