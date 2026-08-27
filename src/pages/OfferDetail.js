@@ -4,8 +4,8 @@ import { doc, getDoc, getDocs, collection, updateDoc, addDoc, setDoc, deleteDoc,
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 
-// Po pěti minutách bez činnosti se přítomnost přestane počítat.
-const PRESENCE_TIMEOUT_MS = 5 * 60 * 1000;
+// Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
+const PRESENCE_TIMEOUT_MS = 90 * 1000;
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -1096,7 +1096,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // lastActiveAt se obnovuje jen při skutečné činnosti (psaní, klikání).
   // Otevřená záložka bez práce se po pěti minutách přestane počítat, takže
   // notebook nechaný přes noc nikoho neblokuje.
-  const [othersPresent, setOthersPresent] = useState([]);
+  const [presenceRaw, setPresenceRaw] = useState([]);
+  const [presenceTick, setPresenceTick] = useState(0);
   const lastActivityRef = React.useRef(Date.now());
 
   useEffect(() => {
@@ -1113,6 +1114,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       email: userEmail,
       timeZone,
       joinedAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
     }, { merge: true }).catch(err => console.error('Přítomnost se nepodařilo zapsat:', err));
 
@@ -1122,33 +1124,47 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     window.addEventListener('keydown', noteActivity);
     window.addEventListener('mousedown', noteActivity);
 
-    // Tep každých 30 s, ale jen pokud uživatel v poslední půlminutě něco dělal.
+    // Dvě různé věci, dva různé údaje:
+    //   lastSeenAt   — mám nabídku otevřenou. Obnovuje se pořád, i když jen čtu.
+    //                  Podle tohohle se pozná, kdo je v nabídce.
+    //   lastActiveAt — právě teď na ní pracuju (píšu, klikám). Podle tohohle se
+    //                  později bude uvolňovat štafeta, když od toho někdo odejde.
     const beat = setInterval(() => {
       if (cancelled) return;
-      if (Date.now() - lastActivityRef.current > 30000) return;
-      updateDoc(myRef, { lastActiveAt: new Date().toISOString() })
-        .catch(err => console.error('Tep přítomnosti selhal:', err));
-    }, 30000);
+      const patch = { lastSeenAt: new Date().toISOString() };
+      if (Date.now() - lastActivityRef.current < 60000) patch.lastActiveAt = new Date().toISOString();
+      updateDoc(myRef, patch).catch(err => console.error('Tep přítomnosti selhal:', err));
+    }, 25000);
 
     const unsub = onSnapshot(collection(db, 'offers', offerId, 'presence'), snap => {
       if (cancelled) return;
-      const now = Date.now();
-      const list = snap.docs
-        .map(d => d.data())
-        .filter(p => p && p.email && p.email !== userEmail)
-        .filter(p => p.lastActiveAt && (now - new Date(p.lastActiveAt).getTime()) < PRESENCE_TIMEOUT_MS);
-      setOthersPresent(list);
+      setPresenceRaw(snap.docs.map(d => d.data()).filter(p => p && p.email && p.email !== userEmail));
     }, err => console.error('Sledování přítomnosti selhalo:', err));
+
+    // Záznamy zastarávají i bez nové zprávy z databáze (zavřený notebook nic
+    // neposílá), takže se seznam musí pravidelně přepočítat i sám od sebe.
+    const tick = setInterval(() => { if (!cancelled) setPresenceTick(t => t + 1); }, 20000);
 
     return () => {
       cancelled = true;
       clearInterval(beat);
+      clearInterval(tick);
       window.removeEventListener('keydown', noteActivity);
       window.removeEventListener('mousedown', noteActivity);
       unsub();
       deleteDoc(myRef).catch(() => {});
     };
   }, [offerId, userEmail]);
+
+  // Kdo je právě teď v nabídce. Bere se poslední ohlášení, ne poslední činnost.
+  const othersPresent = React.useMemo(() => {
+    const now = Date.now();
+    void presenceTick; // přepočítat i při tiknutí, nejen při změně dat
+    return presenceRaw.filter(p => {
+      const seen = p.lastSeenAt || p.joinedAt;
+      return seen && (now - new Date(seen).getTime()) < PRESENCE_TIMEOUT_MS;
+    });
+  }, [presenceRaw, presenceTick]);
 
   const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'ok', 'error'
 
