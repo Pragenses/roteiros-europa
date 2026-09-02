@@ -134,6 +134,110 @@ const FormulaField = ({ value, onChange, placeholder, colors }) => {
 
 const fmtDateBR = (d) => { if (!d || d.length < 10) return d; const [y, m, day] = d.split('-'); return `${day}/${m}/${y}`; };
 
+// Vlastní malý kalendář. Kalendář vestavěný v prohlížeči se v některých
+// prostředích otevřít odmítne, tenhle funguje vždycky stejně.
+const CAL_MONTHS = ['leden', 'únor', 'březen', 'duben', 'květen', 'červen',
+                    'červenec', 'srpen', 'září', 'říjen', 'listopad', 'prosinec'];
+const CAL_DAYS = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
+
+const calISO = (y, m, d) =>
+  `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+const CalendarPopup = ({ value, onPick, onClose, colors }) => {
+  const base = (value && value.length === 10) ? new Date(value + 'T00:00:00') : new Date();
+  const [view, setView] = React.useState({ y: base.getFullYear(), m: base.getMonth() });
+  const boxRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const away = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) onClose(); };
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [onClose]);
+
+  const shift = (months) => setView(v => {
+    const d = new Date(v.y, v.m + months, 1);
+    return { y: d.getFullYear(), m: d.getMonth() };
+  });
+
+  const first = new Date(view.y, view.m, 1);
+  // Pondělí je první sloupec, neděle poslední.
+  const lead = (first.getDay() + 6) % 7;
+  const days = new Date(view.y, view.m + 1, 0).getDate();
+  const today = new Date();
+  const todayISO = calISO(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+
+  const navBtn = (label, fn, title) => (
+    <button type="button" onClick={fn} title={title}
+      style={{ border: `1px solid ${colors.border}`, background: colors.white, borderRadius: 4,
+               cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '3px 6px',
+               fontFamily: 'inherit', color: colors.text }}>{label}</button>
+  );
+
+  return (
+    <div ref={boxRef}
+      style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 1000,
+               background: colors.white, border: `1px solid ${colors.border}`,
+               borderRadius: 8, padding: 8, width: 232,
+               boxShadow: '0 6px 20px rgba(0,0,0,0.15)', fontFamily: 'Georgia, serif' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+        {navBtn('«', () => shift(-12), 'O rok zpět')}
+        {navBtn('‹', () => shift(-1), 'O měsíc zpět')}
+        <div style={{ flex: 1, textAlign: 'center', fontSize: 12, fontWeight: 700,
+                      color: colors.primary, whiteSpace: 'nowrap' }}>
+          {CAL_MONTHS[view.m]} {view.y}
+        </div>
+        {navBtn('›', () => shift(1), 'O měsíc vpřed')}
+        {navBtn('»', () => shift(12), 'O rok vpřed')}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {CAL_DAYS.map((d, i) => (
+          <div key={d} style={{ fontSize: 10, textAlign: 'center', fontWeight: 700,
+                                color: i > 4 ? colors.danger : colors.muted, padding: '2px 0' }}>{d}</div>
+        ))}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={'e' + i} />;
+          const iso = calISO(view.y, view.m, d);
+          const isSel = iso === value;
+          const isToday = iso === todayISO;
+          const weekend = ((lead + d - 1) % 7) > 4;
+          return (
+            <button key={iso} type="button" onClick={() => onPick(iso)}
+              style={{
+                padding: '4px 0', fontSize: 12, cursor: 'pointer', borderRadius: 4,
+                fontFamily: 'inherit',
+                border: isToday ? `1px solid ${colors.primary}` : '1px solid transparent',
+                background: isSel ? colors.primary : 'transparent',
+                color: isSel ? colors.white : (weekend ? colors.danger : colors.text),
+                fontWeight: isSel || isToday ? 700 : 400,
+              }}>{d}</button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <button type="button" onClick={() => onPick(todayISO)}
+          style={{ flex: 1, padding: '4px 0', fontSize: 11, cursor: 'pointer', borderRadius: 5,
+                   border: `1px solid ${colors.border}`, background: colors.white,
+                   fontFamily: 'inherit', color: colors.primary }}>Dnes</button>
+        <button type="button" onClick={() => onPick('')}
+          style={{ flex: 1, padding: '4px 0', fontSize: 11, cursor: 'pointer', borderRadius: 5,
+                   border: `1px solid ${colors.border}`, background: colors.white,
+                   fontFamily: 'inherit', color: colors.muted }}>Vymazat</button>
+      </div>
+    </div>
+  );
+};
+
 // Date input in DD.MM.YYYY order — always consistent regardless of browser/OS locale
 const DateDMY = ({ value, onChange, colors, dateKey }) => {
   const toDisplay = (v) => {
@@ -168,8 +272,19 @@ const DateDMY = ({ value, onChange, colors, dateKey }) => {
       setWeekday(getWeekday(value));
     }
   }, [value]);
+
+  // Datum jde psát i vyklikat z kalendáře.
+  const [calOpen, setCalOpen] = React.useState(false);
+  const applyPicked = (iso) => {
+    if (inputRef.current) inputRef.current.value = iso ? toDisplay(iso) : '';
+    prevValue.current = iso;
+    setWeekday(iso ? getWeekday(iso) : '');
+    onChange(iso);
+    setCalOpen(false);
+  };
+
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, position: 'relative' }}>
       <input
         ref={inputRef}
         type="text"
@@ -181,6 +296,18 @@ const DateDMY = ({ value, onChange, colors, dateKey }) => {
         }}
         style={{ padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', width: 100, boxSizing: 'border-box' }}
       />
+      <button
+        type="button"
+        onClick={() => setCalOpen(o => !o)}
+        title="Vybrat z kalendáře"
+        style={{ padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5,
+                 background: calOpen ? '#f0ede8' : colors.white, cursor: 'pointer',
+                 fontSize: 13, lineHeight: 1 }}
+      >📅</button>
+      {calOpen && (
+        <CalendarPopup value={value} colors={colors}
+          onPick={applyPicked} onClose={() => setCalOpen(false)} />
+      )}
       {weekday && <span style={{ fontSize: 11, color: colors.muted, fontWeight: 600, whiteSpace: 'nowrap' }}>{weekday}</span>}
     </span>
   );
@@ -251,6 +378,330 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
         <input ref={inputRef} type="file" style={{ display: 'none' }}
           onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
       </div>
+    </div>
+  );
+};
+
+// --- Poznámky jako seznam zápisů -----------------------------------------
+// Poznámka už není jeden dlouhý text, ale řada zápisů. Každý zápis má datum,
+// autora a text. Nejnovější je nahoře, starší se nikdy nepřepisují.
+//
+// Sbaleně je z každého zápisu vidět jeden řádek, aby šlo na první pohled
+// poznat, že v poznámce něco je, bez klikání. Kliknutím se zápis rozbalí.
+const NOTE_AUTHORS = [
+  { code: 'HD', name: 'Helena Dlasková',   color: '#1a3a5c', bg: '#e6f1fb', border: '#1a3a5c' },
+  // Zlatá z loga je na bílém pozadí špatně čitelná, proto tmavší odstín na
+  // text a plná zlatá jen na tlačítko.
+  { code: 'FD', name: 'Filip Dlask',       color: '#7a5c0a', bg: '#c8a84b', border: '#a8862b' },
+  { code: 'HŠ', name: 'Helena Škorkovská', color: '#a11a1a', bg: '#fceaea', border: '#a11a1a' },
+];
+
+const noteAuthor = (code) => NOTE_AUTHORS.find(a => a.code === code) || null;
+
+const WEEKDAYS_CS = ['Neděle', 'Pondělí', 'Úterý', 'Středa', 'Čtvrtek', 'Pátek', 'Sobota'];
+
+const noteStamp = (d = new Date()) => {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}.${mm}.${d.getFullYear()} ${WEEKDAYS_CS[d.getDay()]}`;
+};
+
+// Starší poznámky byly jeden text. Zobrazí se jako jediný nejstarší zápis
+// bez autora — text zůstává celý, jen není rozdělený po dnech.
+const asNoteEntries = (entries, legacyText) => {
+  if (Array.isArray(entries)) return entries;
+  const t = (legacyText || '').trim();
+  if (!t) return [];
+  return [{ id: 'legacy', stamp: '', author: '', text: legacyText }];
+};
+
+const noteEntriesToText = (list) => (list || [])
+  .map(e => [[e.stamp, e.author].filter(Boolean).join(' - '), e.text].filter(Boolean).join('\n'))
+  .filter(Boolean).join('\n\n');
+
+const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel }) => {
+  const [openIds, setOpenIds] = React.useState(() => new Set());
+  const [expandAll, setExpandAll] = React.useState(false);
+  const [showOlder, setShowOlder] = React.useState(false);
+  const focusId = React.useRef(null);
+  const taRefs = React.useRef({});
+
+  const list = Array.isArray(entries) ? entries : [];
+
+  // Označenou větu vezmeme přednostně; když nic označeno není, celý zápis.
+  const makeTask = (entry) => {
+    const el = taRefs.current[entry.id];
+    let picked = '';
+    if (el && el.selectionStart !== el.selectionEnd) {
+      picked = (entry.text || '').slice(el.selectionStart, el.selectionEnd);
+    }
+    onMakeTask({
+      text: (picked || entry.text || '').trim(),
+      source: sourceLabel || '',
+      mark: () => onChange(list.map(e => (e.id === entry.id ? { ...e, hasTask: true } : e))),
+    });
+  };
+
+  const VISIBLE = 5;
+  const visible = showOlder ? list : list.slice(0, VISIBLE);
+  const hidden = list.length - visible.length;
+
+  const addEntry = (code) => {
+    const entry = {
+      id: Date.now() + Math.random(),
+      stamp: noteStamp(),
+      author: code,
+      text: '',
+      createdAt: new Date().toISOString(),
+    };
+    focusId.current = entry.id;
+    setOpenIds(prev => new Set([...prev, entry.id]));
+    setShowOlder(false);
+    onChange([entry, ...list]);
+  };
+
+  const setText = (id, text) => onChange(list.map(e => (e.id === id ? { ...e, text } : e)));
+
+  const removeEntry = (id) => {
+    if (!window.confirm('Smazat tento zápis? Tuhle akci nelze vzít zpět.')) return;
+    onChange(list.filter(e => e.id !== id));
+  };
+
+  const toggle = (id) => setOpenIds(prev => {
+    const s = new Set(prev);
+    s.has(id) ? s.delete(id) : s.add(id);
+    return s;
+  });
+
+  const btnRow = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, color: colors.muted }}>Nový zápis:</span>
+      {NOTE_AUTHORS.map(a => (
+        <button key={a.code} type="button" onClick={() => addEntry(a.code)}
+          title={`Přidat zápis za ${a.name}`}
+          style={{
+            padding: '3px 10px', borderRadius: 5, fontSize: 12, fontWeight: 700,
+            cursor: 'pointer', background: a.bg, color: a.color,
+            border: `1px solid ${a.border}`, fontFamily: 'inherit',
+          }}>
+          {a.code}
+        </button>
+      ))}
+      {list.length > 1 && (
+        <button type="button" onClick={() => setExpandAll(v => !v)}
+          style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: 5, fontSize: 11,
+                   cursor: 'pointer', background: 'transparent', color: colors.muted,
+                   border: `1px solid ${colors.border}`, fontFamily: 'inherit' }}>
+          {expandAll ? 'Sbalit vše' : 'Rozbalit vše'}
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {btnRow}
+      {list.length === 0 ? (
+        <div style={{ fontSize: 12, color: colors.muted, fontStyle: 'italic' }}>
+          Zatím žádný zápis.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {visible.map(entry => {
+            const a = noteAuthor(entry.author);
+            const isOpen = expandAll || openIds.has(entry.id);
+            const label = [entry.stamp, entry.author].filter(Boolean).join(' - ');
+            if (!isOpen) {
+              const firstLine = (entry.text || '').split('\n')[0].trim();
+              return (
+                <div key={entry.id} onClick={() => toggle(entry.id)}
+                  title="Kliknutím rozbalit celý zápis"
+                  style={{
+                    display: 'flex', alignItems: 'baseline', gap: 6, cursor: 'pointer',
+                    padding: '3px 6px', borderRadius: 4, background: '#fff',
+                    border: `1px solid ${colors.border}`, fontSize: 12,
+                    whiteSpace: 'nowrap', overflow: 'hidden',
+                  }}>
+                  {label && (
+                    <span style={{ fontWeight: 700, color: a ? a.color : colors.muted, flexShrink: 0 }}>
+                      {label}
+                    </span>
+                  )}
+                  <span style={{ color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {firstLine || <em style={{ color: colors.muted }}>(prázdný zápis)</em>}
+                  </span>
+                </div>
+              );
+            }
+            const rows = Math.min(Math.max((entry.text || '').split('\n').length + 1, 3), 14);
+            return (
+              <div key={entry.id}
+                style={{ padding: '4px 6px', borderRadius: 4, background: '#fff',
+                         border: `1px solid ${a ? a.border : colors.border}` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                  <span onClick={() => toggle(entry.id)}
+                    title="Kliknutím sbalit"
+                    style={{ fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                             color: a ? a.color : colors.muted }}>
+                    {label || 'Starší poznámka'}
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  {entry.hasTask && (
+                    <span title="Z tohoto zápisu už vznikl úkol"
+                      style={{ fontSize: 10, color: colors.success, fontWeight: 700 }}>✓ úkol</span>
+                  )}
+                  {onMakeTask && (
+                    <button type="button" onClick={() => makeTask(entry)}
+                      title="Udělat z tohoto zápisu úkol. Označ myší jednu větu, nebo se vezme celý zápis."
+                      style={{ background: 'none', border: `1px solid ${colors.border}`, borderRadius: 4,
+                               cursor: 'pointer', color: colors.primary, fontSize: 11, padding: '1px 7px',
+                               fontFamily: 'inherit' }}>→ úkol</button>
+                  )}
+                  <button type="button" onClick={() => removeEntry(entry.id)}
+                    title="Smazat tento zápis"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer',
+                             color: colors.danger, fontSize: 12, padding: 0 }}>✕</button>
+                </div>
+                <textarea
+                  ref={el => {
+                    taRefs.current[entry.id] = el;
+                    if (el && focusId.current === entry.id) {
+                      focusId.current = null;
+                      el.focus();
+                    }
+                  }}
+                  value={entry.text || ''}
+                  onChange={e => setText(entry.id, e.target.value)}
+                  placeholder="Co se stalo, co si o tom myslíme, co je třeba udělat…"
+                  rows={rows}
+                  style={{ width: '100%', padding: '6px 8px', boxSizing: 'border-box',
+                           border: `1px solid ${colors.border}`, borderRadius: 6,
+                           fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5,
+                           resize: 'vertical' }}
+                />
+              </div>
+            );
+          })}
+          {hidden > 0 && (
+            <button type="button" onClick={() => setShowOlder(true)}
+              style={{ alignSelf: 'flex-start', background: 'none', border: 'none',
+                       color: colors.primary, cursor: 'pointer', fontSize: 12,
+                       padding: '2px 0', fontFamily: 'inherit', textDecoration: 'underline' }}>
+              + {hidden} starších
+            </button>
+          )}
+          {showOlder && list.length > VISIBLE && (
+            <button type="button" onClick={() => setShowOlder(false)}
+              style={{ alignSelf: 'flex-start', background: 'none', border: 'none',
+                       color: colors.muted, cursor: 'pointer', fontSize: 12,
+                       padding: '2px 0', fontFamily: 'inherit', textDecoration: 'underline' }}>
+              Skrýt starší
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- Úkoly u nabídky ------------------------------------------------------
+// Seznam, ne jedno velké pole, aby se dalo odškrtávat. Hotové se nemažou,
+// jen přeškrtnou a spadnou dolů — ať je vidět, co už se udělalo.
+const TaskList = ({ todos, onChange, colors }) => {
+  const [draft, setDraft] = React.useState({ text: '', due: '', who: '' });
+
+  const list = Array.isArray(todos) ? todos : [];
+  const open = list.filter(t => !t.done);
+  const done = list.filter(t => t.done);
+
+  const add = () => {
+    if (!draft.text.trim()) return;
+    onChange([{
+      id: Date.now() + Math.random(),
+      text: draft.text.trim(),
+      due: draft.due || '',
+      who: draft.who || '',
+      done: false,
+      createdAt: new Date().toISOString(),
+    }, ...list]);
+    setDraft({ text: '', due: '', who: '' });
+  };
+
+  const upd = (id, field, value) => onChange(list.map(t => (t.id === id ? { ...t, [field]: value } : t)));
+  const del = (id) => {
+    if (!window.confirm('Smazat tento úkol?')) return;
+    onChange(list.filter(t => t.id !== id));
+  };
+
+  const small = { fontSize: 12, padding: '4px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontFamily: 'inherit' };
+
+  const row = (t) => {
+    const a = noteAuthor(t.who);
+    const overdue = !t.done && t.due && t.due.length === 10 && t.due < new Date().toISOString().slice(0, 10);
+    return (
+      <div key={t.id} style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '5px 7px',
+        borderRadius: 5, background: '#fff', border: `1px solid ${colors.border}`,
+        opacity: t.done ? 0.55 : 1,
+      }}>
+        <input type="checkbox" checked={!!t.done} onChange={e => upd(t.id, 'done', e.target.checked)}
+          title={t.done ? 'Vrátit mezi nesplněné' : 'Označit jako hotové'}
+          style={{ width: 15, height: 15, cursor: 'pointer', flexShrink: 0 }} />
+        <input type="text" value={t.text} onChange={e => upd(t.id, 'text', e.target.value)}
+          style={{ ...small, flex: 1, border: 'none', background: 'transparent', fontSize: 13,
+                   textDecoration: t.done ? 'line-through' : 'none', color: colors.text }} />
+        {t.source && (
+          <span title={`Vzniklo ze zápisu: ${t.source}`}
+            style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap', maxWidth: 150,
+                     overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            ↩ {t.source}
+          </span>
+        )}
+        <DateDMY dateKey={`todo-${t.id}`} value={t.due || ''} colors={colors}
+          onChange={v => upd(t.id, 'due', v)} />
+        {overdue && <span style={{ fontSize: 11, color: colors.danger, fontWeight: 700, whiteSpace: 'nowrap' }}>po termínu</span>}
+        <select value={t.who || ''} onChange={e => upd(t.id, 'who', e.target.value)}
+          title="Kdo to má udělat"
+          style={{ ...small, background: a ? a.bg : '#fff', color: a ? a.color : colors.muted, fontWeight: a ? 700 : 400 }}>
+          <option value="">kdo?</option>
+          {NOTE_AUTHORS.map(x => <option key={x.code} value={x.code}>{x.code}</option>)}
+        </select>
+        <button type="button" onClick={() => del(t.id)} title="Smazat úkol"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.danger, fontSize: 12, padding: 0 }}>✕</button>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <input type="text" value={draft.text} placeholder="Co je třeba udělat…"
+          onChange={e => setDraft(d => ({ ...d, text: e.target.value }))}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          style={{ ...small, flex: 1, minWidth: 180, fontSize: 13 }} />
+        <DateDMY dateKey="todo-new" value={draft.due} colors={colors}
+          onChange={v => setDraft(d => ({ ...d, due: v }))} />
+        <select value={draft.who} onChange={e => setDraft(d => ({ ...d, who: e.target.value }))} style={small}>
+          <option value="">kdo?</option>
+          {NOTE_AUTHORS.map(x => <option key={x.code} value={x.code}>{x.code}</option>)}
+        </select>
+        <button type="button" onClick={add}
+          style={{ ...small, cursor: 'pointer', background: colors.primary, color: '#fff', border: 'none', fontWeight: 600 }}>
+          + Přidat
+        </button>
+      </div>
+
+      {list.length === 0 ? (
+        <div style={{ fontSize: 12, color: colors.muted, fontStyle: 'italic' }}>Zatím žádný úkol.</div>
+      ) : (
+        <>
+          {open.map(row)}
+          {done.length > 0 && (
+            <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>Hotové ({done.length})</div>
+          )}
+          {done.map(row)}
+        </>
+      )}
     </div>
   );
 };
@@ -805,7 +1256,14 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const newItemRef = React.useRef(null);
   const [newItemId, setNewItemId] = React.useState(null);
+  // Poznámka u položky je vidět vždy, když v ní něco je. Tyhle dva seznamy
+  // drží jen ruční výjimky: co uživatel otevřel navíc a co naopak schoval.
   const [noteOpenIds, setNoteOpenIds] = React.useState(() => new Set());
+  const [noteHiddenIds, setNoteHiddenIds] = React.useState(() => new Set());
+  const toggleItemNote = (id, visible) => {
+    setNoteOpenIds(prev => { const s = new Set(prev); visible ? s.delete(id) : s.add(id); return s; });
+    setNoteHiddenIds(prev => { const s = new Set(prev); visible ? s.add(id) : s.delete(id); return s; });
+  };
   const [resendModalItem, setResendModalItem] = React.useState(null);
   const [resendSending, setResendSending] = React.useState(false);
   const [resendError, setResendError] = React.useState('');
@@ -1305,6 +1763,42 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     setSaving(false);
   };
 
+  // Poznámka u nabídky. Zapisuje se seznam zápisů; starý jednotný text se
+  // přitom vyprázdní, aby se stejný obsah neukazoval dvakrát.
+  const handleOfferNotes = async (list) => {
+    setOffer(prev => ({ ...prev, noteEntries: list, notes: '' }));
+    await trackedUpdate({ noteEntries: list, notes: '', updatedAt: new Date().toISOString() });
+  };
+
+  // Úkoly patří vždy k nabídce, i když vznikly ze zápisu u servisní karty —
+  // jinak by se v seznamu ztratily.
+  const [todoDraft, setTodoDraft] = useState(null);
+
+  const handleTodos = async (list) => {
+    setOffer(prev => ({ ...prev, todos: list }));
+    await trackedUpdate({ todos: list, updatedAt: new Date().toISOString() });
+  };
+
+  const startTodoFromNote = ({ text, source, mark }) => {
+    setTodoDraft({ text, source: source || '', due: '', who: '', mark });
+  };
+
+  const confirmTodoDraft = async () => {
+    if (!todoDraft || !todoDraft.text.trim()) return;
+    const list = Array.isArray(offer.todos) ? offer.todos : [];
+    await handleTodos([{
+      id: Date.now() + Math.random(),
+      text: todoDraft.text.trim(),
+      due: todoDraft.due || '',
+      who: todoDraft.who || '',
+      source: todoDraft.source || '',
+      done: false,
+      createdAt: new Date().toISOString(),
+    }, ...list]);
+    if (todoDraft.mark) todoDraft.mark();
+    setTodoDraft(null);
+  };
+
   const handleHeaderChange = async (field, value) => {
     setOffer(prev => ({ ...prev, [field]: value }));
     await trackedUpdate({ [field]: value, updatedAt: new Date().toISOString() });
@@ -1353,7 +1847,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       destinations: offer.destinations || '',
       focType: 'dbl',
       margin: margin || 15,
-      notes: `Created from offer "${offer.name}".\n${offer.notes || ''}`,
+      notes: `Created from offer "${offer.name}".\n${noteEntriesToText(asNoteEntries(offer.noteEntries, offer.notes))}`,
       createdAt: new Date().toISOString(),
     };
     const ref = await addDoc(collection(db, 'orders'), data);
@@ -1664,6 +2158,45 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         </div>
       )}
 
+      {todoDraft && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 460, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>→ Nový úkol ze zápisu</div>
+            {todoDraft.source && (
+              <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+                Ze zápisu u: <b>{todoDraft.source}</b> — úkol se uloží k celé nabídce.
+              </div>
+            )}
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Text úkolu (můžeš upravit):</div>
+            <textarea value={todoDraft.text} autoFocus
+              onChange={e => setTodoDraft(d => ({ ...d, text: e.target.value }))}
+              rows={4}
+              style={{ width: '100%', boxSizing: 'border-box', padding: 8, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.5, marginBottom: 12, resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: colors.muted }}>Termín:</span>
+              <DateDMY dateKey="todo-draft" value={todoDraft.due} colors={colors}
+                onChange={v => setTodoDraft(d => ({ ...d, due: v }))} />
+              <span style={{ fontSize: 12, color: colors.muted }}>Kdo:</span>
+              <select value={todoDraft.who} onChange={e => setTodoDraft(d => ({ ...d, who: e.target.value }))}
+                style={{ fontSize: 12, padding: '4px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontFamily: 'inherit' }}>
+                <option value="">kdo?</option>
+                {NOTE_AUTHORS.map(x => <option key={x.code} value={x.code}>{x.code}</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={confirmTodoDraft} disabled={!todoDraft.text.trim()}
+                style={{ flex: 1, padding: '9px', background: todoDraft.text.trim() ? colors.primary : colors.border, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: todoDraft.text.trim() ? 'pointer' : 'default', fontWeight: 600, fontFamily: 'inherit' }}>
+                ✓ Vytvořit úkol
+              </button>
+              <button onClick={() => setTodoDraft(null)}
+                style={{ flex: 1, padding: '9px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Zrušit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Resend/forward booking modal */}
       {resendModalItem && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1765,6 +2298,29 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <div style={{ marginTop: 10 }}>
           {lbl('Destinations')}<input type="text" defaultValue={offer.destinations} onBlur={e => handleHeaderChange('destinations', e.target.value)} style={iStyle} />
         </div>
+      </div>
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>📝 Poznámky k nabídce</div>
+        <NoteLog
+          entries={asNoteEntries(offer.noteEntries, offer.notes)}
+          onChange={handleOfferNotes}
+          colors={colors}
+          onMakeTask={startTodoFromNote}
+        />
+      </div>
+
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>
+          ✓ Úkoly
+          {(() => {
+            const openCount = (offer.todos || []).filter(t => !t.done).length;
+            return openCount > 0
+              ? <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, background: '#fff8e1', color: '#854f0b', padding: '2px 8px', borderRadius: 10 }}>{openCount} nesplněných</span>
+              : null;
+          })()}
+        </div>
+        <TaskList todos={offer.todos} onChange={handleTodos} colors={colors} />
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
@@ -1937,6 +2493,9 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               const isDriverHotel = it.type === 'group' && it.subType === 'driver_hotel';
               const isTicket = it.type === 'per_pax' && it.subType === 'ticket';
               const isTransportGroup = it.type === 'group' && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel';
+              const itemNotes = asNoteEntries(it.noteEntries, it.note);
+              const hasNotes = itemNotes.length > 0;
+              const notesVisible = (hasNotes && !noteHiddenIds.has(it.id)) || noteOpenIds.has(it.id);
               const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : (isGuideHotel || isDriverHotel) ? '60px 2fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
               const minWidth = isHotel ? 1100 : undefined;
               const isEnabled = it.enabled !== false;
@@ -2125,9 +2684,9 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     </select>
                   )}
 
-                  <button onClick={() => setNoteOpenIds(prev => { const s = new Set(prev); s.has(it.id) ? s.delete(it.id) : s.add(it.id); return s; })}
-                    title={it.note ? 'Poznámka: ' + it.note : 'Přidat poznámku'}
-                    style={{ padding: '5px 8px', background: it.note ? '#fff8e1' : 'transparent', border: `1px solid ${it.note ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: it.note ? '#854f0b' : colors.muted }}>📝</button>
+                  <button onClick={() => toggleItemNote(it.id, notesVisible)}
+                    title={hasNotes ? `${itemNotes.length} zápis(ů) — kliknutím schovat/ukázat` : 'Přidat poznámku'}
+                    style={{ padding: '5px 8px', background: hasNotes ? '#fff8e1' : 'transparent', border: `1px solid ${hasNotes ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: hasNotes ? '#854f0b' : colors.muted }}>📝</button>
                   <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px 6px 34px', flexWrap: 'wrap' }}>
@@ -2164,14 +2723,18 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                       style={{ padding: '5px 8px', background: '#dc2626', border: '1px solid #dc2626', borderRadius: 5, fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>ZRUŠENO ✕</button>
                   )}
                 </div>
-                {noteOpenIds.has(it.id) && (
+                {/* Zápisy jsou vidět vždy, když u položky nějaké jsou — jinak by se
+                    na ně zapomnělo. Tlačítkem 📝 se dají schovat, nebo otevřít u
+                    položky, která zatím žádný zápis nemá. */}
+                {notesVisible && (
                   <div style={{ padding: '4px 8px 8px', background: rowBg === 'transparent' ? '#fafafa' : rowBg }}>
-                    <textarea
-                      value={it.note || ''}
-                      onChange={e => updateItem(it.id, 'note', e.target.value)}
-                      placeholder="Poznámka…"
-                      rows={2}
-                      style={{ ...iStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                    <NoteLog
+                      entries={itemNotes}
+                      onChange={list => updateItemFields(it.id, { noteEntries: list, note: '' })}
+                      colors={colors}
+                      compact
+                      onMakeTask={startTodoFromNote}
+                      sourceLabel={[it.city, it.name].filter(Boolean).join(' – ') || 'položka'}
                     />
                   </div>
                 )}
@@ -2529,8 +3092,6 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Notes</div>
-        <textarea defaultValue={offer.notes} onBlur={e => handleHeaderChange('notes', e.target.value)} rows={3} style={{ ...iStyle, resize: 'vertical', marginBottom: 14 }} />
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <button onClick={handleConvertToOrder} style={{ padding: '9px 20px', background: colors.success, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             ✓ Client confirmed — Convert to Order

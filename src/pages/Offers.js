@@ -215,6 +215,14 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
                       <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{o.name}</div>
                       <div style={{ fontSize: 12, color: colors.muted }}>
                         {o.destinations ? `${o.destinations} · ` : ''}{o.startDate || ''}{o.endDate ? ` – ${o.endDate}` : ''} · {o.items?.length || 0} item(s) · margin {o.margin || 15}%
+                        {(() => {
+                          const openTodos = (o.todos || []).filter(t => !t.done).length;
+                          return openTodos > 0
+                            ? <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: '#854f0b', background: '#fff8e1', borderRadius: 10, padding: '1px 7px' }}>
+                                ✓ {openTodos} úkol{openTodos === 1 ? '' : (openTodos < 5 ? 'y' : 'ů')}
+                              </span>
+                            : null;
+                        })()}
                       </div>
                     </div>
                     <Badge status={o.status} />
