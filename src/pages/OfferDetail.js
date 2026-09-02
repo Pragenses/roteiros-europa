@@ -3,6 +3,7 @@ import { db, auth, storage } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
+import { parseServiceText, parseServiceDocument } from '../lib/ai';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -39,6 +40,221 @@ const PAYMENT_METHODS = [
   { value: 'fio',  label: 'FIO banka' },
   { value: 'kb',   label: 'KB banka' },
 ];
+
+// --- Automatické vyplnění hotelové karty z e-mailu nebo PDF -----------------
+// Rozbor textu dělá stejná funkce jako v objednávkách (parseServiceText /
+// parseServiceDocument v lib/ai.js). Co se tam liší, jsou POLE, do kterých to
+// padá — a hlavně jedna věc kolem peněz, na kterou je potřeba dát pozor:
+//
+//   offerCalc.getEffectiveCostDbl: (pricePerNightDbl + cityTax) * nights / 2
+//
+// Cena i city tax se u DBL dělí dvěma. Obě políčka jsou tedy "za POKOJ a noc",
+// ne za osobu — přestože u city tax je v popisku napsáno "/p/night". Když AI
+// vrátí city tax za osobu, musí se sem zapsat dvojnásobek, jinak vyjde poloviční.
+// U SNGL se nedělí nic, tam jde částka tak, jak přišla.
+//
+// Žádná z těchto funkcí nic neukládá ani nepočítá cenu nabídky — jen připraví
+// návrh, který uživatel v okně odklikne. Peníze jsou v tom okně předem
+// NEZAŠKRTNUTÉ (viz MONEY_KEYS níže).
+
+// Číslo z textu; prázdný řetězec, když to číslo není nebo je nula.
+// --- E-mailové adresy z vloženého textu ------------------------------------
+// Zadání: do kontaktu na kartě má jít adresa toho, KDO e-mail poslal. Ve
+// vloženém e-mailu jich bývá víc (hlavička, kopie, patička, podpis) a AI si
+// z nich umí vybrat špatně, proto si odesílatele hledáme sami z hlavičky a
+// zbytek nabídneme jen jako další možnost.
+
+// Naše vlastní adresy — do kontaktu na dodavatele nikdy nepatří.
+// Doplňuje se sem, kdyby přibyla další adresa firmy.
+const OWN_EMAIL_PATTERNS = [
+  /@tour-pragenses\.com$/i,
+  /^helena\.maria\.brito@gmail\.com$/i,
+  /^filipdlask@gmail\.com$/i,
+];
+const isOwnEmail = (addr) => OWN_EMAIL_PATTERNS.some(re => re.test(String(addr || '').trim()));
+
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+// Řádek odesílatele v běžných jazycích, ve kterých nám hotely píšou.
+// Ošetřen i tvar 'From: "Radisson Blu" <groups@radisson.no>'.
+const SENDER_LINE_RE = /^\s*(?:from|de|od|von|da|van|fra|远)\s*:(.*)$/i;
+
+// Vrátí { sender, others } — adresa odesílatele a ostatní nalezené adresy,
+// obojí bez našich vlastních a bez duplicit.
+const emailsFromText = (text) => {
+  const src = String(text || '');
+  let sender = '';
+  for (const line of src.split(/\r?\n/)) {
+    const m = line.match(SENDER_LINE_RE);
+    if (!m) continue;
+    const found = (m[1].match(EMAIL_RE) || []).map(a => a.trim()).filter(a => !isOwnEmail(a));
+    if (found.length > 0) { sender = found[0]; break; }
+  }
+  const seen = new Set();
+  const others = [];
+  for (const raw of (src.match(EMAIL_RE) || [])) {
+    const addr = raw.trim();
+    const key = addr.toLowerCase();
+    if (isOwnEmail(addr) || key === sender.toLowerCase() || seen.has(key)) continue;
+    seen.add(key);
+    others.push(addr);
+  }
+  return { sender, others };
+};
+
+const fillNum = (v) => {
+  const n = parseFloat(String(v === undefined || v === null ? '' : v).replace(',', '.').trim());
+  return isFinite(n) && n > 0 ? String(n) : '';
+};
+
+// Datum přijímáme jen v přesném tvaru YYYY-MM-DD, jak ho AI slibuje vracet.
+const fillDate = (v) => {
+  const s = String(v || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+};
+
+// "1 per 20" (tvar z AI) -> "20+1" (tvar, který čeká políčko FOC v nabídce).
+// "none", prázdno nebo cokoliv nerozpoznaného -> nevyplňovat nic.
+const focToRatio = (foc) => {
+  const m = String(foc || '').match(/(\d+)\s*(?:per|za|\/)\s*(\d+)/i);
+  return m ? `${m[2]}+${m[1]}` : '';
+};
+
+// Nabídka zná u FOC jen SNGL a DBL. Twin i triple padají na DBL.
+const focRoomForOffer = (occ) => (String(occ || '').toLowerCase() === 'sngl' ? 'sngl' : 'dbl');
+
+// Noci: co řekla AI, jinak dopočet z dat pobytu.
+const nightsForOffer = (parsed) => {
+  const n = parseInt(parsed.nights, 10);
+  if (isFinite(n) && n > 0) return String(n);
+  const from = fillDate(parsed.dateFrom);
+  const to = fillDate(parsed.dateTo);
+  if (from && to) {
+    const diff = Math.round((new Date(to) - new Date(from)) / 86400000);
+    if (diff > 0) return String(diff);
+  }
+  return '';
+};
+
+// Termín bezplatného storna: buď konkrétní datum, nebo "X dní před příjezdem".
+const cancellationForOffer = (parsed) => {
+  const exact = fillDate(parsed.cancellationDate);
+  if (exact) return exact;
+  const days = parseInt(parsed.cancellationDays, 10);
+  const from = fillDate(parsed.dateFrom);
+  if (isFinite(days) && days > 0 && from) {
+    const d = new Date(from + 'T00:00:00');
+    d.setDate(d.getDate() - days);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  return '';
+};
+
+// City tax: AI vrací částku a k ní typ (za osobu / za pokoj / procenta).
+// Vrací hodnoty pro obě políčka nabídky a k nim vysvětlivku, aby bylo v okně
+// vidět, odkud se číslo vzalo.
+const cityTaxForOffer = (parsed) => {
+  const none = { dbl: '', sngl: '', noteDbl: '', noteSngl: '' };
+  if (String(parsed.cityTaxIncluded || '').toLowerCase() === 'included') {
+    return { ...none, noteDbl: 'podle textu je city tax v ceně — nevyplňuji' };
+  }
+  const raw = fillNum(parsed.cityTax);
+  if (!raw) return none;
+  const val = parseFloat(raw);
+  const type = String(parsed.cityTaxType || 'per_person').toLowerCase();
+
+  if (type === 'percent') {
+    const dblPrice = fillNum(parsed.pricePerDblRoom) || fillNum(parsed.pricePerTwnRoom);
+    const snglPrice = fillNum(parsed.pricePerSnglRoom);
+    const share = String(val / 100);
+    return {
+      dbl: dblPrice ? `=${dblPrice}*${share}` : '',
+      sngl: snglPrice ? `=${snglPrice}*${share}` : '',
+      noteDbl: `${val} % z ceny pokoje`,
+      noteSngl: `${val} % z ceny pokoje`,
+    };
+  }
+  if (type === 'per_room') {
+    return { dbl: String(val), sngl: String(val), noteDbl: 'za pokoj a noc', noteSngl: 'za pokoj a noc' };
+  }
+  // per_person (výchozí): dvoulůžkový pokoj = 2 osoby, jednolůžkový = 1 osoba
+  return {
+    dbl: String(val * 2),
+    sngl: String(val),
+    noteDbl: `${val} za osobu × 2 osoby v pokoji`,
+    noteSngl: `${val} za osobu`,
+  };
+};
+
+// Pole, u kterých se v potvrzovacím okně NEzaškrtne políčko samo. Všechno, co
+// se dotýká výpočtu ceny, musí uživatel odklepnout vědomě.
+const MONEY_KEYS = new Set(['pricePerNightDbl', 'pricePerNightSngl', 'cityTax', 'cityTaxSngl', 'currency']);
+
+// Z odpovědi AI sestaví řádky návrhu. Pole, ke kterým AI nic nenašla, se
+// vynechají úplně — v okně má být vidět jen to, co se opravdu dá vyplnit.
+const buildFillRows = (parsed, item, sourceText) => {
+  const tax = cityTaxForOffer(parsed);
+  // Odesílatel z hlavičky má přednost před adresou, kterou vybrala AI.
+  // U PDF hlavička není, tam zůstane jen to, co našla AI.
+  const mails = emailsFromText(sourceText);
+  const aiMail = String(parsed.email || '').trim();
+  const primaryMail = mails.sender || (isOwnEmail(aiMail) ? '' : aiMail);
+  const otherMails = mails.others.filter(a => a.toLowerCase() !== primaryMail.toLowerCase());
+  const priceDbl = fillNum(parsed.pricePerDblRoom);
+  const priceTwn = fillNum(parsed.pricePerTwnRoom);
+  const cur = String(parsed.currency || '').trim().toUpperCase();
+  const foc = focToRatio(parsed.hotelFoc);
+
+  const defs = [
+    { key: 'city',                 label: 'Město',            value: String(parsed.city || '').trim() },
+    { key: 'name',                 label: 'Název hotelu',     value: String(parsed.name || '').trim() },
+    { key: 'dateFrom',             label: 'Datum od',         value: fillDate(parsed.dateFrom) },
+    { key: 'dateTo',               label: 'Datum do',         value: fillDate(parsed.dateTo) },
+    { key: 'nights',               label: 'Počet nocí',       value: nightsForOffer(parsed) },
+    { key: 'pricePerNightDbl',     label: 'Cena/noc DBL',     value: priceDbl || priceTwn,
+      hint: priceDbl ? 'za pokoj a noc' : 'za pokoj a noc — z ceny TWN, cena DBL v textu nebyla' },
+    { key: 'pricePerNightSngl',    label: 'Cena/noc SNGL',    value: fillNum(parsed.pricePerSnglRoom), hint: 'za pokoj a noc' },
+    { key: 'cityTax',              label: 'City tax DBL',     value: tax.dbl, hint: tax.noteDbl },
+    { key: 'cityTaxSngl',          label: 'City tax SNGL',    value: tax.sngl, hint: tax.noteSngl },
+    { key: 'currency',             label: 'Měna',             value: CURRENCIES.includes(cur) ? cur : '' },
+    { key: 'cancellationDeadline', label: 'Free cancel',      value: cancellationForOffer(parsed) },
+    { key: 'focRatio',             label: 'FOC',              value: foc },
+    { key: 'focRoomType',          label: 'FOC — typ pokoje', value: foc ? focRoomForOffer(parsed.hotelFocOccupancy) : '' },
+    { key: '__email',              label: 'Kontaktní e-mail', value: primaryMail,
+      hint: mails.sender ? 'odesílatel e-mailu' : (primaryMail ? 'nalezeno v textu' : '') },
+    ...otherMails.map((addr, i) => ({ key: `__email${i + 2}`, label: 'Další e-mail', value: addr, hint: 'z textu' })),
+    { key: '__note',               label: 'Poznámka',         value: String(parsed.notes || '').trim() },
+  ];
+
+  return defs
+    .filter(d => d.value !== '')
+    .map(d => ({ ...d, current: fillCurrentValue(item, d.key), checked: !MONEY_KEYS.has(d.key) && !/^__email\d+$/.test(d.key) }));
+};
+
+// Co je v kartě teď — pro sloupec "teď" v potvrzovacím okně.
+const fillCurrentValue = (item, key) => {
+  if (!item) return '';
+  if (key.startsWith('__email')) {
+    const list = item.contactEmails || (item.contactEmail ? [item.contactEmail] : []);
+    return list.join(', ');
+  }
+  if (key === '__note') {
+    const n = asNoteEntries(item.noteEntries, item.note).length;
+    return n > 0 ? `${n} zápis(ů)` : '';
+  }
+  if (key === 'focRoomType') return item.focRoomType === 'sngl' ? 'SNGL' : item.focRoomType === 'dbl' ? 'DBL' : '';
+  const v = item[key];
+  return v === undefined || v === null ? '' : String(v);
+};
+
+// Hodnota tak, jak se ukáže v okně (data česky, ne YYYY-MM-DD).
+const fillDisplayValue = (key, value) => {
+  if (key === 'dateFrom' || key === 'dateTo' || key === 'cancellationDeadline') {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value.slice(8, 10)}.${value.slice(5, 7)}.${value.slice(0, 4)}` : value;
+  }
+  if (key === 'focRoomType') return value === 'sngl' ? 'SNGL' : 'DBL';
+  return value;
+};
 
 const DepositRows = ({ item, onChange, colors }) => {
   // Deposits are paid in INSTALMENTS — hotels and buses alike — so this is a
@@ -796,6 +1012,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   const [itineraryText, setItineraryText] = useState('');
   const [parseError, setParseError] = useState('');
 
+  // Okno "Vyplnit z textu" u hotelové karty. fillItem = karta, do které se
+  // vyplňuje; fillRows = návrh k odklepnutí (null = návrh ještě není).
+  const [fillItem, setFillItem] = useState(null);
+  const [fillText, setFillText] = useState('');
+  const [fillRows, setFillRows] = useState(null);
+  const [fillLoading, setFillLoading] = useState(false);
+  const [fillError, setFillError] = useState('');
+  const [fillExtraCount, setFillExtraCount] = useState(0);
+  const [fillInfo, setFillInfo] = useState('');
+
   const toEURWithRates = (amount, currency) => toEUR(amount, currency, rates);
 
   const hashPin = (pin) => {
@@ -1349,6 +1575,124 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       }, 800);
       return newItems;
     });
+  };
+
+  // --- Vyplnění hotelové karty z e-mailu nebo PDF ---------------------------
+  // Rozbor obstará AI (lib/ai.js), zápis do karty se ale nestane sám: nejdřív
+  // se ukáže návrh a uživatel odklikne, co se má opravdu vyplnit. Ceny a měna
+  // jsou předem nezaškrtnuté.
+
+  const openFillModal = (item) => {
+    setFillItem(item);
+    setFillText('');
+    setFillRows(null);
+    setFillError('');
+    setFillExtraCount(0);
+    setFillInfo('');
+  };
+
+  const closeFillModal = () => {
+    setFillItem(null);
+    setFillText('');
+    setFillRows(null);
+    setFillError('');
+    setFillLoading(false);
+    setFillExtraCount(0);
+    setFillInfo('');
+  };
+
+  // AI umí u hotelů vrátit i pole (víc hotelů v jedné nabídce). Do karty patří
+  // jeden — vezmeme první a jen napíšeme, kolik dalších v textu bylo.
+  const receiveParsed = (parsed, sourceText) => {
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    if (list.length === 0 || !list[0]) {
+      setFillError('V textu se nepodařilo najít údaje o hotelu.');
+      return;
+    }
+    const rows = buildFillRows(list[0], fillItem, sourceText);
+    if (rows.length === 0) {
+      setFillError('V textu se nepodařilo najít nic, co by se dalo vyplnit.');
+      return;
+    }
+    setFillRows(rows);
+    setFillExtraCount(list.length - 1);
+    // Když je city tax podle textu v ceně pokoje, žádný řádek nevznikne.
+    // Bez téhle hlášky by to vypadalo, že to AI přehlédla.
+    const tax = cityTaxForOffer(list[0]);
+    setFillInfo(!tax.dbl && !tax.sngl && tax.noteDbl ? tax.noteDbl : '');
+  };
+
+  const handleFillFromText = async () => {
+    if (!fillText.trim()) { setFillError('Nejdřív vložte text.'); return; }
+    setFillError('');
+    setFillLoading(true);
+    try {
+      receiveParsed(await parseServiceText(fillText, 'hotel'), fillText);
+    } catch (err) {
+      console.error('Rozbor textu selhal:', err);
+      setFillError('Text se nepodařilo zpracovat: ' + err.message);
+    }
+    setFillLoading(false);
+  };
+
+  const handleFillFromFile = async (file) => {
+    if (!file) return;
+    if (file.size > 10000000) { setFillError('Soubor je příliš velký (max. asi 10 MB).'); return; }
+    setFillError('');
+    setFillLoading(true);
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      // U nahraného souboru žádná hlavička s odesílatelem není — projde tedy
+      // jen adresa, kterou v dokumentu našla AI.
+      receiveParsed(await parseServiceDocument(base64, file.type || 'application/pdf', 'hotel'), '');
+    } catch (err) {
+      console.error('Rozbor souboru selhal:', err);
+      setFillError('Soubor se nepodařilo zpracovat: ' + err.message);
+    }
+    setFillLoading(false);
+  };
+
+  const toggleFillRow = (key) => {
+    setFillRows(prev => (prev || []).map(r => (r.key === key ? { ...r, checked: !r.checked } : r)));
+  };
+
+  // Zapíše do karty jen odškrtnuté řádky. E-mail se přidává k případným
+  // stávajícím, poznámka se zakládá jako nový zápis — nic se nepřepisuje.
+  const applyFillRows = () => {
+    const chosen = (fillRows || []).filter(r => r.checked);
+    if (chosen.length === 0) { closeFillModal(); return; }
+    const fresh = itemsRef.current.find(x => x.id === fillItem.id) || fillItem;
+    const fields = {};
+    const newEmails = [];
+    let newNote = '';
+    chosen.forEach(r => {
+      if (r.key.startsWith('__email')) newEmails.push(r.value);
+      else if (r.key === '__note') newNote = r.value;
+      else fields[r.key] = r.value;
+    });
+    if (newEmails.length > 0) {
+      const current = fresh.contactEmails || (fresh.contactEmail ? [fresh.contactEmail] : []);
+      const merged = [...current];
+      newEmails.forEach(addr => {
+        if (!merged.some(e => String(e).toLowerCase() === addr.toLowerCase())) merged.push(addr);
+      });
+      if (merged.length !== current.length) fields.contactEmails = merged;
+    }
+    if (newNote) {
+      const entries = asNoteEntries(fresh.noteEntries, fresh.note);
+      fields.noteEntries = [
+        { id: Date.now() + Math.random(), stamp: noteStamp(), author: '', text: newNote, createdAt: new Date().toISOString() },
+        ...entries,
+      ];
+      fields.note = '';
+    }
+    updateItemFields(fillItem.id, fields);
+    closeFillModal();
   };
 
   // Same as updateItem but sets several fields on the item at once (used for attachments,
@@ -2709,6 +3053,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                       }
                     }}
                     style={{ ...iStyle, width: 140, fontSize: 11 }} />
+                  {isHotel && (
+                    <button onClick={() => openFillModal(it)}
+                      title="Vyplnit kartu z e-mailu od hotelu nebo z PDF"
+                      style={{ padding: '5px 8px', background: '#f0ede8', border: `1px solid ${colors.primary}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.primary }}>📋 Vyplnit</button>
+                  )}
                   <button onClick={() => openResendModal(it, 'forward')}
                     title="Přeposlat rezervaci (datum, cena, příloha)"
                     style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
@@ -3101,6 +3450,96 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           </button>
         </div>
       </div>
+      {/* Okno "Vyplnit z textu" — jen u hotelových karet. Nic se nezapíše dřív,
+          než uživatel v tabulce odklikne "Vyplnit označené". */}
+      {fillItem && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 620, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: colors.text }}>📋 Vyplnit z textu</div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>
+              {[fillItem.city, fillItem.name].filter(Boolean).join(' – ') || 'hotelová karta'}
+            </div>
+
+            {!fillRows && (
+              <>
+                <textarea value={fillText} onChange={e => setFillText(e.target.value)} rows={7}
+                  placeholder="Sem vložte e-mail od hotelu…"
+                  style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={handleFillFromText} disabled={fillLoading}
+                    style={{ padding: '7px 16px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: fillLoading ? 'default' : 'pointer', fontFamily: 'inherit', opacity: fillLoading ? 0.6 : 1 }}>
+                    {fillLoading ? 'Načítám…' : 'Načíst z textu'}
+                  </button>
+                  <span style={{ fontSize: 12, color: colors.muted }}>nebo</span>
+                  <label style={{ padding: '7px 16px', background: colors.white, color: colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 6, fontSize: 13, cursor: fillLoading ? 'default' : 'pointer', fontFamily: 'inherit', opacity: fillLoading ? 0.6 : 1, display: 'inline-block' }}>
+                    {fillLoading ? 'Načítám…' : '📄 Nahrát PDF nebo obrázek'}
+                    <input type="file" accept="application/pdf,image/*" disabled={fillLoading} style={{ display: 'none' }}
+                      onChange={e => { if (e.target.files[0]) handleFillFromFile(e.target.files[0]); e.target.value = ''; }} />
+                  </label>
+                </div>
+              </>
+            )}
+
+            {fillRows && (
+              <>
+                {fillExtraCount > 0 && (
+                  <div style={{ fontSize: 12, color: '#854f0b', background: '#fff8e1', border: '1px solid #854f0b', borderRadius: 6, padding: '6px 8px', marginBottom: 10 }}>
+                    V textu byl(y) i {fillExtraCount} další hotel(y). Vyplní se jen ten první — ostatní přidejte jako samostatné karty.
+                  </div>
+                )}
+                {fillInfo && (
+                  <div style={{ fontSize: 12, color: '#1a3a5c', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 6, padding: '6px 8px', marginBottom: 10 }}>
+                    {fillInfo}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
+                  Vyplní se jen zaškrtnuté řádky. Ceny a měna jsou schválně nezaškrtnuté — zkontrolujte je.
+                </div>
+                <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '28px 1.1fr 1fr 1.4fr', gap: 6, padding: '6px 8px', background: '#f0ede8', fontSize: 11, color: colors.muted, fontWeight: 600 }}>
+                    <div></div><div>Pole</div><div>teď</div><div>návrh</div>
+                  </div>
+                  {fillRows.map(r => (
+                    <label key={r.key} htmlFor={`fill-${r.key}`}
+                      style={{ display: 'grid', gridTemplateColumns: '28px 1.1fr 1fr 1.4fr', gap: 6, padding: '6px 8px', borderTop: `1px solid ${colors.border}`, fontSize: 12, alignItems: 'start', cursor: 'pointer', background: r.checked ? '#fff' : '#fafafa' }}>
+                      <input id={`fill-${r.key}`} type="checkbox" checked={r.checked} onChange={() => toggleFillRow(r.key)}
+                        style={{ width: 15, height: 15, cursor: 'pointer', marginTop: 1 }} />
+                      <div style={{ color: colors.text }}>{r.label}</div>
+                      <div style={{ color: colors.muted }}>{r.current || '—'}</div>
+                      <div>
+                        <span style={{ fontWeight: 600, color: colors.text }}>{fillDisplayValue(r.key, r.value)}</span>
+                        {r.hint ? <span style={{ display: 'block', fontSize: 10, color: colors.muted }}>{r.hint}</span> : null}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button type="button" onClick={applyFillRows}
+                    style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+                    Vyplnit označené
+                  </button>
+                  <button type="button" onClick={() => { setFillRows(null); setFillError(''); setFillExtraCount(0); setFillInfo(''); }}
+                    style={{ padding: '8px 18px', background: colors.white, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    ← Zpět na text
+                  </button>
+                </div>
+              </>
+            )}
+
+            {fillError && (
+              <div style={{ fontSize: 12, color: colors.danger, marginTop: 10 }}>{fillError}</div>
+            )}
+
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${colors.border}` }}>
+              <button type="button" onClick={closeFillModal}
+                style={{ padding: '7px 16px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Zavřít
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       </fieldset>
     </div>
   );
