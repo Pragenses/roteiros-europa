@@ -330,6 +330,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'ok' | 'error'
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const trackedUpdate = React.useCallback((payload) => {
+    // Pojistka proti přepsání cizí práce: kdo nedrží štafetu, neuloží nic.
+    // Týká se i automatického ukládání na pozadí.
+    if (!canEditRef.current) {
+      setSaveState('blocked');
+      return Promise.resolve(false);
+    }
     setSaveState('saving');
     return updateDoc(doc(db, 'offers', offerId), payload)
       .then(() => { setLastSavedAt(new Date()); setSaveState('ok'); return true; })
@@ -1110,13 +1116,21 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; }
     })();
 
-    const announce = () => setDoc(myRef, {
-      email: userEmail,
-      timeZone,
-      joinedAt: new Date().toISOString(),
-      lastSeenAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString(),
-    }, { merge: true }).catch(err => console.error('Přítomnost se nepodařilo zapsat:', err));
+    const announce = () => {
+      const stamp = new Date().toISOString();
+      setMyClaimAt(stamp);
+      return setDoc(myRef, {
+        email: userEmail,
+        timeZone,
+        joinedAt: stamp,
+        // claimAt rozhoduje, kdo smí upravovat: nejnižší hodnota vyhrává.
+        // Normálně je to čas příchodu, takže upravuje ten, kdo přišel dřív.
+        // Při převzetí (ruční nebo po nečinnosti) se posune před ostatní.
+        claimAt: stamp,
+        lastSeenAt: stamp,
+        lastActiveAt: stamp,
+      }, { merge: true }).catch(err => console.error('Přítomnost se nepodařilo zapsat:', err));
+    };
 
     announce();
 
@@ -1165,6 +1179,70 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       return seen && (now - new Date(seen).getTime()) < PRESENCE_TIMEOUT_MS;
     });
   }, [presenceRaw, presenceTick]);
+
+  // --- Štafeta: kdo smí upravovat ------------------------------------------
+  // Když jsi v nabídce sama, nic se neděje a všechno funguje jako dřív.
+  // Teprve když je uvnitř někdo další, rozhodne se, kdo upravuje a kdo se dívá.
+  //
+  // Nikdo nemůže zůstat zamčený: po pěti minutách nečinnosti přechází štafeta
+  // sama, a Helena s Filipem si ji navíc můžou kdykoli vzít tlačítkem.
+  const IDLE_MS = 5 * 60 * 1000;
+  const [myClaimAt, setMyClaimAt] = useState(null);
+
+  const baton = React.useMemo(() => {
+    void presenceTick;
+    if (othersPresent.length === 0) return { alone: true, canEdit: true, editor: null };
+    const now = Date.now();
+    const me = { email: userEmail, claimAt: myClaimAt, lastActiveAt: new Date(lastActivityRef.current).toISOString(), mine: true };
+    const all = [me, ...othersPresent];
+    const rank = p => new Date(p.claimAt || p.joinedAt || 0).getTime();
+    const activeRecently = p => p.lastActiveAt && (now - new Date(p.lastActiveAt).getTime()) < IDLE_MS;
+    // Přednost mají ti, kdo v posledních pěti minutách něco dělali. Když nikdo,
+    // rozhodne se mezi všemi přítomnými — ať nezůstane nabídka bez editora.
+    const pool = all.some(activeRecently) ? all.filter(activeRecently) : all;
+    const editor = pool.slice().sort((a, b) => rank(a) - rank(b) || String(a.email).localeCompare(String(b.email)))[0];
+    return { alone: false, canEdit: !!editor?.mine, editor };
+  }, [othersPresent, userEmail, myClaimAt, presenceTick]);
+
+  const canEdit = baton.canEdit;
+  const canEditRef = React.useRef(true);
+  useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
+
+  // Převzetí úprav — posune můj nárok před všechny ostatní.
+  const takeOver = React.useCallback(async () => {
+    if (!userEmail || !offerId) return;
+    const earliest = Math.min(...othersPresent.map(p => new Date(p.claimAt || p.joinedAt || 0).getTime()), Date.now());
+    const mine = new Date(earliest - 1000).toISOString();
+    const myKey = userEmail.replace(/[^a-zA-Z0-9]/g, '_');
+    try {
+      await updateDoc(doc(db, 'offers', offerId, 'presence', myKey), { claimAt: mine, lastActiveAt: new Date().toISOString() });
+      lastActivityRef.current = Date.now();
+      setMyClaimAt(mine);
+    } catch (err) {
+      console.error('Převzetí úprav selhalo:', err);
+      alert('Převzetí se nepovedlo. Zkuste to prosím znovu.');
+    }
+  }, [offerId, userEmail, othersPresent]);
+
+  // Kdo zrovna neupravuje, dostává změny živě — do vteřiny vidí, co ten druhý
+  // uložil. Editorovi se nic zvenčí nepodsouvá, aby mu to nepřepsalo psaní.
+  useEffect(() => {
+    if (!offerId || canEdit) return;
+    const unsub = onSnapshot(doc(db, 'offers', offerId), snap => {
+      if (!snap.exists() || canEditRef.current) return;
+      const data = snap.data();
+      setOffer({ id: snap.id, ...data });
+      setItems(data.items || []);
+      itemsRef.current = data.items || [];
+      setMargin(data.margin ?? 15);
+      setPaxList(data.paxList || '15,20,25,30,35');
+      setFocCount(data.focCount ?? 1);
+      setFocType(data.focType || 'dbl');
+      setIsLocked(data.locked || false);
+      if (data.updatedAt) setLastSavedAt(new Date(data.updatedAt));
+    }, err => console.error('Živé sledování nabídky selhalo:', err));
+    return unsub;
+  }, [offerId, canEdit]);
 
   const [saveStatus, setSaveStatus] = useState(''); // '', 'saving', 'ok', 'error'
 
@@ -1491,26 +1569,39 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '8px 14px', marginBottom: '0.75rem',
         borderRadius: 8, fontSize: 13,
-        background: saveState === 'error' ? '#FEF2F2' : colors.white,
-        border: `1px solid ${saveState === 'error' ? '#dc2626' : colors.border}`,
+        background: saveState === 'error' ? '#FEF2F2' : (saveState === 'blocked' ? '#FFFBEB' : colors.white),
+        border: `1px solid ${saveState === 'error' ? '#dc2626' : (saveState === 'blocked' ? '#854f0b' : colors.border)}`,
         boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
       }}>
-        <span style={{ color: saveState === 'error' ? '#dc2626' : colors.muted, fontWeight: saveState === 'error' ? 700 : 400 }}>
+        <span style={{ color: saveState === 'error' ? '#dc2626' : (saveState === 'blocked' ? colors.warning : colors.muted), fontWeight: (saveState === 'error' || saveState === 'blocked') ? 700 : 400 }}>
           {saveState === 'saving' && 'Ukládám…'}
+          {saveState === 'blocked' && '⚠ Neuloženo — úpravy má někdo jiný'}
           {saveState === 'error' && '⚠ Uložení selhalo — zkontrolujte připojení a uložte znovu'}
-          {saveState !== 'saving' && saveState !== 'error' && (lastSavedAt
+          {saveState !== 'saving' && saveState !== 'error' && saveState !== 'blocked' && (lastSavedAt
             ? 'Uloženo ' + lastSavedAt.toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })
             : 'Zatím neuloženo')}
         </span>
         <div style={{ flex: 1 }} />
-        {othersPresent.length > 0 && (
-          <span style={{ color: colors.info, fontWeight: 600 }}>
-            {othersPresent.length === 1
-              ? othersPresent[0].email.split('@')[0] + ' je také v této nabídce'
-              : othersPresent.length + ' další lidé jsou v této nabídce'}
+        {!baton.alone && baton.canEdit && (
+          <span style={{ color: colors.muted }}>
+            {othersPresent.map(p => p.email.split('@')[0]).join(', ')} {othersPresent.length === 1 ? 'sleduje' : 'sledují'}
           </span>
         )}
-        <button onClick={handleSave} disabled={isLocked}
+        {!baton.alone && !baton.canEdit && (
+          <>
+            <span style={{ color: colors.warning, fontWeight: 600 }}>
+              Upravuje {String(baton.editor?.email || '').split('@')[0]} — vy jen čtete
+            </span>
+            {userRole === 'owner' && (
+              <button onClick={() => {
+                if (window.confirm('Nabídku právě upravuje ' + String(baton.editor?.email || '') + '.\n\nOpravdu chcete úpravy převzít? Druhý uživatel přejde do režimu čtení.')) takeOver();
+              }} style={{ padding: '5px 12px', background: colors.white, color: colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}>
+                Převzít úpravy
+              </button>
+            )}
+          </>
+        )}
+        <button onClick={handleSave} disabled={isLocked || !canEdit}
           style={{ padding: '5px 14px', background: isLocked ? colors.border : colors.primary, color: isLocked ? colors.muted : colors.white, border: 'none', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: isLocked ? 'default' : 'pointer', fontWeight: 500 }}>
           Uložit
         </button>
@@ -1525,6 +1616,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           {isLocked ? '🔒 Zamčeno — klikněte pro odemčení' : '🔓 Zamknout nabídku (PIN)'}
         </button>
       </div>
+
+      {/* Když štafetu drží někdo jiný, celý obsah se přepne jen ke čtení.
+          Jedno místo místo dvou set políček. Tlačítko Zpět a lišta zůstávají
+          funkční, aby šlo z nabídky vždycky odejít. */}
+      <fieldset disabled={!canEdit} style={{ border: 'none', padding: 0, margin: 0, minWidth: 0 }}>
 
       {/* Lock dialog */}
       {showLockDialog && (
@@ -2444,6 +2540,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           </button>
         </div>
       </div>
+      </fieldset>
     </div>
   );
 }
