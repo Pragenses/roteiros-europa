@@ -2498,6 +2498,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     if (!window.confirm('Create a new Order from this offer? Hotels and tickets will be copied as services.')) return;
     const data = {
       name: offer.name,
+      offerNumber: offer.offerNumber || '',
       clientId: offer.clientId || '',
       clientName: offer.clientName || '',
       startDate: offer.startDate || '',
