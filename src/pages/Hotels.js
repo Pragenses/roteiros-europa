@@ -118,9 +118,16 @@ const SHARED_EMAIL_MIN = 4;
 
 // Název, který o hotelu nic neříká: prázdný, samotná emailová adresa, pomlčka,
 // nebo slova, která se do sloupce dostala omylem při importu ("E-mail").
+// Do názvů se dostaly emoji a odrážky ("📧 E-mail", "🏨 Grand Hotel", "· ibis
+// Styles"). Bez odříznutí by název vypadal jako smysluplný a obcházel kontroly.
+const stripLead = (s) => String(s || '')
+  .replace(/^[^\p{L}\p{N}(]+/u, '')
+  .replace(/[\s·•]+$/u, '')
+  .trim();
+
 const JUNK_NAME = /^(e-?mail|email|mail|hotel|hotely|hotels|kontakt|contact|info|n\/?a|nan|null|[-–—.,:;?]+)$/i;
 const isRealName = (raw) => {
-  const t = String(raw || '').trim();
+  const t = stripLead(raw);
   if (!t) return false;
   if (t.includes('@')) return false;          // do názvu spadla adresa
   if (JUNK_NAME.test(t)) return false;
@@ -135,7 +142,7 @@ const isRealName = (raw) => {
 const NOTE_HINT = /\b(nebe?r(ou|e)|neber|pokoj|pokoje|pokojů|quartos|habitaciones|zimmer|skupin|grupo|group|solicitar|use central|not specified|nutn|pouze|jen |only |min\.|max\.|neposílat|nepiš|zrušen|zavřen|closed|drah|expensive)\b/i;
 
 function splitNameNote(raw) {
-  let name = String(raw || '').trim();
+  let name = stripLead(raw);
   let note = '';
   // Celý název v závorce = celé je to poznámka.
   const wrapped = name.match(/^\(\s*(.*?)\s*\)$/s);
@@ -275,6 +282,9 @@ function buildCardSuggestions(rows) {
   //    hotelu; spojí se jen se shodnou adresou.
   const sameRow = (a, b) => {
     if (a.email === b.email && !isShared(a.email)) return true;  // duplicita
+    // Dva bezejmenné řádky se shodnou adresou i městem jsou tentýž záznam
+    // zdvojený v databázi — spojit se musí, jinak zůstanou v seznamu dvakrát.
+    if (!a.hasName && !b.hasName) return a.email === b.email && a.nCity === b.nCity;
     if (!a.hasName || !b.hasName) return false;                  // bez názvu nespojujeme
     return sameName(a.nName, b.nName) && sameCity(a.nCity, b.nCity);
   };
@@ -360,8 +370,14 @@ function buildCardSuggestions(rows) {
     });
   }
 
-  const rest = all.filter(g => !inMerge.has(g.key));
+  // Skupiny bez názvu se do hromadného vytváření nepouštějí — vznikly by stovky
+  // karet jménem "(bez názvu) h0747@accor.com". Nejdřív dostanou název
+  // v Kontrole adres. Jednotlivě vytvořit je ale pořád jde.
+  const rest = all.filter(g => !inMerge.has(g.key) && !g.noName);
+  const unnamed = all.filter(g => !inMerge.has(g.key) && g.noName)
+    .sort((a, b) => (a.city || '').localeCompare(b.city || ''));
   return {
+    unnamed,
     green: rest.filter(g => !g.chain).sort((a, b) => b.rows.length - a.rows.length),
     chain: rest.filter(g => g.chain).sort((a, b) => (a.domain || '').localeCompare(b.domain || '') || (a.name || '').localeCompare(b.name || '')),
     merge: merge.sort((a, b) => (a.city || '').localeCompare(b.city || '')),
@@ -1230,6 +1246,10 @@ export default function Hotels({ navigate, colors, navParams }) {
                   <div style={{ fontSize: 12, color: C.muted }}>k rozhodnutí</div>
                 </div>
                 <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#b00020' }}>{suggestions.unnamed.length}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>bez názvu</div>
+                </div>
+                <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: C.muted }}>{unassignedCount}</div>
                   <div style={{ fontSize: 12, color: C.muted }}>nezařazených řádků</div>
                 </div>
@@ -1241,6 +1261,17 @@ export default function Hotels({ navigate, colors, navParams }) {
                   <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 8px' }}>
                     Do karet se nepočítají, dokud je neopravíš — jinak by dělaly falešné skupiny.
                     Na tyhle adresy vám navíc poptávky nikdy nedošly.
+                  </p>
+                  <button onClick={() => setTab('clean')} style={smallBtn(C.primary)}>Otevřít kontrolu adres</button>
+                </div>
+              )}
+
+              {suggestions.unnamed.length > 0 && (
+                <div style={{ ...cardS, marginBottom: '1.2rem', background: '#fdf3f3', borderColor: '#e0a0a0' }}>
+                  <strong style={{ fontSize: 14 }}>📝 {suggestions.unnamed.length} hotelů nemá název</strong>
+                  <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 8px' }}>
+                    Do hromadného vytváření nejdou — vznikly by karty jménem „(bez názvu) h0747@accor.com".
+                    Pojmenuj je v Kontrole adres a přesunou se mezi jisté shody. Jednotlivě vytvořit je jde i tak.
                   </p>
                   <button onClick={() => setTab('clean')} style={smallBtn(C.primary)}>Otevřít kontrolu adres</button>
                 </div>
