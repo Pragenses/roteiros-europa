@@ -77,7 +77,7 @@ export default function Providers({ navigate, colors, navParams }) {
     if (navParams?.prefill) {
       const { groupName, programText, startDate, endDate, destinations } = navParams.prefill;
       setTab('compose');
-      setSubject(`Group Transport Inquiry / ${groupName || ''}`);
+      setSubject(`GRP / ${groupName || ''}`);
       setOriginalProgramText(programText || '');
       const dateLine = startDate && endDate ? `Dates: ${startDate} - ${endDate}\n` : '';
       const destLine = destinations ? `Destinations: ${destinations}\n` : '';

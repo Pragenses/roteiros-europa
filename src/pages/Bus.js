@@ -10,6 +10,24 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GLOBAL_EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,10}/g;
 const SAME_LINE_SEP_TRIM_RE = /[:–—-]\s*$/;
 
+// City names are typed by hand into hotel/bus records, so they arrive in every casing
+// (LJUBLJANA, ljubljana, LjuBljana). This normalises ONLY what goes into the e-mail
+// subject - the stored value is never touched, because the city field is also used to
+// filter records (h.city === composeCity) and changing it would break that match.
+const CITY_LOWER_WORDS = ['am','an','aan','auf','im','zu','der','den','des','de','del','della','di','da','do','dos','la','le','les','el','en','sur','sous','sul','upon','op','on','of','in','na','nad','pod','ob','u','va','vor','and','y','e'];
+function formatCity(raw) {
+  if (!raw) return raw;
+  return String(raw).trim().split(/(\s+)/).map((part, idx) => {
+    if (/^\s+$/.test(part)) return part;
+    return part.split('-').map((chunk, ci) => {
+      if (!chunk) return chunk;
+      const low = chunk.toLowerCase();
+      if ((idx > 0 || ci > 0) && CITY_LOWER_WORDS.includes(low)) return low;
+      return low.charAt(0).toUpperCase() + low.slice(1);
+    }).join('-');
+  }).join('');
+}
+
 function parseSimple(text) {
   // If the pasted text has no line breaks between busCompany entries at all, force a break
   // right after every recognizable email address so each entry lands on its own line.
@@ -205,12 +223,12 @@ export default function Bus({ navigate, colors, navParams }) {
     closeList();
     return '<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.3;color:#222;max-width:650px">' + html + '</div>';
   };
-  const [subject, setSubject]         = useState('Group Transport Inquiry');
+  const [subject, setSubject]         = useState('GRP');
   const [senderFrom, setSenderFrom]   = useState('grupos');
   React.useEffect(() => {
-    let s = 'Group Transport Inquiry';
+    let s = 'GRP';
     if (groupName) s += ' / ' + groupName;
-    if (composeCity) s += ' / ' + composeCity;
+    if (composeCity) s += ' / ' + formatCity(composeCity);
     setSubject(s);
   }, [groupName, composeCity]);
 
