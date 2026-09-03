@@ -128,18 +128,16 @@ const domainOf = (email) => {
   return email.slice(at + 1).toLowerCase().trim();
 };
 
-// Dva názvy považujeme za stejný hotel, když se po očištění shodují, jeden
-// obsahuje druhý, nebo mají většinu slov společných ("Ambassador Zlatá Husa"
-// vs "Ambassador"). Prázdný název se nikdy nespáruje s ničím.
+// Dva názvy jsou stejný hotel jen tehdy, když se shodují, nebo když je jeden
+// CELÝ obsažený v druhém jako souvislé slovní spojení ("Ambassador" uvnitř
+// "Ambassador Zlatá Husa"). Sdílená slova nestačí — jinak by se "Vienna House
+// Diplomat" a "Vienna House Ernst Leitz" slily do jednoho hotelu, přestože
+// jde o dva různé domy v jednom řetězci.
 const sameName = (a, b) => {
   if (!a || !b) return false;
   if (a === b) return true;
-  if (a.includes(b) || b.includes(a)) return true;
-  const wa = a.split(' ').filter(Boolean);
-  const wb = b.split(' ').filter(Boolean);
-  if (!wa.length || !wb.length) return false;
-  const shared = wa.filter(w => w.length > 2 && wb.includes(w)).length;
-  return shared > 0 && shared >= Math.min(wa.length, wb.length) / 2;
+  const pa = ` ${a} `, pb = ` ${b} `;
+  return pa.includes(pb) || pb.includes(pa);
 };
 
 const sameCity = (a, b) => !a || !b || a === b;
@@ -185,20 +183,8 @@ function buildCardSuggestions(rows) {
     }
   }
 
-  // 3) Skupiny se stejným názvem i městem, ale jinou doménou → návrh ke spojení.
-  const byNameCity = new Map();
-  for (const g of groups) {
-    const k = `${g.items[0].nName}|${g.items[0].nCity}`;
-    if (!k.replace('|', '')) continue;
-    if (!byNameCity.has(k)) byNameCity.set(k, []);
-    byNameCity.get(k).push(g);
-  }
-  for (const list of byNameCity.values()) {
-    if (list.length > 1) list.forEach(g => { g.crossDomain = true; });
-  }
-
   const shape = (g) => {
-    // Nejčastější / nejdelší název bereme jako hlavní, ostatní jako aliasy.
+    // Nejdelší název bereme jako hlavní, ostatní jako aliasy.
     const names = [...new Set(g.items.map(i => i.row.name).filter(Boolean))];
     names.sort((a, b) => b.length - a.length);
     const cities = [...new Set(g.items.map(i => i.row.city).filter(Boolean))];
@@ -210,22 +196,48 @@ function buildCardSuggestions(rows) {
       domain: g.domain,
       free: g.free,
       chain: !!g.chain,
-      crossDomain: !!g.crossDomain,
       rows: g.items.map(i => i.row),
       reason: g.chain
-        ? `Doména ${g.domain} patří víc hotelům — zkontroluj, jestli je to řetězec`
-        : g.crossDomain
-          ? 'Stejný název a město, ale jiná doména — možná jeden hotel'
-          : g.free
-            ? 'Freemailová adresa — spojeno podle názvu a města'
-            : `Společná doména ${g.domain}`,
+        ? `Řetězec ${g.domain} — samostatný hotel, nespojuje se s ostatními`
+        : g.free
+          ? 'Freemailová adresa — spojeno podle názvu a města'
+          : `Společná doména ${g.domain}`,
     };
   };
 
   const all = groups.map(shape);
+
+  // 3) Stejný název i město, ale jiná doména → jediný případ, kde je potřeba
+  //    tvoje rozhodnutí: je to jeden hotel se dvěma doménami, nebo dva hotely?
+  const byNameCity = new Map();
+  for (const g of all) {
+    const k = `${normName(g.name)}|${normCity(g.city)}`;
+    if (k.replace(/\|/g, '').trim() === '') continue;
+    if (!byNameCity.has(k)) byNameCity.set(k, []);
+    byNameCity.get(k).push(g);
+  }
+
+  const merge = [];
+  const inMerge = new Set();
+  for (const list of byNameCity.values()) {
+    const domains = new Set(list.map(g => g.domain || 'free'));
+    if (list.length > 1 && domains.size > 1) {
+      list.forEach(g => inMerge.add(g.key));
+      merge.push({
+        key: list.map(g => g.key).join('+'),
+        name: list.map(g => g.name).sort((a, b) => b.length - a.length)[0],
+        city: list.find(g => g.city)?.city || '',
+        groups: list,
+        rows: list.flatMap(g => g.rows),
+      });
+    }
+  }
+
+  const rest = all.filter(g => !inMerge.has(g.key));
   return {
-    green: all.filter(g => !g.chain && !g.crossDomain).sort((a, b) => b.rows.length - a.rows.length),
-    orange: all.filter(g => g.chain || g.crossDomain).sort((a, b) => (a.city || '').localeCompare(b.city || '')),
+    green: rest.filter(g => !g.chain).sort((a, b) => b.rows.length - a.rows.length),
+    chain: rest.filter(g => g.chain).sort((a, b) => (a.domain || '').localeCompare(b.domain || '') || (a.name || '').localeCompare(b.name || '')),
+    merge: merge.sort((a, b) => (a.city || '').localeCompare(b.city || '')),
   };
 }
 
@@ -454,6 +466,31 @@ export default function Hotels({ navigate, colors, navParams }) {
     await Promise.all([fetchHotels(), fetchCards()]);
     setCardBusy('');
     alert(`Hotovo. Vytvořeno karet: ${made}${failed ? `, chyb: ${failed}` : ''}.`);
+  };
+
+  // Sporný případ: uživatel řekl "je to jeden hotel" → jedna karta ze všech řádků.
+  const handleMergeGroups = async (m) => {
+    setCardBusy(m.key);
+    try {
+      const names = [...new Set(m.groups.flatMap(g => [g.name, ...(g.aliases || [])]).filter(Boolean))];
+      names.sort((a, b) => b.length - a.length);
+      await createCardFromGroup({
+        key: m.key, name: names[0], aliases: names.slice(1),
+        city: m.city, domain: '', free: false, rows: m.rows,
+      });
+      await Promise.all([fetchHotels(), fetchCards()]);
+    } catch (e) { alert('Nepodařilo se spojit: ' + e.message); }
+    setCardBusy('');
+  };
+
+  // Sporný případ: uživatel řekl "jsou to dva hotely" → karta pro každou skupinu.
+  const handleKeepSeparate = async (m) => {
+    setCardBusy(m.key);
+    try {
+      for (const g of m.groups) await createCardFromGroup(g);
+      await Promise.all([fetchHotels(), fetchCards()]);
+    } catch (e) { alert('Nepodařilo se vytvořit karty: ' + e.message); }
+    setCardBusy('');
   };
 
   // Rozpojení karty: karta se smaže a její řádky se vrátí mezi nezařazené.
@@ -987,32 +1024,72 @@ export default function Hotels({ navigate, colors, navParams }) {
           {loading || cardsLoading ? <p style={{ color: C.muted }}>Načítám…</p> : (
             <>
               <div style={{ display: 'flex', gap: 10, marginBottom: '1.2rem', flexWrap: 'wrap' }}>
-                <div style={{ ...cardS, flex: 1, minWidth: 150, padding: '0.8rem 1rem' }}>
+                <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: C.primary }}>{cards.length}</div>
                   <div style={{ fontSize: 12, color: C.muted }}>hotových karet</div>
                 </div>
-                <div style={{ ...cardS, flex: 1, minWidth: 150, padding: '0.8rem 1rem' }}>
+                <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: '#2e7d32' }}>{suggestions.green.length}</div>
                   <div style={{ fontSize: 12, color: C.muted }}>jistých shod</div>
                 </div>
-                <div style={{ ...cardS, flex: 1, minWidth: 150, padding: '0.8rem 1rem' }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: '#e08a00' }}>{suggestions.orange.length}</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>ke kontrole</div>
+                <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#b8860b' }}>{suggestions.chain.length}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>hotelů v řetězcích</div>
                 </div>
-                <div style={{ ...cardS, flex: 1, minWidth: 150, padding: '0.8rem 1rem' }}>
+                <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: '#e08a00' }}>{suggestions.merge.length}</div>
+                  <div style={{ fontSize: 12, color: C.muted }}>k rozhodnutí</div>
+                </div>
+                <div style={{ ...cardS, flex: 1, minWidth: 140, padding: '0.8rem 1rem' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: C.muted }}>{unassignedCount}</div>
                   <div style={{ fontSize: 12, color: C.muted }}>nezařazených řádků</div>
                 </div>
               </div>
 
-              {/* JISTÉ SHODY */}
+              {/* 🟠 K ROZHODNUTÍ — nahoře, protože jen tohle vyžaduje uživatele */}
+              {suggestions.merge.length > 0 && (
+                <div style={{ ...cardS, marginBottom: '1.2rem', borderColor: '#e0b060' }}>
+                  <h3 style={{ margin: '0 0 6px', fontSize: 15, color: C.primary }}>🟠 K rozhodnutí ({suggestions.merge.length})</h3>
+                  <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
+                    Stejný název i město, ale jiná emailová doména. Buď je to jeden hotel se dvěma
+                    adresami, nebo dva různé hotely se stejným jménem. Tohle stroj rozhodnout neumí.
+                  </p>
+                  <div style={{ maxHeight: 500, overflowY: 'auto' }}>
+                    {suggestions.merge.map(m => (
+                      <div key={m.key} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', marginBottom: 10, background: '#fffdf5' }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+                          {m.name} <span style={{ fontWeight: 400, color: C.muted, fontSize: 12 }}>· {m.city || 'bez města'}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8 }}>
+                          {m.groups.map(g => (
+                            <div key={g.key} style={{ fontSize: 12, minWidth: 200 }}>
+                              <div style={{ color: C.muted }}>{g.domain || 'freemail'}</div>
+                              {g.rows.map(r => <div key={r.id}>{r.email}</div>)}
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => handleMergeGroups(m)} disabled={!!cardBusy}
+                            style={{ ...smallBtn('#2e7d32'), opacity: cardBusy ? 0.5 : 1 }}>
+                            {cardBusy === m.key ? '…' : 'Spojit do jedné karty'}
+                          </button>
+                          <button onClick={() => handleKeepSeparate(m)} disabled={!!cardBusy}
+                            style={{ ...smallBtn(C.muted), opacity: cardBusy ? 0.5 : 1 }}>
+                            Nechat zvlášť
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 🟢 JISTÉ SHODY */}
               {suggestions.green.length > 0 && (
                 <div style={{ ...cardS, marginBottom: '1.2rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                     <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🟢 Jisté shody ({suggestions.green.length})</h3>
-                    <button
-                      onClick={() => handleCreateAllGreen(suggestions.green)}
-                      disabled={!!cardBusy}
+                    <button onClick={() => handleCreateAllGreen(suggestions.green)} disabled={!!cardBusy}
                       style={{ ...btn('#2e7d32'), opacity: cardBusy ? 0.5 : 1 }}>
                       {cardBusy === 'ALL' ? 'Vytvářím…' : `Vytvořit všechny (${suggestions.green.length})`}
                     </button>
@@ -1028,14 +1105,10 @@ export default function Hotels({ navigate, colors, navParams }) {
                           <tr key={g.key} style={{ borderBottom: `1px solid ${C.border}` }}>
                             <td style={tdS}>
                               <strong>{g.name}</strong>
-                              {g.aliases.length > 0 && (
-                                <div style={{ fontSize: 11, color: C.muted }}>také jako: {g.aliases.join(' · ')}</div>
-                              )}
+                              {g.aliases.length > 0 && <div style={{ fontSize: 11, color: C.muted }}>také jako: {g.aliases.join(' · ')}</div>}
                             </td>
                             <td style={tdS}>{g.city || '—'}</td>
-                            <td style={tdS}>
-                              {g.rows.map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.email}</div>)}
-                            </td>
+                            <td style={tdS}>{g.rows.map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.email}</div>)}</td>
                             <td style={{ ...tdS, fontSize: 11, color: C.muted }}>{g.reason}</td>
                             <td style={{ ...tdS, textAlign: 'right' }}>
                               <button onClick={() => handleCreateCard(g)} disabled={!!cardBusy}
@@ -1051,59 +1124,59 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </div>
               )}
 
-              {/* KE KONTROLE */}
-              {suggestions.orange.length > 0 && (
+              {/* 🟡 HOTELY V ŘETĚZCÍCH */}
+              {suggestions.chain.length > 0 && (
                 <div style={{ ...cardS, marginBottom: '1.2rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🟠 Ke kontrole ({suggestions.orange.length})</h3>
-                    <button onClick={() => setShowOrange(v => !v)}
-                      style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>
-                      {showOrange ? 'skrýt' : 'zobrazit'}
-                    </button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                    <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🟡 Hotely v řetězcích ({suggestions.chain.length})</h3>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button onClick={() => setShowOrange(v => !v)}
+                        style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>
+                        {showOrange ? 'skrýt' : 'zobrazit'}
+                      </button>
+                      <button onClick={() => handleCreateAllGreen(suggestions.chain)} disabled={!!cardBusy}
+                        style={{ ...btn('#b8860b'), opacity: cardBusy ? 0.5 : 1 }}>
+                        {cardBusy === 'ALL' ? 'Vytvářím…' : `Vytvořit všechny (${suggestions.chain.length})`}
+                      </button>
+                    </div>
                   </div>
+                  <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
+                    Sdílejí doménu řetězce (accor.com, hilton.com…), ale <strong>každý je samostatný hotel</strong> a
+                    dostane vlastní kartu. Nic se tu nespojuje — vypsané jsou zvlášť jen proto, abys je viděl.
+                  </p>
                   {showOrange && (
-                    <>
-                      <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
-                        Tyhle projdi po jednom. Buď jde o řetězec (jedna doména, víc hotelů), nebo o jeden
-                        hotel psaný pod dvěma doménami. Hromadné tlačítko tu schválně není.
-                      </p>
-                      <div style={{ maxHeight: 460, overflowY: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <thead><tr>
-                            <th style={thS}>Hotel</th><th style={thS}>Město</th>
-                            <th style={thS}>Adresy</th><th style={thS}>Proč je sporný</th><th style={thS}></th>
-                          </tr></thead>
-                          <tbody>
-                            {suggestions.orange.map(g => (
-                              <tr key={g.key} style={{ borderBottom: `1px solid ${C.border}`, background: '#fffdf5' }}>
-                                <td style={tdS}>
-                                  <strong>{g.name}</strong>
-                                  {g.aliases.length > 0 && (
-                                    <div style={{ fontSize: 11, color: C.muted }}>také jako: {g.aliases.join(' · ')}</div>
-                                  )}
-                                </td>
-                                <td style={tdS}>{g.city || '—'}</td>
-                                <td style={tdS}>
-                                  {g.rows.map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.email}</div>)}
-                                </td>
-                                <td style={{ ...tdS, fontSize: 11, color: '#a06800' }}>{g.reason}</td>
-                                <td style={{ ...tdS, textAlign: 'right' }}>
-                                  <button onClick={() => handleCreateCard(g)} disabled={!!cardBusy}
-                                    style={{ ...smallBtn('#e08a00'), opacity: cardBusy ? 0.5 : 1 }}>
-                                    {cardBusy === g.key ? '…' : 'Vytvořit'}
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </>
+                    <div style={{ maxHeight: 460, overflowY: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead><tr>
+                          <th style={thS}>Hotel</th><th style={thS}>Město</th>
+                          <th style={thS}>Adresy</th><th style={thS}>Řetězec</th><th style={thS}></th>
+                        </tr></thead>
+                        <tbody>
+                          {suggestions.chain.map(g => (
+                            <tr key={g.key} style={{ borderBottom: `1px solid ${C.border}` }}>
+                              <td style={tdS}>
+                                <strong>{g.name}</strong>
+                                {g.aliases.length > 0 && <div style={{ fontSize: 11, color: C.muted }}>také jako: {g.aliases.join(' · ')}</div>}
+                              </td>
+                              <td style={tdS}>{g.city || '—'}</td>
+                              <td style={tdS}>{g.rows.map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.email}</div>)}</td>
+                              <td style={{ ...tdS, fontSize: 11, color: C.muted }}>{g.domain}</td>
+                              <td style={{ ...tdS, textAlign: 'right' }}>
+                                <button onClick={() => handleCreateCard(g)} disabled={!!cardBusy}
+                                  style={{ ...smallBtn('#b8860b'), opacity: cardBusy ? 0.5 : 1 }}>
+                                  {cardBusy === g.key ? '…' : 'Vytvořit'}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
               )}
 
-              {suggestions.green.length === 0 && suggestions.orange.length === 0 && (
+              {suggestions.green.length === 0 && suggestions.chain.length === 0 && suggestions.merge.length === 0 && (
                 <div style={{ ...cardS, marginBottom: '1.2rem', textAlign: 'center', color: C.muted, fontSize: 13 }}>
                   Všechny řádky databáze jsou zařazené na kartu. Nic ke zpracování.
                 </div>
@@ -1129,9 +1202,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         <tr key={c.id} style={{ borderBottom: `1px solid ${C.border}` }}>
                           <td style={tdS}>
                             <strong>{c.name}</strong>
-                            {(c.aliases || []).length > 0 && (
-                              <div style={{ fontSize: 11, color: C.muted }}>také jako: {c.aliases.join(' · ')}</div>
-                            )}
+                            {(c.aliases || []).length > 0 && <div style={{ fontSize: 11, color: C.muted }}>také jako: {c.aliases.join(' · ')}</div>}
                           </td>
                           <td style={tdS}>{c.city || '—'}</td>
                           <td style={tdS}>
