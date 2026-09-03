@@ -127,6 +127,44 @@ const isRealName = (raw) => {
   return /[a-zA-Z0-9À-ž]/.test(t);
 };
 
+// Do sloupce s názvem se často dostaly i poznámky:
+//   "Nira Caledonia - neberou skupiny už - jen 27 pokojů"
+//   "( SOLICITAR HOTEL CENTRAL EM NIUREMBERG - DEVE OFERECER QUARTOS TWIN )"
+// Na kartě chceme jen jméno hotelu; zbytek se uloží jako interní poznámka,
+// takže se nic neztratí.
+const NOTE_HINT = /\b(nebe?r(ou|e)|neber|pokoj|pokoje|pokojů|quartos|habitaciones|zimmer|skupin|grupo|group|solicitar|use central|not specified|nutn|pouze|jen |only |min\.|max\.|neposílat|nepiš|zrušen|zavřen|closed|drah|expensive)\b/i;
+
+function splitNameNote(raw) {
+  let name = String(raw || '').trim();
+  let note = '';
+  // Celý název v závorce = celé je to poznámka.
+  const wrapped = name.match(/^\(\s*(.*?)\s*\)$/s);
+  if (wrapped) return { name: '', note: wrapped[1] };
+  // Text v závorce odřízneme do poznámky.
+  name = name.replace(/\(([^)]*)\)/g, (m, inner) => { note += (note ? ' · ' : '') + inner.trim(); return ' '; });
+  // Za první pomlčkou obklopenou mezerami začíná poznámka, pokud vypadá jako
+  // poznámka (obsahuje typická slova nebo číslo). Pomlčka uvnitř jména
+  // ("Motel One Amsterdam-Waterlooplein") se tím nedotkne.
+  const parts = name.split(/\s+[-–—]\s+/);
+  if (parts.length > 1) {
+    const rest = parts.slice(1).join(' - ').trim();
+    if (NOTE_HINT.test(rest) || /\d/.test(rest)) {
+      name = parts[0];
+      note += (note ? ' · ' : '') + rest;
+    }
+  }
+  name = name.replace(/\s{2,}/g, ' ').replace(/^[-–—\s.,:;]+|[-–—\s.,:;]+$/g, '').trim();
+  return { name, note: note.trim() };
+}
+
+// Název, ve kterém je zjevně schovaná poznámka — pro záložku Kontrola adres.
+const nameHasNote = (raw) => {
+  const t = String(raw || '').trim();
+  if (!t || !isRealName(t)) return false;
+  const { name, note } = splitNameNote(t);
+  return !!note || name !== t;
+};
+
 // Adresa rozbitá při importu: za koncovkou domény pokračuje text, protože se
 // k ní nalepil začátek dalšího hotelu ("...@happyculture.com" + "Pointe").
 // Také hlídá adresy bez zavináče, s víc zavináči nebo s mezerou.
@@ -192,14 +230,31 @@ function buildCardSuggestions(rows) {
     const e = String(r.email).toLowerCase();
     emailCount.set(e, (emailCount.get(e) || 0) + 1);
   }
-  const isShared = (e) => (emailCount.get(e) || 0) >= SHARED_EMAIL_MIN;
+  // Druhý signál, nezávislý na počtu: adresa na doméně, pod kterou v databázi
+  // leží několik různých hotelů (accor.com, electrahotels.com), je rezervační
+  // centrála řetězce, i když se v seznamu objeví jen dvakrát.
+  const domainHotels = new Map();
+  for (const r of clean) {
+    const d = domainOf(r.email);
+    if (!d || FREEMAIL.has(d)) continue;
+    const n = isRealName(r.name) ? normName(splitNameNote(r.name).name) : '';
+    if (!n) continue;
+    if (!domainHotels.has(d)) domainHotels.set(d, new Set());
+    domainHotels.get(d).add(n);
+  }
+  const chainDomain = (d) => (domainHotels.get(d)?.size || 0) >= 2;
+  const isShared = (e) => {
+    if ((emailCount.get(e) || 0) >= SHARED_EMAIL_MIN) return true;
+    if ((emailCount.get(e) || 0) >= 2 && chainDomain(domainOf(e))) return true;
+    return false;
+  };
 
   const items = clean.map(r => ({
     row: r,
     email: String(r.email).toLowerCase(),
     domain: domainOf(r.email),
-    nName: isRealName(r.name) ? normName(r.name) : '',
-    hasName: isRealName(r.name),
+    nName: isRealName(r.name) ? normName(splitNameNote(r.name).name) : '',
+    hasName: isRealName(r.name) && !!splitNameNote(r.name).name,
     nCity: normCity(r.city),
   }));
 
@@ -238,8 +293,10 @@ function buildCardSuggestions(rows) {
 
   const shape = (g) => {
     // Název bereme jen z řádků, které nějaký smysluplný mají; nejdelší je hlavní.
-    const names = [...new Set(g.items.filter(i => i.hasName).map(i => i.row.name.trim()))];
+    const split = g.items.filter(i => i.hasName).map(i => splitNameNote(i.row.name));
+    const names = [...new Set(split.map(x => x.name).filter(Boolean))];
     names.sort((a, b) => b.length - a.length);
+    const notes = [...new Set(split.map(x => x.note).filter(Boolean))];
     const cities = [...new Set(g.items.map(i => i.row.city).filter(Boolean))];
     const emails = [...new Set(g.items.map(i => i.email))];
     return {
@@ -247,6 +304,7 @@ function buildCardSuggestions(rows) {
       name: names[0] || '(bez názvu) ' + emails[0],
       noName: names.length === 0,
       aliases: names.slice(1),
+      notes,
       city: cities[0] || '',
       domain: g.domain,
       free: g.free,
@@ -471,6 +529,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [cardSearch, setCardSearch] = useState('');
   const [showOrange, setShowOrange] = useState(true);
   const [fixEdit, setFixEdit]       = useState({});
+  const [nameEdit, setNameEdit]     = useState({});
 
   const fetchCards = useCallback(async () => {
     setCardsLoading(true);
@@ -506,6 +565,9 @@ export default function Hotels({ navigate, colors, navParams }) {
       aliases: g.aliases || [],
       domain: g.free ? '' : (g.domain || ''),
       emails: emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0 })),
+      // Poznámky vytažené z názvu ("neberou skupiny", "jen 27 pokojů") — na
+      // kartě zůstanou jako interní poznámka, do názvu se nevrací.
+      notes: (g.notes || []).join(' · '),
       // Původ údajů — odkud se karta vzala. Podrobné ⓘ u jednotlivých polí
       // přibude s detailem karty; tohle je jeho základ.
       source: { type: 'hotels-db', label: 'Z databáze hotelů', at: new Date().toISOString() },
@@ -572,10 +634,14 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (!val) { alert('Adresa nesmí být prázdná.'); return; }
     const problem = emailProblem(val);
     if (problem) { alert('Takhle to pořád nesedí: ' + problem); return; }
+    const newName = String(nameEdit[row.id] ?? row.name ?? '').trim();
     setCardBusy(row.id);
     try {
-      await updateDoc(doc(db, 'hotels', row.id), { email: val });
+      const patch = { email: val };
+      if (newName !== String(row.name || '').trim()) patch.name = newName;
+      await updateDoc(doc(db, 'hotels', row.id), patch);
       setFixEdit(prev => { const n = { ...prev }; delete n[row.id]; return n; });
+      setNameEdit(prev => { const n = { ...prev }; delete n[row.id]; return n; });
       await fetchHotels();
     } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
     setCardBusy('');
@@ -751,10 +817,15 @@ export default function Hotels({ navigate, colors, navParams }) {
       const problem = emailProblem(h.email);
       if (problem) { out.push({ row: h, kind: 'bad', problem }); continue; }
       if (!isRealName(h.name)) { out.push({ row: h, kind: 'name', problem: 'Chybí název hotelu — ve sloupci je ' + (h.name ? `"${h.name}"` : 'prázdno') }); continue; }
+      if (nameHasNote(h.name)) {
+        const sp = splitNameNote(h.name);
+        out.push({ row: h, kind: 'note', problem: sp.name ? `V názvu je poznámka — hotel: "${sp.name}", poznámka: "${sp.note}"` : `Celý název je poznámka: "${sp.note}"` });
+        continue;
+      }
       const n = counts.get(e) || 0;
       if (n > 1 && n < SHARED_EMAIL_MIN) out.push({ row: h, kind: 'dup', problem: `Stejná adresa je na ${n} řádcích` });
     }
-    const order = { bad: 0, name: 1, dup: 2 };
+    const order = { bad: 0, name: 1, note: 2, dup: 3 };
     return out.sort((a, b) => order[a.kind] - order[b.kind] || (a.row.city || '').localeCompare(b.row.city || ''));
   }, [hotels]);
   const cardsFiltered = cards.filter(c => {
@@ -1390,7 +1461,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                 K opravě ({cleanupRows.length})
               </h3>
               <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
-                🔴 vadná adresa · 🟠 chybí název · ⚪ duplicita
+                🔴 vadná adresa · 🟠 chybí název · 🟡 v názvu je poznámka · ⚪ duplicita
               </p>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr>
@@ -1399,10 +1470,24 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </tr></thead>
                 <tbody>
                   {cleanupRows.map(({ row, kind, problem }) => (
-                    <tr key={row.id} style={{ borderBottom: `1px solid ${C.border}`, background: kind === 'bad' ? '#fdf3f3' : kind === 'name' ? '#fffdf5' : 'transparent' }}>
+                    <tr key={row.id} style={{ borderBottom: `1px solid ${C.border}`, background: kind === 'bad' ? '#fdf3f3' : (kind === 'name' || kind === 'note') ? '#fffdf5' : 'transparent' }}>
                       <td style={tdS}>
-                        {kind === 'bad' ? '🔴 ' : kind === 'name' ? '🟠 ' : '⚪ '}
-                        <strong>{row.name || '—'}</strong>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <span>{kind === 'bad' ? '🔴' : kind === 'name' ? '🟠' : kind === 'note' ? '🟡' : '⚪'}</span>
+                          <input
+                            value={nameEdit[row.id] ?? row.name ?? ''}
+                            onChange={e => setNameEdit(prev => ({ ...prev, [row.id]: e.target.value }))}
+                            placeholder="název hotelu"
+                            style={inp({ minWidth: 200, fontSize: 12 })} />
+                        </div>
+                        {(kind === 'note' || kind === 'name') && splitNameNote(row.name).name
+                          && splitNameNote(row.name).name !== (nameEdit[row.id] ?? row.name) && (
+                          <button
+                            onClick={() => setNameEdit(prev => ({ ...prev, [row.id]: splitNameNote(row.name).name }))}
+                            style={{ marginTop: 4, background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0 }}>
+                            použít „{splitNameNote(row.name).name}"
+                          </button>
+                        )}
                       </td>
                       <td style={tdS}>{row.city || '—'}</td>
                       <td style={tdS}>
@@ -1427,7 +1512,8 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </tbody>
               </table>
               <p style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
-                Název hotelu se opravuje v záložce <strong>Databáze</strong> — tady se mění jen adresa.
+                Uložit zapíše obojí najednou — název i adresu. Poznámky vytažené z názvu se při
+                zakládání karty neztratí, uloží se na kartu jako interní poznámka.
               </p>
             </div>
           )}
