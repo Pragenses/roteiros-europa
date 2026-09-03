@@ -30,7 +30,11 @@ export default function Settings({ colors }) {
         getDocs(collection(db, 'offers')),
       ]);
       const codeById = {};
-      cliSnap.docs.forEach(d => { codeById[d.id] = normalizeClientCode(d.data().code); });
+      const nameById = {};
+      cliSnap.docs.forEach(d => {
+        codeById[d.id] = normalizeClientCode(d.data().code);
+        nameById[d.id] = d.data().name || '';
+      });
 
       const offers = offSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
@@ -50,8 +54,18 @@ export default function Settings({ colors }) {
         if (String(o.offerNumber || '').trim()) return false;   // uz ma cislo
         if (!o.clientId) { skipped.push({ name: o.name || '(bez nazvu)', reason: 'chybi klient' }); return false; }
         if (!yearTwoDigits(o.startDate)) { skipped.push({ name: o.name || '(bez nazvu)', reason: 'chybi termin' }); return false; }
+        if (nameById[o.clientId] === undefined) {
+          // Nabidka ukazuje na klienta, ktery uz v seznamu klientu neni —
+          // byl smazan. Jmeno se porad zobrazuje ze stare kopie v nabidce.
+          skipped.push({
+            name: o.name || '(bez nazvu)',
+            reason: 'klient už neexistuje — v nabídce je uloženo „' + (o.clientName || 'bez názvu') + '“, přiřaď jí klienta znovu',
+          });
+          return false;
+        }
         if (!codeById[o.clientId] || codeById[o.clientId].length !== 2) {
-          skipped.push({ name: o.name || '(bez nazvu)', reason: 'klient nema kod' }); return false;
+          skipped.push({ name: o.name || '(bez nazvu)', reason: 'klient „' + nameById[o.clientId] + '“ nemá vyplněný kód' });
+          return false;
         }
         return true;
       });
