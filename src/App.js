@@ -243,8 +243,8 @@ export default function App() {
   const visibleNav = NAV.filter(n => !n.ownerOnly || userRole === 'owner');
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
-      <style>{`@media print { .app-sidebar { display: none !important; } .app-main { margin: 0 !important; padding: 0 !important; } }`}</style>
+    <div className="app-shell" style={{ display: 'flex', height: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
+      <style>{`@media print { .app-sidebar { display: none !important; } .app-shell { display: block !important; height: auto !important; } .app-main { margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; } }`}</style>
       <aside className="app-sidebar" style={{ width: 220, background: COLORS.primary, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '1.5rem 1.25rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.1em', color: COLORS.accent, marginBottom: 4 }}>EURO ESTRELLA DMC</div>
