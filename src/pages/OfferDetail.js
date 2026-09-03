@@ -2092,29 +2092,68 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // Kdyby se text přepisoval vždy, zmizely by ruční úpravy. Proto se vedle
   // něj drží i poslední vygenerovaná podoba: dokud se textu nikdo nedotkl,
   // aktualizuje se sám a tiše. Jakmile do něj někdo psal, jen se nabídne.
+  // Ruční úprava se pozná podle výslovné značky, ne dohadem z porovnání —
+  // dohad selhával, dokud uživatel neklikl jinam, a rozepsaný text se ztrácel.
   const includedGenerated = React.useMemo(() => buildIncludedText(items), [items]);
-  const includedTouched = !!(offer && offer.includedText
-    && offer.includedText !== offer.includedAuto);
-  // U starších nabídek žádná vygenerovaná podoba uložená není; tam se
-  // porovnává rovnou s tím, co v poli stojí, ať to nehlásí změnu zbytečně.
-  const includedBaseline = (offer && offer.includedAuto) || (offer && offer.includedText) || '';
-  const includedStale = includedTouched && includedGenerated !== includedBaseline;
+  const includedRef = React.useRef(null);
+  const includedFocused = React.useRef(false);
 
-  const applyIncluded = React.useCallback(async () => {
+  // Starší nabídky značku nemají. Pokud v poli něco je a nikdy se
+  // negenerovalo, ber to jako ruční text a nepřepisuj ho.
+  const includedManual = !!(offer && (offer.includedManual === true
+    || (offer.includedText && offer.includedAuto === undefined)));
+  const includedBaseline = (offer && offer.includedAuto) || '';
+  const includedStale = includedManual && !!includedBaseline
+    && includedGenerated !== includedBaseline;
+
+  // Text v poli měníme jen zvenčí a jen když v něm uživatel právě nepíše.
+  const setIncludedField = React.useCallback((text) => {
+    if (includedRef.current && !includedFocused.current) includedRef.current.value = text;
+  }, []);
+
+  const applyIncluded = React.useCallback(async (opts) => {
+    const manual = !!(opts && opts.manual);
+    setOffer(prev => ({ ...prev, includedText: includedGenerated,
+                        includedAuto: includedGenerated, includedManual: false }));
+    setIncludedField(includedGenerated);
     await trackedUpdate({
       includedText: includedGenerated,
       includedAuto: includedGenerated,
+      includedManual: false,
       updatedAt: new Date().toISOString(),
     });
-    setOffer(prev => ({ ...prev, includedText: includedGenerated, includedAuto: includedGenerated }));
-  }, [includedGenerated, trackedUpdate]);
+    void manual;
+  }, [includedGenerated, trackedUpdate, setIncludedField]);
 
+  // Uložení ruční úpravy — rovnou i se značkou, ať se pozná napříště.
+  const saveIncludedManual = React.useCallback(async (text) => {
+    setOffer(prev => ({ ...prev, includedText: text, includedManual: true }));
+    await trackedUpdate({ includedText: text, includedManual: true,
+                          updatedAt: new Date().toISOString() });
+  }, [trackedUpdate]);
+
+  // Zapamatovat si výchozí stav u starších nabídek, ať nehlásí změnu hned
+  // po otevření, ale až se nabídka opravdu změní.
   useEffect(() => {
     if (loading || !offer || isLocked || !canEdit) return;
-    if (includedTouched) return;                       // ruční text nepřepisujeme
+    if (!includedManual || offer.includedAuto !== undefined) return;
+    setOffer(prev => ({ ...prev, includedAuto: includedGenerated }));
+    trackedUpdate({ includedAuto: includedGenerated })
+      .catch(err => console.error('Zápis výchozího stavu selhal:', err));
+  }, [loading, offer, isLocked, canEdit, includedManual, includedGenerated, trackedUpdate]);
+
+  // Automatická aktualizace. Nikdy nesahá na pole, ve kterém je kurzor.
+  useEffect(() => {
+    if (loading || !offer || isLocked || !canEdit) return;
+    if (includedManual || includedFocused.current) return;
     if (offer.includedText === includedGenerated) return;
-    applyIncluded().catch(err => console.error('Auto-update "Incluído no preço" selhalo:', err));
-  }, [loading, offer, isLocked, canEdit, includedTouched, includedGenerated, applyIncluded]);
+    applyIncluded().catch(err => console.error('Automatická aktualizace selhala:', err));
+  }, [loading, offer, isLocked, canEdit, includedManual, includedGenerated, applyIncluded]);
+
+  // Když text změní někdo druhý, promítnout ho do pole (ne při psaní).
+  useEffect(() => {
+    if (offer) setIncludedField(offer.includedText || '');
+  }, [offer && offer.includedText, setIncludedField]);
 
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
@@ -3459,7 +3498,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>Incluído no preço</div>
           <div style={{ fontSize: 11, color: colors.muted }}>
-            {includedTouched ? 'ručně upraveno' : 'aktualizuje se samo'}
+            {includedManual ? 'ručně upraveno' : 'aktualizuje se samo'}
           </div>
         </div>
         {includedStale && (
@@ -3470,7 +3509,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             <div style={{ flex: 1 }} />
             <button onClick={() => {
               if (!window.confirm('Přepsat text podle aktuální nabídky? Ruční úpravy se ztratí.')) return;
-              applyIncluded();
+              applyIncluded({ manual: true });
             }} style={{ padding: '4px 12px', background: '#854f0b', color: '#fff', border: 'none',
                         borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
                         whiteSpace: 'nowrap' }}>
@@ -3478,7 +3517,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             </button>
             <button onClick={() => {
               setOffer(prev => ({ ...prev, includedAuto: includedGenerated }));
-              trackedUpdate({ includedAuto: includedGenerated }).catch(err => console.error(err));
+              trackedUpdate({ includedAuto: includedGenerated, updatedAt: new Date().toISOString() })
+                .catch(err => console.error(err));
             }} title="Nechat text tak, jak je, a už na tuhle změnu neupozorňovat"
               style={{ padding: '4px 12px', background: 'transparent', color: '#854f0b',
                        border: '1px solid #854f0b', borderRadius: 6, fontSize: 12,
@@ -3487,7 +3527,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             </button>
           </div>
         )}
-        <textarea key={offer.includedText} defaultValue={offer.includedText} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
+        <textarea
+          ref={includedRef}
+          defaultValue={offer.includedText}
+          onFocus={() => { includedFocused.current = true; }}
+          onBlur={e => {
+            includedFocused.current = false;
+            const val = e.target.value;
+            if (val !== (offer.includedText || '')) saveIncludedManual(val);
+          }}
+          rows={6}
           placeholder={'Hospedagem em hotéis selecionados...\nTransporte por ônibus panorâmico...\n1x Visita ao Coliseu...'}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
       </div>
