@@ -8,6 +8,40 @@ import { logDeletion } from '../lib/activityLog';
 const CLIENT_COLORS = ['#E6F1FB','#FAEEDA','#EAF3DE','#EEEDFE','#FCEBEB','#F1EFE8'];
 const CLIENT_TEXT = ['#0C447C','#633806','#27500A','#534AB7','#791F1F','#444441'];
 
+// --- Client code (2 characters) -------------------------------------------
+// Used as the first part of the offer reference number, e.g. UN-27-001.
+// Suggestion rule agreed with Filip: two or more words -> first letter of the
+// first two words; a single word -> its first two characters.
+function normalizeCode(raw) {
+  return String(raw || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase().replace(/[^A-Z0-9]/g, '')
+    .slice(0, 2);
+}
+function suggestCode(name, takenCodes) {
+  const clean = String(name || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+  const words = clean.split(/[^A-Z0-9]+/).filter(Boolean);
+  if (words.length === 0) return '';
+  const taken = new Set((takenCodes || []).map(normalizeCode).filter(Boolean));
+  const candidates = [];
+  const push = c => { const n = normalizeCode(c); if (n.length === 2 && !candidates.includes(n)) candidates.push(n); };
+  if (words.length >= 2) {
+    push(words[0][0] + words[1][0]);
+    if (words[2]) push(words[0][0] + words[2][0]);
+    push(words[0].slice(0, 2));
+  } else {
+    push(words[0].slice(0, 2));
+  }
+  // further fallbacks: first letter + each remaining letter of the first word
+  for (let i = 2; i < words[0].length; i++) push(words[0][0] + words[0][i]);
+  // then first letter + a digit
+  for (let d = 2; d <= 9; d++) push(words[0][0] + String(d));
+  const free = candidates.find(c => !taken.has(c));
+  return free || candidates[0] || '';
+}
+
 export default function Clients({ navigate, colors }) {
   const [clients, setClients] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -24,11 +58,19 @@ export default function Clients({ navigate, colors }) {
   const [newAllocation, setNewAllocation] = useState({ amount: '', currency: 'EUR', target: '', isOther: false, customText: '' });
   const [contacts, setContacts] = useState([{ name: '', role: '', email: '', phone: '' }]);
   const [clientColor, setClientColor] = useState('#FAEEDA');
+  const [clientCode, setClientCode] = useState('');
+  const [codeTouched, setCodeTouched] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiName, setAiName] = useState('');
   const [parseLoading, setParseLoading] = useState(false);
   const [parseText, setParseText] = useState('');
   const formRef = useRef(null);
+
+  const maybeSuggestCode = (name, force) => {
+    if (codeTouched && !force) return;
+    const taken = clients.filter(c => c.id !== editingId).map(c => c.code);
+    setClientCode(suggestCode(name, taken));
+  };
 
   const fetchData = useCallback(async () => {
     const [snap, ordSnap, offSnap] = await Promise.all([
@@ -57,6 +99,7 @@ export default function Clients({ navigate, colors }) {
     if (parsed.billingCompany) f.billingCompany.value = parsed.billingCompany;
     if (parsed.billingAddress) f.billingAddress.value = parsed.billingAddress;
     if (parsed.billingCity) f.billingCity.value = parsed.billingCity;
+    if (f.cname.value) maybeSuggestCode(f.cname.value);
     if (parsed.billingZip) f.billingZip.value = parsed.billingZip;
     if (parsed.billingCountry) f.billingCountry.value = parsed.billingCountry;
     if (parsed.billingVat) f.billingVat.value = parsed.billingVat;
@@ -98,8 +141,21 @@ export default function Clients({ navigate, colors }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     const f = formRef.current;
+    const codeVal = normalizeCode(clientCode);
+    if (codeVal && codeVal.length !== 2) {
+      alert('Kod musi mit presne 2 znaky (pismena nebo cislice).');
+      return;
+    }
+    if (codeVal) {
+      const clash = clients.find(c => c.id !== editingId && normalizeCode(c.code) === codeVal);
+      if (clash) {
+        alert('Kod ' + codeVal + ' uz pouziva klient: ' + (clash.name || '(bez nazvu)') + '.\n\nZvol jiny kod.');
+        return;
+      }
+    }
     const data = {
       name: f.cname.value, country: f.country.value, state: f.state.value, notes: f.notes.value,
+      code: codeVal,
       contacts, color: clientColor,
       billing: {
         company: f.billingCompany.value, address: f.billingAddress.value,
@@ -115,6 +171,7 @@ export default function Clients({ navigate, colors }) {
       await addDoc(collection(db, 'clients'), { ...data, createdAt: new Date().toISOString() });
     }
     setShowForm(false); setEditingId(null);
+    setClientCode(''); setCodeTouched(false);
     setContacts([{ name: '', role: '', email: '', phone: '' }]);
     setParseText('');
     fetchData();
@@ -122,6 +179,9 @@ export default function Clients({ navigate, colors }) {
 
   const handleEdit = (c) => {
     setEditingId(c.id);
+    const existing = normalizeCode(c.code);
+    if (existing) { setClientCode(existing); setCodeTouched(true); }
+    else { setClientCode(suggestCode(c.name, clients.filter(x => x.id !== c.id).map(x => x.code))); setCodeTouched(false); }
     setContacts(c.contacts?.length ? c.contacts : [{ name: '', role: '', email: '', phone: '' }]);
     setClientColor(c.color || '#FAEEDA');
     setShowForm(true);
@@ -254,7 +314,7 @@ export default function Clients({ navigate, colors }) {
           <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Brazilian tour operators</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => { setShowForm(true); setEditingId(null); setContacts([{ name: '', role: '', email: '', phone: '' }]); setParseText(''); setTimeout(() => formRef.current?.reset(), 50); }}
+          <button onClick={() => { setShowForm(true); setEditingId(null); setClientCode(''); setCodeTouched(false); setContacts([{ name: '', role: '', email: '', phone: '' }]); setParseText(''); setTimeout(() => formRef.current?.reset(), 50); }}
             style={{ padding: '9px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             + New client
           </button>
@@ -289,7 +349,17 @@ export default function Clients({ navigate, colors }) {
           <form ref={formRef} onSubmit={handleSubmit}>
             <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>Basic info</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-              <div>{lbl('Agency name *')}<input name="cname" type="text" placeholder="e.g. UNEWORLD" required style={iStyle} /></div>
+              <div>{lbl('Agency name *')}<input name="cname" type="text" placeholder="e.g. UNEWORLD" required style={iStyle}
+                onChange={e => maybeSuggestCode(e.target.value)} /></div>
+              <div>
+                {lbl('Kod klienta (2 znaky)')}
+                <input type="text" value={clientCode} maxLength={2} placeholder="UN"
+                  onChange={e => { setCodeTouched(true); setClientCode(normalizeCode(e.target.value)); }}
+                  style={{ ...iStyle, textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 700, width: 90 }} />
+                <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>
+                  Pouziva se v cisle nabidky, napr. {(clientCode || 'XX')}-27-001. Nepovinne.
+                </div>
+              </div>
               <div>
                 {lbl('Cor do cliente (para lista de ofertas)')}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
@@ -381,7 +451,12 @@ export default function Clients({ navigate, colors }) {
                     {c.name?.charAt(0) || '?'}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>{c.name}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {c.name}
+                      {normalizeCode(c.code)
+                        ? <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 6px' }}>{normalizeCode(c.code)}</span>
+                        : <span style={{ fontSize: 11, fontWeight: 600, background: '#FDF3D8', color: '#7A5A00', borderRadius: 5, padding: '2px 6px' }}>bez kodu</span>}
+                    </div>
                     <div style={{ fontSize: 12, color: colors.muted }}>
                       {c.country || 'Brazil'}{c.state ? ` (${c.state})` : ''}
                       {c.contacts?.length ? ` · ${c.contacts.filter(ct => ct.name).length} contact(s)` : ''}
