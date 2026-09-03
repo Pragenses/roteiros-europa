@@ -1,4 +1,4 @@
-// force-rebuild-extraemail
+// force-rebuild-compose-search
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -447,7 +447,7 @@ VAT: CZ284 45 961</p>
 </div>`;
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v200-fix-extraemail');
+  console.debug('Hotels v201-compose-search');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -471,6 +471,9 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const [selected, setSelected]       = useState([]);
   const [composeCity, setComposeCity] = useState('');
+  // Hledání v seznamu hotelů u poptávky. Je schválně oddělené od hledání
+  // v záložce Databáze (`search`), aby se ty dva filtry navzájem nepřepisovaly.
+  const [composeSearch, setComposeSearch] = useState('');
   const [groupName, setGroupName]     = useState(prefill?.groupName || '');
   const [prefillGroupName] = useState(prefill?.groupName || '');
   const [checkIn, setCheckIn]         = useState('');
@@ -833,7 +836,19 @@ export default function Hotels({ navigate, colors, navParams }) {
     return (!q || h.name?.toLowerCase().includes(q) || h.city?.toLowerCase().includes(q) || h.email?.toLowerCase().includes(q))
       && (!cityFilter || h.city === cityFilter);
   });
-  const composeHotels = composeCity ? hotels.filter(h => h.city === composeCity) : hotels;
+  // Seznam hotelů u poptávky: nejdřív město, pak textové hledání.
+  // Hledá se v názvu, městě i adrese; slova se vyhodnocují jako "a zároveň",
+  // takže "vienna prah" najde Vienna House v Praze. Diakritika se ignoruje.
+  const composeBase = composeCity ? hotels.filter(h => h.city === composeCity) : hotels;
+  const composeWords = stripDia(composeSearch.toLowerCase()).split(/\s+/).filter(Boolean);
+  const composeHotels = composeWords.length === 0 ? composeBase : composeBase.filter(h => {
+    const hay = stripDia(`${h.name || ''} ${h.city || ''} ${h.email || ''}`.toLowerCase());
+    return composeWords.every(w => hay.includes(w));
+  });
+  // Zaškrtnutí se filtrem NIKDY neruší — hotel vybraný před hledáním zůstane
+  // vybraný, i když ho filtr zrovna schová. Tady jen spočítáme, kolik jich je,
+  // aby to uživatel viděl a neodeslal omylem víc, než čeká.
+  const hiddenSelected = selected.filter(id => !composeHotels.some(h => h.id === id)).length;
 
   const suggestions = React.useMemo(() => buildCardSuggestions(hotels), [hotels]);
   const unassignedCount = hotels.filter(h => !h.cardId).length;
@@ -1097,10 +1112,27 @@ export default function Hotels({ navigate, colors, navParams }) {
             </div>
             <div style={{ ...cardS, marginTop: 12 }}>
               <h3 style={{ margin: '0 0 10px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Hotely ({selected.length} vybráno)</h3>
-              <select value={composeCity} onChange={e => { setComposeCity(e.target.value); setSelected([]); }} style={{ ...inp(), marginBottom: 8 }}>
+              <select value={composeCity} onChange={e => { setComposeCity(e.target.value); setComposeSearch(''); setSelected([]); }} style={{ ...inp(), marginBottom: 8 }}>
                 <option value="">Všechna města</option>
                 {cities.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              <div style={{ position: 'relative', marginBottom: 8 }}>
+                <input
+                  value={composeSearch}
+                  onChange={e => setComposeSearch(e.target.value)}
+                  placeholder="🔍 Hledat hotel podle jména, města nebo adresy…"
+                  style={inp({ paddingRight: 28 })} />
+                {composeSearch && (
+                  <button onClick={() => setComposeSearch('')} title="Zrušit hledání"
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: C.muted, fontSize: 14, lineHeight: 1, padding: 2 }}>✕</button>
+                )}
+              </div>
+              {composeWords.length > 0 && (
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                  Nalezeno {composeHotels.length} z {composeBase.length}
+                  {hiddenSelected > 0 && <span style={{ color: '#e08a00' }}> · {hiddenSelected} vybraných je schovaných filtrem (odešlou se taky)</span>}
+                </div>
+              )}
               <div style={{ maxHeight: 280, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 6 }}>
                 {composeHotels.map(h => (
                   <label key={h.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', cursor: 'pointer', borderBottom: `1px solid ${C.border}`, background: selected.includes(h.id) ? '#f0f7ff' : '#fff' }}>
@@ -1111,10 +1143,18 @@ export default function Hotels({ navigate, colors, navParams }) {
                     </div>
                   </label>
                 ))}
-                {composeHotels.length === 0 && <p style={{ padding: 12, color: C.muted, fontSize: 12 }}>Žádné hotely.</p>}
+                {composeHotels.length === 0 && (
+                  <p style={{ padding: 12, color: C.muted, fontSize: 12 }}>
+                    {composeWords.length > 0 ? 'Hledání nic nenašlo — zkus jiné slovo nebo hledání zruš křížkem.' : 'Žádné hotely.'}
+                  </p>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button onClick={() => setSelected(composeHotels.map(h=>h.id))} style={{ fontSize: 11, color: C.primary, background: 'none', border: `1px solid ${C.border}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>Vybrat vše</button>
+                {/* Přidává k výběru, nepřepisuje ho — jinak by při zapnutém hledání
+                    tiše zmizely hotely vybrané předtím. Odznačit vše je vedle. */}
+                <button onClick={() => setSelected(s => [...new Set([...s, ...composeHotels.map(h=>h.id)])])} style={{ fontSize: 11, color: C.primary, background: 'none', border: `1px solid ${C.border}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>
+                  {composeWords.length > 0 ? `Vybrat nalezené (${composeHotels.length})` : 'Vybrat vše'}
+                </button>
                 <button onClick={() => setSelected([])} style={{ fontSize: 11, color: C.muted, background: 'none', border: `1px solid ${C.border}`, borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}>Odznačit</button>
               </div>
             </div>
