@@ -256,6 +256,17 @@ const fillDisplayValue = (key, value) => {
   return value;
 };
 
+// Částka zapsaná ručně může mít desetinnou čárku i mezery mezi tisíci
+// ("10 000,50"). Bez odstranění mezer by parseFloat přečetl jen "10", takže
+// součet záloh vycházel špatně. Čte se tímhle jedním způsobem všude, aby
+// karta i souhrn ukazovaly stejné číslo.
+const readAmount = (v) => {
+  const cleaned = String(v === 0 ? '0' : (v || ''))
+    .replace(/[\s\u00a0\u202f\u2009]/g, '')
+    .replace(',', '.');
+  return parseFloat(cleaned) || 0;
+};
+
 const DepositRows = ({ item, onChange, colors }) => {
   // Deposits are paid in INSTALMENTS — hotels and buses alike — so this is a
   // list, not a single amount. Stored on the item as `deposits`; the currency
@@ -265,7 +276,8 @@ const DepositRows = ({ item, onChange, colors }) => {
   const add = () => set([...rows, { id: Date.now() + Math.random(), amount: '', date: '', method: '' }]);
   const upd = (id, field, v) => set(rows.map(r => (r.id === id ? { ...r, [field]: v } : r)));
   const del = (id) => set(rows.filter(r => r.id !== id));
-  const total = rows.reduce((s, r) => s + (parseFloat(String(r.amount || '').replace(',', '.')) || 0), 0);
+  const total = rows.reduce((s, r) => s + readAmount(r.amount), 0);
+  const termsFilled = String(item.depositTerms || '').trim() !== '';
 
   const small = { fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 };
   const lbl = { fontSize: 9, color: colors.muted };
@@ -306,6 +318,19 @@ const DepositRows = ({ item, onChange, colors }) => {
             celkem {Math.round(total * 100) / 100} {cur}
           </span>
         )}
+      </div>
+      {/* Co dodavatel požaduje — vlastními slovy, jedno pole na celou kartu.
+          Je to poznámka, ne číslo: nic se z ní nepočítá a do klientského PDF
+          se nedostane. Vyplněná se podbarví, aby ji bylo vidět. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4,
+                    padding: '1px 5px', borderRadius: 4,
+                    background: termsFilled ? '#fff8e1' : 'transparent' }}>
+        <span style={{ ...lbl, width: 46 }}>Podmínky:</span>
+        <input type="text" placeholder="např. 30 % při konfirmaci, zbytek 30 dní před příjezdem"
+          title="Podmínky záloh u tohoto dodavatele — jen pro vás, do nabídky pro klienta se netiskne"
+          value={item.depositTerms || ''}
+          onChange={e => onChange('depositTerms', e.target.value)}
+          style={{ ...small, flex: 1, minWidth: 160 }} />
       </div>
     </div>
   );
@@ -955,6 +980,203 @@ const buildIncludedText = (items) => {
   return lines.join('\n');
 };
 
+// --- Souhrn hotelů --------------------------------------------------------
+// Přehled hotelů, které jsou v nabídce zaškrtnuté. Je JEN KE ČTENÍ — nic se
+// odtud needituje, aby odtud nešlo omylem přepsat cenu; editace zůstává dole
+// na kartách.
+//
+// Pozor na výpočet: v nabídce je pricePerNightDbl i cityTax cena za POKOJ a
+// noc, proto se u DBL obojí dělí dvěma (viz offerCalc.getEffectiveCostDbl).
+// U SNGL se nedělí nic a city tax se bere z cityTaxSngl, když je vyplněný.
+// Tenhle souhrn nic nepřepočítává jinak — jen rozepisuje to, co už nabídka
+// počítá.
+const fmtMoney = (n) => (Number.isFinite(n) ? n : 0).toFixed(2);
+
+const HotelSummaryRow = ({ it, colors }) => {
+  const [open, setOpen] = React.useState(false);
+
+  const cur = it.currency || 'EUR';
+  const nights = parseFloat(it.nights) || 0;
+  const priceDbl = evalAmount(it.pricePerNightDbl);
+  const priceSngl = evalAmount(it.pricePerNightSngl);
+  const taxDbl = evalAmount(it.cityTax);
+  const taxSngl = evalAmount(
+    it.cityTaxSngl !== '' && it.cityTaxSngl !== undefined && it.cityTaxSngl !== null
+      ? it.cityTaxSngl
+      : it.cityTax
+  );
+
+  const perPaxDbl = getEffectiveCostDbl(it);
+  const perPaxSngl = getEffectiveCostSngl(it);
+
+  const st = BOOKING_STATUS.find(o => o.value === (it.bookingStatus || '')) || BOOKING_STATUS[0];
+
+  const deposits = Array.isArray(it.deposits) ? it.deposits : [];
+  const depositsTotal = deposits.reduce((s, d) => s + readAmount(d.amount), 0);
+
+  const emails = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
+
+  const files = [
+    ...(it.confirmationFileUrl
+      ? [{ url: it.confirmationFileUrl, name: it.confirmationFileName }]
+      : []),
+    ...(it.attachments || []),
+  ];
+
+  // Poznámky mají nejnovější zápis první; prázdné zápisy přeskočíme.
+  const lastNote = asNoteEntries(it.noteEntries, it.note).find(e => (e.text || '').trim());
+
+  const title = [it.city, it.name].filter(Boolean).join(' · ') || 'hotel bez názvu';
+  const dates = it.dateFrom || it.dateTo
+    ? `${fmtDateBR(it.dateFrom) || '?'} – ${fmtDateBR(it.dateTo) || '?'}`
+    : '';
+  const nightsLabel = nights > 0
+    ? `${nights} ${nights === 1 ? 'noc' : nights < 5 ? 'noci' : 'nocí'}`
+    : '';
+
+  const cell = { fontSize: 12, color: colors.muted };
+
+  return (
+    <div style={{
+      border: `1px solid ${colors.border}`, borderRadius: 8, marginBottom: 6,
+      background: it.cancelled ? '#fef2f2' : '#fff', overflow: 'hidden',
+    }}>
+      {/* Sbalený řádek */}
+      <div onClick={() => setOpen(o => !o)}
+        title={open ? 'Klikněte pro sbalení' : 'Klikněte pro rozbalení'}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+          padding: '7px 10px', cursor: 'pointer',
+        }}>
+        <span style={{ fontSize: 11, color: colors.muted, width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: colors.text || colors.primary }}>{title}</span>
+        {dates && <span style={cell}>{dates}</span>}
+        {nightsLabel && <span style={cell}>· {nightsLabel}</span>}
+        <span style={cell}>
+          · DBL {fmtMoney(priceDbl)} / SNGL {fmtMoney(priceSngl)} {cur}
+        </span>
+        {taxDbl > 0 && <span style={cell}>· taxa {fmtMoney(taxDbl)} {cur}</span>}
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {it.cancelled && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#dc2626', padding: '2px 6px', borderRadius: 4 }}>
+              ZRUŠENO
+            </span>
+          )}
+          <span style={{
+            fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+            background: st.bg, color: st.color, border: `1px solid ${st.border}`,
+          }}>{st.label}</span>
+        </span>
+      </div>
+
+      {/* Rozbalené */}
+      {open && (
+        <div style={{ background: '#f4f2ee', padding: '10px 12px', borderTop: `1px solid ${colors.border}` }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: colors.primary, marginBottom: 6, letterSpacing: '0.03em' }}>
+            JAK SE TO POČÍTÁ:
+          </div>
+
+          <div style={{ fontSize: 12, color: colors.text || '#333', lineHeight: 1.7 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span>
+                DBL: ({fmtMoney(priceDbl)}{taxDbl > 0 ? ` + ${fmtMoney(taxDbl)} taxa` : ''} za pokoj/noc)
+                {' × '}{nights} {nights === 1 ? 'noc' : nights < 5 ? 'noci' : 'nocí'} ÷ 2 osoby
+              </span>
+              <b style={{ whiteSpace: 'nowrap' }}>{fmtMoney(perPaxDbl)} {cur}</b>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span>
+                SNGL: ({fmtMoney(priceSngl)}{taxSngl > 0 ? ` + ${fmtMoney(taxSngl)} taxa` : ''} za pokoj/noc)
+                {' × '}{nights} {nights === 1 ? 'noc' : nights < 5 ? 'noci' : 'nocí'}
+              </span>
+              <b style={{ whiteSpace: 'nowrap' }}>{fmtMoney(perPaxSngl)} {cur}</b>
+            </div>
+          </div>
+
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', gap: 12,
+            borderTop: `1px solid ${colors.border}`, marginTop: 6, paddingTop: 6,
+            fontSize: 12, fontWeight: 700, color: colors.text || '#333',
+          }}>
+            <span>Na osobu za tento hotel</span>
+            <span style={{ color: colors.primary, whiteSpace: 'nowrap' }}>
+              DBL {fmtMoney(perPaxDbl)} · SNGL {fmtMoney(perPaxSngl)} {cur}
+            </span>
+          </div>
+
+          {/* Termíny, FOC, zálohy */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 8, fontSize: 11, color: colors.muted }}>
+            {it.optionDate && <span>Option do <b style={{ color: '#c2410c' }}>{fmtDateBR(it.optionDate)}</b></span>}
+            {it.cancellationDeadline && <span>Storno zdarma do <b style={{ color: '#dc2626' }}>{fmtDateBR(it.cancellationDeadline)}</b></span>}
+            {it.focRatio && <span>FOC {it.focRatio}{it.focRoomType ? ` (${it.focRoomType.toUpperCase()})` : ''}</span>}
+            {deposits.length > 0 && (
+              <span>
+                Zálohy: <b>{fmtMoney(depositsTotal)} {cur}</b>
+                {' ('}
+                {deposits.map(d => `${fmtMoney(readAmount(d.amount))}${d.date ? ` ${fmtDateBR(d.date)}` : ''}`).join(', ')}
+                {')'}
+              </span>
+            )}
+          </div>
+
+          {String(it.depositTerms || '').trim() !== '' && (
+            <div style={{ marginTop: 6, fontSize: 11, background: '#fff8e1', color: '#854f0b',
+                          border: '1px solid #f0d9a0', borderRadius: 4, padding: '3px 8px' }}>
+              Podmínky záloh: <b>{it.depositTerms}</b>
+            </div>
+          )}
+
+          {/* Kontakt a příloha */}
+          {(emails.length > 0 || files.length > 0) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 6, fontSize: 11, color: colors.muted, alignItems: 'center' }}>
+              {emails.map((email, ei) => <span key={ei}>✉ {email}</span>)}
+              {files.map((f, fi) => (
+                <a key={f.path || fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                  style={{ color: colors.primary, textDecoration: 'underline' }}>
+                  📎 {f.name || 'potvrzení'}
+                </a>
+              ))}
+            </div>
+          )}
+
+          {/* Poslední poznámka */}
+          {lastNote && (
+            <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${colors.border}`, fontSize: 11, color: colors.muted }}>
+              📝 {[lastNote.stamp, lastNote.author].filter(Boolean).join(' – ')}
+              {(lastNote.stamp || lastNote.author) ? ': ' : ''}
+              <span style={{ color: colors.text || '#333' }}>
+                {lastNote.text.trim().split('\n')[0]}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const HotelSummary = ({ items, colors }) => {
+  // Jen zaškrtnuté hotelové karty, ve stejném pořadí jako dole v nabídce.
+  const hotels = (items || []).filter(it => it.enabled !== false && it.subType === 'hotel');
+
+  if (hotels.length === 0) return null;
+
+  return (
+    <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>🏨 Souhrn hotelů</span>
+        <span style={{ fontSize: 12, fontWeight: 600, background: '#eef2f7', color: colors.primary, padding: '2px 8px', borderRadius: 10 }}>
+          {hotels.length}
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: colors.muted }}>
+          klikněte na hotel pro rozpis
+        </span>
+      </div>
+      {hotels.map(it => <HotelSummaryRow key={it.id} it={it} colors={colors} />)}
+    </div>
+  );
+};
+
 export default function OfferDetail({ offerId, navigate, colors, userRole, userEmail }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
@@ -1043,6 +1265,10 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   }, [offerId]);
 
   const [itineraryText, setItineraryText] = useState('');
+  // Pole pro vkládání itineráře je schované, dokud ho nevyžádá tlačítko
+  // "Vytvořit hotely z textu". Používá se jen na začátku nabídky, a když je
+  // pořád otevřené, poskakuje pod ním celý zbytek stránky.
+  const [showItineraryBox, setShowItineraryBox] = useState(false);
   const [parseError, setParseError] = useState('');
 
   // Okno "Vyplnit z textu" u hotelové karty. fillItem = karta, do které se
@@ -1220,6 +1446,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           return newItems;
         });
         setItineraryText('');
+        setShowItineraryBox(false);
         return;
       }
     }
@@ -1277,6 +1504,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           return newItems;
         });
         setItineraryText('');
+        setShowItineraryBox(false);
         return;
       }
     }
@@ -1508,6 +1736,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     itemsRef.current = existingItems;
     trackedUpdate({ items: existingItems, updatedAt: new Date().toISOString() }).catch(err => console.error(err));
     setItineraryText('');
+    setShowItineraryBox(false);
   };
 
   const iStyle = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
@@ -2268,6 +2497,14 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     };
     const ref = await addDoc(collection(db, 'orders'), data);
 
+    // Podmínky záloh jsou volný text u položky v nabídce; objednávka má u každé
+    // služby vlastní poznámku a zobrazuje ji, takže se přepíšou tam a
+    // nezmizí. Nic se z nich nepočítá.
+    const carryTerms = (it) => {
+      const t = String(it.depositTerms || '').trim();
+      return t ? `Podmínky záloh: ${t}` : '';
+    };
+
     // Copy hotels as hotel services
     const currentItems = itemsRef.current;
     const hotelItems = currentItems.filter(it => it.enabled !== false && it.subType === 'hotel');
@@ -2286,7 +2523,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         currency: h.currency || 'EUR',
         status: 'enquired',
         optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
-        notes: '',
+        notes: carryTerms(h),
         dblRooms: '', snglRooms: '', twnRooms: '', trplRooms: '',
         pricePerDblRoom: h.pricePerNightDbl || '',
         pricePerSnglRoom: h.pricePerNightSngl || '',
@@ -2315,7 +2552,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         currency: t.currency || 'EUR',
         status: 'enquired',
         optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
-        notes: '',
+        notes: carryTerms(t),
         pricePerPax: t.costDbl || '',
         ticketCount: '',
         totalPrice: '',
@@ -2335,7 +2572,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         currency: g.currency || 'EUR',
         status: 'enquired',
         optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
-        notes: '',
+        notes: carryTerms(g),
         totalPrice: g.groupCost || '',
         updatedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -2739,16 +2976,29 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <TaskList todos={offer.todos} onChange={handleTodos} colors={colors} />
       </div>
 
+      <HotelSummary items={activeItems} colors={colors} />
+
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>📋 Vytvořit hotely z textu</div>
-        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
-          Vložte text s itinerářem (datumy, města, případně hotely) — aplikace automaticky vytvoří hotelové řádky s datumy a přeloží města do PT-BR.
-        </div>
-        <textarea value={itineraryText} onChange={e => setItineraryText(e.target.value)} rows={5}
-          placeholder={"18.5.2027 – 21.5.2027 MUNICH\n21.5.2027 – 23.5.2027 SALZBURG\n23.5.2027 – 24.5.2027 INNSBRUCK"}
-          style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
+        {showItineraryBox && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>📋 Vytvořit hotely z textu</div>
+              <button onClick={() => setShowItineraryBox(false)} title="Zavřít pole"
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', fontSize: 14, color: colors.muted, cursor: 'pointer', padding: 0 }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+              Vložte text s itinerářem (datumy, města, případně hotely) — aplikace automaticky vytvoří hotelové řádky s datumy a přeloží města do PT-BR.
+            </div>
+            <textarea autoFocus value={itineraryText} onChange={e => setItineraryText(e.target.value)} rows={5}
+              placeholder={"18.5.2027 – 21.5.2027 MUNICH\n21.5.2027 – 23.5.2027 SALZBURG\n23.5.2027 – 24.5.2027 INNSBRUCK"}
+              style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
+          </>
+        )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={handleParseItinerary} disabled={!itineraryText.trim()}
+          <button
+            onClick={() => { if (!showItineraryBox) setShowItineraryBox(true); else handleParseItinerary(); }}
+            disabled={showItineraryBox && !itineraryText.trim()}
+            title={showItineraryBox ? 'Zpracovat vložený text' : 'Otevřít pole pro vložení itineráře'}
             style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             ✨ Vytvořit hotely z textu
           </button>
