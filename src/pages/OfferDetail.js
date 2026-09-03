@@ -4,6 +4,7 @@ import { doc, getDoc, getDocs, collection, updateDoc, addDoc, setDoc, deleteDoc,
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 import { parseServiceText, parseServiceDocument } from '../lib/ai';
+import { ensureOfferNumber } from '../lib/offerNumber';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -2372,6 +2373,9 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     if (offer) setIncludedField(offer.includedText || '');
   }, [offer && offer.includedText, setIncludedField]);
 
+  const offerRefForNumber = React.useRef({});
+  React.useEffect(() => { offerRefForNumber.current = offer; }, [offer]);
+
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
     if (loading) { alert('Data se ještě načítají — počkejte prosím.'); return; }
@@ -2446,7 +2450,18 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleHeaderChange = async (field, value) => {
     setOffer(prev => ({ ...prev, [field]: value }));
-    await trackedUpdate({ [field]: value, updatedAt: new Date().toISOString() });
+    const ok = await trackedUpdate({ [field]: value, updatedAt: new Date().toISOString() });
+    // Jakmile je vyplněný klient i termín, přidělí se číslo nabídky.
+    // Kdo nedrží štafetu, nic nezapisuje — stejné pravidlo jako u ukládání.
+    if (ok && (field === 'clientId' || field === 'startDate') && canEditRef.current) {
+      try {
+        const merged = { ...offerRefForNumber.current, [field]: value };
+        const num = await ensureOfferNumber(offerId, merged);
+        if (num) setOffer(prev => ({ ...prev, offerNumber: num }));
+      } catch (err) {
+        console.error('Cislo nabidky se nepodarilo priradit:', err);
+      }
+    }
   };
 
   const handleDecline = async () => {
@@ -2926,6 +2941,14 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       )}
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ marginBottom: 10, fontSize: 13 }}>
+          <span style={{ color: colors.muted }}>Číslo nabídky: </span>
+          {offer.offerNumber
+            ? <span style={{ fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 8px' }}>{offer.offerNumber}</span>
+            : <span style={{ color: '#7A5A00', background: '#FDF3D8', borderRadius: 5, padding: '2px 8px' }}>
+                zatím bez čísla — {!offer.clientId ? 'chybí klient' : !offer.startDate ? 'chybí termín' : 'klient nemá vyplněný kód'}
+              </span>}
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: 12, alignItems: 'end' }}>
           <div>{lbl('Offer name')}
             <input type="text" defaultValue={offer.name} onBlur={e => handleHeaderChange('name', e.target.value)} style={{ ...iStyle, fontSize: 16, fontWeight: 700, padding: '8px 10px' }} />

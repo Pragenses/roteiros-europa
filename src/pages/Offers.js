@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, doc } from 'firebase/firestore';
+import { ensureOfferNumber } from '../lib/offerNumber';
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
@@ -72,6 +73,9 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
       declined: false,
     };
     const ref = await addDoc(collection(db, 'offers'), data);
+    // Číslo nabídky (AN-27001) vznikne hned, pokud je vybraný klient s kódem
+    // a je vyplněný termín. Když ne, doplní se později v detailu nabídky.
+    try { await ensureOfferNumber(ref.id, data); } catch (err) { console.error('Cislo nabidky se nepodarilo priradit:', err); }
     setShowForm(false);
     navigate('offer-detail', { offerId: ref.id });
   };
@@ -212,7 +216,12 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
                     style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 1.25rem', borderBottom: i < clientOffers.length - 1 ? `1px solid ${colors.border}` : 'none', cursor: 'pointer', background: bg }}
                     onClick={() => navigate('offer-detail', { offerId: o.id })}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{o.name}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {o.offerNumber
+                          ? <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{o.offerNumber}</span>
+                          : null}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                      </div>
                       <div style={{ fontSize: 12, color: colors.muted }}>
                         {o.destinations ? `${o.destinations} · ` : ''}{o.startDate || ''}{o.endDate ? ` – ${o.endDate}` : ''} · {o.items?.length || 0} item(s) · margin {o.margin || 15}%
                         {(() => {
