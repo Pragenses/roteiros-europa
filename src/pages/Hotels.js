@@ -78,6 +78,7 @@ const TABS = [
   { id: 'compose', label: '✉ Poptávka' },
   { id: 'log',     label: '📋 Log' },
   { id: 'cards',   label: '🗂 Karty' },
+  { id: 'clean',   label: '🧹 Kontrola adres' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +110,39 @@ const FREEMAIL = new Set([
 
 // Slova, která o identitě hotelu nic neříkají a při porovnávání názvů se odmažou.
 const NAME_NOISE = /\b(hotel|hotell|hotels|hotel[eé]?is|h[oôó]tel|penzion|pension|pension[ae]t|hostel|hostal|garni|resort|spa|apartments?|apartm[aá]ny?|apart|residence|rezidence|guesthouse|guest|house|the|and|amp)\b/g;
+
+// Práh, od kterého se adresa považuje za SDÍLENOU (rezervační centrála
+// obsluhující víc hotelů). Sdílená adresa nikdy nic nespojuje a smí ležet na
+// libovolném počtu karet. Číslo jde kdykoliv změnit.
+const SHARED_EMAIL_MIN = 4;
+
+// Název, který o hotelu nic neříká: prázdný, samotná emailová adresa, pomlčka,
+// nebo slova, která se do sloupce dostala omylem při importu ("E-mail").
+const JUNK_NAME = /^(e-?mail|email|mail|hotel|hotely|hotels|kontakt|contact|info|n\/?a|nan|null|[-–—.,:;?]+)$/i;
+const isRealName = (raw) => {
+  const t = String(raw || '').trim();
+  if (!t) return false;
+  if (t.includes('@')) return false;          // do názvu spadla adresa
+  if (JUNK_NAME.test(t)) return false;
+  return /[a-zA-Z0-9À-ž]/.test(t);
+};
+
+// Adresa rozbitá při importu: za koncovkou domény pokračuje text, protože se
+// k ní nalepil začátek dalšího hotelu ("...@happyculture.com" + "Pointe").
+// Také hlídá adresy bez zavináče, s víc zavináči nebo s mezerou.
+const KNOWN_TLD = '(com|cz|sk|net|org|eu|de|at|it|fr|es|pt|pl|hu|si|hr|be|nl|uk|ie|dk|se|no|fi|ch|gr|ro|bg|ba|rs|me|al|mk|tr|ua|ru|lt|lv|ee|lu|is|mt|cy|br|us|ca|info|biz|travel|hotel)';
+const BROKEN_TAIL_RE = new RegExp(`\\.${KNOWN_TLD}[a-zA-Z\\u00C0-\\u017F'’\\-]{2,}$`, 'i');
+function emailProblem(email) {
+  const e = String(email || '').trim();
+  if (!e) return 'Prázdná adresa';
+  if (/\s/.test(e)) return 'Adresa obsahuje mezeru';
+  if ((e.match(/@/g) || []).length !== 1) return 'Adresa nemá právě jeden zavináč';
+  const dom = e.slice(e.indexOf('@') + 1);
+  if (!dom.includes('.')) return 'Doména bez tečky';
+  if (BROKEN_TAIL_RE.test(dom)) return 'Slepená adresa z importu — za koncovkou domény pokračuje text';
+  if (/[^a-zA-Z0-9._%+-]/.test(e.slice(0, e.indexOf('@')))) return 'Neplatný znak před zavináčem';
+  return '';
+}
 
 const stripDia = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
@@ -145,57 +179,79 @@ const sameCity = (a, b) => !a || !b || a === b;
 // Sestaví návrhy karet z řádků databáze, které ke kartě ještě nepatří.
 // Vrací { green: [...], orange: [...] }; každá skupina = jedna budoucí karta.
 function buildCardSuggestions(rows) {
-  const items = rows
-    .filter(r => !r.cardId && r.email)
-    .map(r => ({
-      row: r,
-      email: String(r.email).toLowerCase(),
-      domain: domainOf(r.email),
-      nName: normName(r.name),
-      nCity: normCity(r.city),
-    }));
+  const pool = rows.filter(r => !r.cardId && r.email);
 
-  // 1) Rozdělení podle domény (freemail dostane vlastní přihrádku podle názvu).
+  // Vadné řádky se do návrhů vůbec nepustí — patří do záložky Kontrola adres.
+  const broken = pool.filter(r => emailProblem(r.email));
+  const clean  = pool.filter(r => !emailProblem(r.email));
+
+  // Adresa, která leží na SHARED_EMAIL_MIN a víc řádcích, je rezervační
+  // centrála. Nikdy nic nespojuje a smí být na libovolném počtu karet.
+  const emailCount = new Map();
+  for (const r of clean) {
+    const e = String(r.email).toLowerCase();
+    emailCount.set(e, (emailCount.get(e) || 0) + 1);
+  }
+  const isShared = (e) => (emailCount.get(e) || 0) >= SHARED_EMAIL_MIN;
+
+  const items = clean.map(r => ({
+    row: r,
+    email: String(r.email).toLowerCase(),
+    domain: domainOf(r.email),
+    nName: isRealName(r.name) ? normName(r.name) : '',
+    hasName: isRealName(r.name),
+    nCity: normCity(r.city),
+  }));
+
+  // 1) Rozdělení podle domény. Freemail nemá vypovídající doménu, takže tam
+  //    rozhoduje název a město — a řádek bez názvu zůstane sám za sebe.
   const buckets = new Map();
   for (const it of items) {
     const free = !it.domain || FREEMAIL.has(it.domain);
-    const key = free ? `free|${it.nName}|${it.nCity}` : `dom|${it.domain}`;
+    const key = free
+      ? (it.hasName ? `free|${it.nName}|${it.nCity}` : `solo|${it.row.id}`)
+      : `dom|${it.domain}`;
     if (!buckets.has(key)) buckets.set(key, { free, domain: free ? '' : it.domain, items: [] });
     buckets.get(key).items.push(it);
   }
 
-  // 2) Uvnitř přihrádky rozdělíme podle názvu a města — jedna doména může patřit
-  //    řetězci s několika hotely.
+  // 2) Uvnitř domény rozdělíme podle názvu a města — jedna doména může patřit
+  //    řetězci s několika hotely. Řádek bez názvu se nikdy nepřilepí k cizímu
+  //    hotelu; spojí se jen se shodnou adresou.
+  const sameRow = (a, b) => {
+    if (a.email === b.email && !isShared(a.email)) return true;  // duplicita
+    if (!a.hasName || !b.hasName) return false;                  // bez názvu nespojujeme
+    return sameName(a.nName, b.nName) && sameCity(a.nCity, b.nCity);
+  };
+
   const groups = [];
   for (const b of buckets.values()) {
     const subs = [];
     for (const it of b.items) {
-      const hit = subs.find(s => s.items.some(x => sameName(x.nName, it.nName) && sameCity(x.nCity, it.nCity)));
+      const hit = subs.find(sg => sg.items.some(x => sameRow(x, it)));
       if (hit) hit.items.push(it); else subs.push({ items: [it] });
     }
-    for (const s of subs) {
-      groups.push({
-        items: s.items,
-        domain: b.domain,
-        free: b.free,
-        chain: !b.free && subs.length > 1,   // jedna doména, víc hotelů = řetězec
-      });
+    for (const sg of subs) {
+      groups.push({ items: sg.items, domain: b.domain, free: b.free, chain: !b.free && subs.length > 1 });
     }
   }
 
   const shape = (g) => {
-    // Nejdelší název bereme jako hlavní, ostatní jako aliasy.
-    const names = [...new Set(g.items.map(i => i.row.name).filter(Boolean))];
+    // Název bereme jen z řádků, které nějaký smysluplný mají; nejdelší je hlavní.
+    const names = [...new Set(g.items.filter(i => i.hasName).map(i => i.row.name.trim()))];
     names.sort((a, b) => b.length - a.length);
     const cities = [...new Set(g.items.map(i => i.row.city).filter(Boolean))];
+    const emails = [...new Set(g.items.map(i => i.email))];
     return {
       key: g.items.map(i => i.row.id).sort().join('_'),
-      name: names[0] || g.items[0].email,
+      name: names[0] || '(bez názvu) ' + emails[0],
+      noName: names.length === 0,
       aliases: names.slice(1),
       city: cities[0] || '',
       domain: g.domain,
       free: g.free,
       chain: !!g.chain,
+      shared: emails.some(isShared),
       rows: g.items.map(i => i.row),
       reason: g.chain
         ? `Řetězec ${g.domain} — samostatný hotel, nespojuje se s ostatními`
@@ -207,30 +263,43 @@ function buildCardSuggestions(rows) {
 
   const all = groups.map(shape);
 
-  // 3) Stejný název i město, ale jiná doména → jediný případ, kde je potřeba
-  //    tvoje rozhodnutí: je to jeden hotel se dvěma doménami, nebo dva hotely?
-  const byNameCity = new Map();
+  // 3) K rozhodnutí jde jen to, co stroj rozhodnout nemůže:
+  //    (a) stejný název i město, ale jiná doména
+  //    (b) stejná adresa, ale jiný název — jeden hotel, nebo sdílená centrála?
+  const clusters = new Map();
+  const put = (k, g, why) => {
+    if (!clusters.has(k)) clusters.set(k, { groups: [], why });
+    if (!clusters.get(k).groups.includes(g)) clusters.get(k).groups.push(g);
+  };
   for (const g of all) {
-    const k = `${normName(g.name)}|${normCity(g.city)}`;
-    if (k.replace(/\|/g, '').trim() === '') continue;
-    if (!byNameCity.has(k)) byNameCity.set(k, []);
-    byNameCity.get(k).push(g);
+    if (!g.noName) {
+      const k = `n|${normName(g.name)}|${normCity(g.city)}`;
+      if (k.replace(/[|]/g, '').trim()) put(k, g, 'name');
+    }
+    for (const r of g.rows) {
+      const e = String(r.email).toLowerCase();
+      if (!isShared(e)) put(`e|${e}`, g, 'email');
+    }
   }
 
   const merge = [];
   const inMerge = new Set();
-  for (const list of byNameCity.values()) {
-    const domains = new Set(list.map(g => g.domain || 'free'));
-    if (list.length > 1 && domains.size > 1) {
-      list.forEach(g => inMerge.add(g.key));
-      merge.push({
-        key: list.map(g => g.key).join('+'),
-        name: list.map(g => g.name).sort((a, b) => b.length - a.length)[0],
-        city: list.find(g => g.city)?.city || '',
-        groups: list,
-        rows: list.flatMap(g => g.rows),
-      });
-    }
+  for (const [k, c] of clusters) {
+    if (c.groups.length < 2) continue;
+    if (c.why === 'name' && new Set(c.groups.map(g => g.domain || 'free')).size < 2) continue;
+    if (c.groups.some(g => inMerge.has(g.key))) continue;
+    c.groups.forEach(g => inMerge.add(g.key));
+    const names = c.groups.filter(g => !g.noName).map(g => g.name).sort((a, b) => b.length - a.length);
+    merge.push({
+      key: c.groups.map(g => g.key).join('+'),
+      name: names[0] || c.groups[0].name,
+      city: c.groups.find(g => g.city)?.city || '',
+      why: c.why === 'email'
+        ? `Stejná adresa ${k.slice(2)}, ale jiný název — jeden hotel, nebo adresa sdílená víc hotely?`
+        : 'Stejný název i město, ale jiná emailová doména',
+      groups: c.groups,
+      rows: c.groups.flatMap(g => g.rows),
+    });
   }
 
   const rest = all.filter(g => !inMerge.has(g.key));
@@ -238,6 +307,8 @@ function buildCardSuggestions(rows) {
     green: rest.filter(g => !g.chain).sort((a, b) => b.rows.length - a.rows.length),
     chain: rest.filter(g => g.chain).sort((a, b) => (a.domain || '').localeCompare(b.domain || '') || (a.name || '').localeCompare(b.name || '')),
     merge: merge.sort((a, b) => (a.city || '').localeCompare(b.city || '')),
+    broken,
+    sharedEmails: [...emailCount.entries()].filter(([, n]) => n >= SHARED_EMAIL_MIN).map(([e, n]) => ({ email: e, count: n })),
   };
 }
 
@@ -399,6 +470,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [cardBusy, setCardBusy]     = useState('');
   const [cardSearch, setCardSearch] = useState('');
   const [showOrange, setShowOrange] = useState(true);
+  const [fixEdit, setFixEdit]       = useState({});
 
   const fetchCards = useCallback(async () => {
     setCardsLoading(true);
@@ -490,6 +562,32 @@ export default function Hotels({ navigate, colors, navParams }) {
       for (const g of m.groups) await createCardFromGroup(g);
       await Promise.all([fetchHotels(), fetchCards()]);
     } catch (e) { alert('Nepodařilo se vytvořit karty: ' + e.message); }
+    setCardBusy('');
+  };
+
+  // Oprava jedné vadné adresy přímo v databázi hotelů. Mění se jen ten jeden
+  // řádek, na kartách ani na rozesílání se nic dalšího nedotýká.
+  const handleFixEmail = async (row) => {
+    const val = String(fixEdit[row.id] ?? row.email).trim().toLowerCase();
+    if (!val) { alert('Adresa nesmí být prázdná.'); return; }
+    const problem = emailProblem(val);
+    if (problem) { alert('Takhle to pořád nesedí: ' + problem); return; }
+    setCardBusy(row.id);
+    try {
+      await updateDoc(doc(db, 'hotels', row.id), { email: val });
+      setFixEdit(prev => { const n = { ...prev }; delete n[row.id]; return n; });
+      await fetchHotels();
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+    setCardBusy('');
+  };
+
+  const handleDeleteRow = async (row) => {
+    if (!window.confirm(`Smazat řádek "${row.name || '—'}" (${row.email}) z databáze hotelů?\n\nTohle je nevratné.`)) return;
+    setCardBusy(row.id);
+    try {
+      await deleteDoc(doc(db, 'hotels', row.id));
+      await fetchHotels();
+    } catch (e) { alert('Nepodařilo se smazat: ' + e.message); }
     setCardBusy('');
   };
 
@@ -639,6 +737,26 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const suggestions = React.useMemo(() => buildCardSuggestions(hotels), [hotels]);
   const unassignedCount = hotels.filter(h => !h.cardId).length;
+
+  // Podklad pro záložku Kontrola adres — vadné adresy, chybějící názvy a duplicity.
+  const cleanupRows = React.useMemo(() => {
+    const counts = new Map();
+    hotels.forEach(h => {
+      const e = String(h.email || '').toLowerCase();
+      if (e) counts.set(e, (counts.get(e) || 0) + 1);
+    });
+    const out = [];
+    for (const h of hotels) {
+      const e = String(h.email || '').toLowerCase();
+      const problem = emailProblem(h.email);
+      if (problem) { out.push({ row: h, kind: 'bad', problem }); continue; }
+      if (!isRealName(h.name)) { out.push({ row: h, kind: 'name', problem: 'Chybí název hotelu — ve sloupci je ' + (h.name ? `"${h.name}"` : 'prázdno') }); continue; }
+      const n = counts.get(e) || 0;
+      if (n > 1 && n < SHARED_EMAIL_MIN) out.push({ row: h, kind: 'dup', problem: `Stejná adresa je na ${n} řádcích` });
+    }
+    const order = { bad: 0, name: 1, dup: 2 };
+    return out.sort((a, b) => order[a.kind] - order[b.kind] || (a.row.city || '').localeCompare(b.row.city || ''));
+  }, [hotels]);
   const cardsFiltered = cards.filter(c => {
     const q = cardSearch.trim().toLowerCase();
     if (!q) return true;
@@ -658,7 +776,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     <div style={{ padding: '2rem', maxWidth: 1100, margin: '0 auto', fontFamily: 'Georgia, serif' }}>
       <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ fontSize: 22, color: C.primary, margin: 0, fontWeight: 600 }}>🏨 Hotels</h1>
-        <p style={{ fontSize: 13, color: C.muted, margin: '4px 0 0' }}>Import · Databáze · Poptávky · Log · Karty</p>
+        <p style={{ fontSize: 13, color: C.muted, margin: '4px 0 0' }}>Import · Databáze · Poptávky · Log · Karty · Kontrola</p>
       </div>
 
       <div style={{ display: 'flex', gap: 4, marginBottom: '1.5rem', borderBottom: `1px solid ${C.border}` }}>
@@ -1046,13 +1164,25 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </div>
               </div>
 
+              {suggestions.broken.length > 0 && (
+                <div style={{ ...cardS, marginBottom: '1.2rem', background: '#fdf3f3', borderColor: '#e0a0a0' }}>
+                  <strong style={{ fontSize: 14 }}>🧹 {suggestions.broken.length} řádků má vadnou adresu</strong>
+                  <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 8px' }}>
+                    Do karet se nepočítají, dokud je neopravíš — jinak by dělaly falešné skupiny.
+                    Na tyhle adresy vám navíc poptávky nikdy nedošly.
+                  </p>
+                  <button onClick={() => setTab('clean')} style={smallBtn(C.primary)}>Otevřít kontrolu adres</button>
+                </div>
+              )}
+
               {/* 🟠 K ROZHODNUTÍ — nahoře, protože jen tohle vyžaduje uživatele */}
               {suggestions.merge.length > 0 && (
                 <div style={{ ...cardS, marginBottom: '1.2rem', borderColor: '#e0b060' }}>
                   <h3 style={{ margin: '0 0 6px', fontSize: 15, color: C.primary }}>🟠 K rozhodnutí ({suggestions.merge.length})</h3>
                   <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
-                    Stejný název i město, ale jiná emailová doména. Buď je to jeden hotel se dvěma
-                    adresami, nebo dva různé hotely se stejným jménem. Tohle stroj rozhodnout neumí.
+                    Buď stejný název pod dvěma doménami, nebo jedna adresa u dvou různých názvů.
+                    Pokud je adresa společná rezervační centrála, dej „Nechat zvlášť" — adresa zůstane
+                    na obou kartách, nikomu se neodebere.
                   </p>
                   <div style={{ maxHeight: 500, overflowY: 'auto' }}>
                     {suggestions.merge.map(m => (
@@ -1060,6 +1190,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
                           {m.name} <span style={{ fontWeight: 400, color: C.muted, fontSize: 12 }}>· {m.city || 'bez města'}</span>
                         </div>
+                        <div style={{ fontSize: 11, color: '#a06800', marginBottom: 6 }}>{m.why}</div>
                         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8 }}>
                           {m.groups.map(g => (
                             <div key={g.key} style={{ fontSize: 12, minWidth: 200 }}>
@@ -1106,10 +1237,14 @@ export default function Hotels({ navigate, colors, navParams }) {
                             <td style={tdS}>
                               <strong>{g.name}</strong>
                               {g.aliases.length > 0 && <div style={{ fontSize: 11, color: C.muted }}>také jako: {g.aliases.join(' · ')}</div>}
+                              {g.noName && <div style={{ fontSize: 11, color: '#b00020' }}>chybí název — doplň v Kontrole adres</div>}
                             </td>
                             <td style={tdS}>{g.city || '—'}</td>
                             <td style={tdS}>{g.rows.map(r => <div key={r.id} style={{ fontSize: 12 }}>{r.email}</div>)}</td>
-                            <td style={{ ...tdS, fontSize: 11, color: C.muted }}>{g.reason}</td>
+                            <td style={{ ...tdS, fontSize: 11, color: C.muted }}>
+                              {g.reason}
+                              {g.shared && <div style={{ color: '#e08a00' }}>sdílená adresa — je i na jiných hotelech</div>}
+                            </td>
                             <td style={{ ...tdS, textAlign: 'right' }}>
                               <button onClick={() => handleCreateCard(g)} disabled={!!cardBusy}
                                 style={{ ...smallBtn('#2e7d32'), opacity: cardBusy ? 0.5 : 1 }}>
@@ -1230,6 +1365,71 @@ export default function Hotels({ navigate, colors, navParams }) {
                 )}
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {/* ── KONTROLA ADRES ── */}
+      {tab === 'clean' && (
+        <div>
+          <div style={{ ...cardS, marginBottom: '1.2rem', background: '#f8f9fb' }}>
+            <p style={{ margin: 0, fontSize: 13, color: C.muted, lineHeight: 1.6 }}>
+              Sem se sesypalo všechno, co v databázi hotelů nesedí — slepené adresy z importu,
+              řádky bez názvu a duplicity. Opravuje se přímo v databázi, po jednom řádku.
+              Dokud tu adresa visí, do karet se nepočítá.
+            </p>
+          </div>
+
+          {loading ? <p style={{ color: C.muted }}>Načítám…</p> : cleanupRows.length === 0 ? (
+            <div style={{ ...cardS, textAlign: 'center', color: C.muted, fontSize: 13 }}>
+              Databáze je čistá. Není co opravovat.
+            </div>
+          ) : (
+            <div style={cardS}>
+              <h3 style={{ margin: '0 0 4px', fontSize: 15, color: C.primary }}>
+                K opravě ({cleanupRows.length})
+              </h3>
+              <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
+                🔴 vadná adresa · 🟠 chybí název · ⚪ duplicita
+              </p>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>
+                  <th style={thS}>Hotel</th><th style={thS}>Město</th>
+                  <th style={thS}>Adresa</th><th style={thS}>Co je špatně</th><th style={thS}></th>
+                </tr></thead>
+                <tbody>
+                  {cleanupRows.map(({ row, kind, problem }) => (
+                    <tr key={row.id} style={{ borderBottom: `1px solid ${C.border}`, background: kind === 'bad' ? '#fdf3f3' : kind === 'name' ? '#fffdf5' : 'transparent' }}>
+                      <td style={tdS}>
+                        {kind === 'bad' ? '🔴 ' : kind === 'name' ? '🟠 ' : '⚪ '}
+                        <strong>{row.name || '—'}</strong>
+                      </td>
+                      <td style={tdS}>{row.city || '—'}</td>
+                      <td style={tdS}>
+                        <input
+                          value={fixEdit[row.id] ?? row.email ?? ''}
+                          onChange={e => setFixEdit(prev => ({ ...prev, [row.id]: e.target.value }))}
+                          style={inp({ minWidth: 260, fontSize: 12 })} />
+                      </td>
+                      <td style={{ ...tdS, fontSize: 11, color: kind === 'bad' ? '#b00020' : C.muted }}>{problem}</td>
+                      <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button onClick={() => handleFixEmail(row)} disabled={!!cardBusy}
+                          style={{ ...smallBtn('#2e7d32'), opacity: cardBusy ? 0.5 : 1, marginRight: 6 }}>
+                          {cardBusy === row.id ? '…' : 'Uložit'}
+                        </button>
+                        <button onClick={() => handleDeleteRow(row)} disabled={!!cardBusy}
+                          style={{ ...smallBtn('#b00020'), opacity: cardBusy ? 0.5 : 1 }}>
+                          Smazat
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
+                Název hotelu se opravuje v záložce <strong>Databáze</strong> — tady se mění jen adresa.
+              </p>
+            </div>
           )}
         </div>
       )}
