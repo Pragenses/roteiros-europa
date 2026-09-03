@@ -1,7 +1,8 @@
-// force-rebuild-compose-search
+// force-rebuild-signature2
 import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // TLD deliberately restricted to lowercase letters only: when hotel entries are pasted with
@@ -404,6 +405,54 @@ function buildCardSuggestions(rows) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PODPISY
+//
+// Podpis se do textu emailu nevepisuje natvrdo — v šabloně je jen značka
+// {{signature}} a doplní se až při odeslání, stejně jako název skupiny nebo
+// termíny. Díky tomu se dá odesílatel přepnout, aniž by se sahalo do textu.
+//
+// Úprava podpisu = úprava `html` níže. Řádky se oddělují <br>.
+// `logins` jsou emaily, podle kterých se podpis vybere sám po přihlášení.
+// ─────────────────────────────────────────────────────────────────────────────
+const COMPANY_LINES =
+  `TOUR PRAGENSES, PRAGENSES s.r.o.<br>` +
+  `Lipnická 688, Praha 9 - Kyje, Czech Republic<br>`;
+
+const SIGNATURES = [
+  {
+    id: 'helena',
+    label: 'Helena Dlasková',
+    logins: ['helena.maria.brito@gmail.com'],
+    html:
+      `<b>Helena Dlasková, sales</b><br>` +
+      COMPANY_LINES +
+      `Tlf - whatsapp : +420 777 079 997<br>` +
+      `VAT: CZ284 45 961`,
+  },
+  {
+    id: 'filip',
+    label: 'Filip Dlask',
+    logins: ['filipdlask@gmail.com'],
+    // Telefon je zatím společný s Helenou; až bude vlastní, změň tenhle řádek.
+    html:
+      `<b>Filip Dlask, sales</b><br>` +
+      COMPANY_LINES +
+      `Tlf - whatsapp : +420 777 079 997<br>` +
+      `VAT: CZ284 45 961`,
+  },
+];
+
+const DEFAULT_SIGNATURE = 'helena';
+
+// Podle přihlášeného účtu vybere podpis. Když účet v seznamu není,
+// zůstane výchozí — nikdy se nevrátí prázdno.
+function signatureForLogin(email) {
+  const e = String(email || '').toLowerCase().trim();
+  const hit = SIGNATURES.find(s => s.logins.includes(e));
+  return hit ? hit.id : DEFAULT_SIGNATURE;
+}
+
 const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">
 <p>Dear Sir or Madam,</p>
 <p>I am reaching out to inquire about the best possible rates and options for accommodating a group booking as outlined below:</p>
@@ -439,15 +488,11 @@ const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14p
 <p>Thank you very much for your assistance. I look forward to your proposal and any further details you may require.</p>
 <p>Best regards,<br>
 --<br>
-<b>Helena Dlasková, sales</b><br>
-TOUR PRAGENSES, PRAGENSES s.r.o.<br>
-Lipnická 688, Praha 9 - Kyje, Czech Republic<br>
-Tlf - whatsapp : +420 777 079 997<br>
-VAT: CZ284 45 961</p>
+{{signature}}</p>
 </div>`;
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v201-compose-search');
+  console.debug('Hotels v203-signature');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -539,6 +584,18 @@ export default function Hotels({ navigate, colors, navParams }) {
   };
   const [subject, setSubject]         = useState('GRP');
   const [senderFrom, setSenderFrom]   = useState('grupos');
+  // Podpis se nastaví podle přihlášeného účtu, ale jde kdykoliv přepnout ručně.
+  // Jakmile ho uživatel přepne, automatika už do toho nesahá.
+  const [signatureId, setSignatureId] = useState(() => signatureForLogin(auth.currentUser?.email));
+  const [signatureTouched, setSignatureTouched] = useState(false);
+  React.useEffect(() => {
+    // auth.currentUser bývá při prvním vykreslení ještě prázdný, než Firebase
+    // dokončí přihlášení — proto se na změnu ještě jednou počká.
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!signatureTouched) setSignatureId(signatureForLogin(u?.email));
+    });
+    return unsub;
+  }, [signatureTouched]);
   React.useEffect(() => {
     let s = 'GRP';
     if (groupName) s += ' / ' + groupName;
@@ -770,13 +827,20 @@ export default function Hotels({ navigate, colors, navParams }) {
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, fmtDateEU(checkIn)||'[CHECK-IN]')
     .replace(/{{checkOut}}/g, fmtDateEU(checkOut)||'[CHECK-OUT]')
-    .replace(/{{freeRatio}}/g, freeRatio||'20');
+    .replace(/{{freeRatio}}/g, freeRatio||'20')
+    .replace(/{{signature}}/g, SIGNATURES.find(s => s.id === signatureId)?.html || '');
   };
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
   const handleSend = async () => {
     if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
+    // Poslední pojistka: kdyby se značka {{signature}} z textu ztratila, email
+    // by odešel bez podpisu. Radši se zeptáme, než se rozešle na desítky hotelů.
+    const sigHtml = SIGNATURES.find(s => s.id === signatureId)?.html || '';
+    if (sigHtml && !buildBody().includes(sigHtml)) {
+      if (!window.confirm('V textu emailu není podpis — značka {{signature}} chybí.\n\nOdeslat i tak, bez podpisu?')) return;
+    }
     setSending(true);
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
@@ -849,6 +913,13 @@ export default function Hotels({ navigate, colors, navParams }) {
   // vybraný, i když ho filtr zrovna schová. Tady jen spočítáme, kolik jich je,
   // aby to uživatel viděl a neodeslal omylem víc, než čeká.
   const hiddenSelected = selected.filter(id => !composeHotels.some(h => h.id === id)).length;
+
+  // Kontrola, jestli je v textu ještě značka pro podpis. Uživatel ji může
+  // omylem smazat při úpravách — pak by email odešel bez podpisu.
+  const currentBodyText = editMode === 'visual' && visualEditorRef.current
+    ? visualEditorRef.current.value
+    : emailBody;
+  const signatureMarkerPresent = currentBodyText.includes('{{signature}}');
 
   const suggestions = React.useMemo(() => buildCardSuggestions(hotels), [hotels]);
   const unassignedCount = hotels.filter(h => !h.cardId).length;
@@ -1169,6 +1240,17 @@ export default function Hotels({ navigate, colors, navParams }) {
                 <option value="reservas3">reservas3@tour-pragenses.com</option>
                 <option value="info">info@tour-pragenses.com</option>
               </select>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Podpis</label>
+              <select value={signatureId} onChange={e => { setSignatureId(e.target.value); setSignatureTouched(true); }} style={inp()}>
+                {SIGNATURES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+              {!signatureMarkerPresent && (
+                <div style={{ fontSize: 11, color: '#e08a00', marginTop: 4 }}>
+                  ⚠ V textu emailu chybí značka <code>{'{{signature}}'}</code> — podpis se nedoplní. Vrať ji na konec textu.
+                </div>
+              )}
             </div>
             <div style={{ marginBottom: 10 }}>
               <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Předmět</label>
