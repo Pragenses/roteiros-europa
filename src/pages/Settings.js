@@ -21,9 +21,11 @@ export default function Settings({ colors }) {
   const [numSkipped, setNumSkipped] = useState([]);  // [{name, reason}]
   const [numWriting, setNumWriting] = useState(false);
   const [numResult, setNumResult] = useState('');
+  const [numRelink, setNumRelink] = useState([]);   // nabidky se smazanym klientem, ktere lze jednoznacne napojit zpet
+  const [numRelinking, setNumRelinking] = useState(false);
 
   const buildNumberingPlan = async () => {
-    setNumLoading(true); setNumResult(''); setNumPlan(null); setNumSkipped([]);
+    setNumLoading(true); setNumResult(''); setNumPlan(null); setNumSkipped([]); setNumRelink([]);
     try {
       const [cliSnap, offSnap] = await Promise.all([
         getDocs(collection(db, 'clients')),
@@ -31,10 +33,16 @@ export default function Settings({ colors }) {
       ]);
       const codeById = {};
       const nameById = {};
+      // Podle jmena hledame nahradu za smazaneho klienta. Klice s vice nez
+      // jednim klientem se zahodi — tam by oprava byla hadani.
+      const byName = {};
       cliSnap.docs.forEach(d => {
         codeById[d.id] = normalizeClientCode(d.data().code);
         nameById[d.id] = d.data().name || '';
+        const key = String(d.data().name || '').trim().toUpperCase();
+        if (key) byName[key] = byName[key] ? 'AMBIGUOUS' : d.id;
       });
+      const relink = [];
 
       const offers = offSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
@@ -55,6 +63,18 @@ export default function Settings({ colors }) {
         if (!o.clientId) { skipped.push({ name: o.name || '(bez nazvu)', reason: 'chybi klient' }); return false; }
         if (!yearTwoDigits(o.startDate)) { skipped.push({ name: o.name || '(bez nazvu)', reason: 'chybi termin' }); return false; }
         if (nameById[o.clientId] === undefined) {
+          const key = String(o.clientName || '').trim().toUpperCase();
+          const target = byName[key];
+          if (target && target !== 'AMBIGUOUS') {
+            relink.push({
+              id: o.id,
+              offerName: o.name || '(bez nazvu)',
+              storedName: o.clientName || '',
+              targetId: target,
+              targetName: nameById[target],
+              targetCode: codeById[target] || '(bez kódu)',
+            });
+          }
           // Nabidka ukazuje na klienta, ktery uz v seznamu klientu neni —
           // byl smazan. Jmeno se porad zobrazuje ze stare kopie v nabidce.
           skipped.push({
@@ -94,11 +114,34 @@ export default function Settings({ colors }) {
 
       setNumPlan(plan);
       setNumSkipped(skipped);
+      setNumRelink(relink);
     } catch (err) {
       console.error(err);
       setNumResult('❌ Nepodarilo se nacist data: ' + err.message);
     }
     setNumLoading(false);
+  };
+
+  // Opravi u nabidek odkaz na klienta, ktery byl smazan, ale existuje jiny
+  // klient s presne stejnym jmenem. Cisla nabidek se tim nemeni — jen se
+  // obnovi vazba, aby se dalo cislovat. Spousti se rucne a jen po nahledu.
+  const applyRelink = async () => {
+    if (numRelink.length === 0) return;
+    if (!window.confirm('Opravit odkaz na klienta u ' + numRelink.length + ' nabídek?\n\nČísla se tím nepřidělují, jen se obnoví vazba na klienta.')) return;
+    setNumRelinking(true); setNumResult('');
+    let done = 0;
+    try {
+      for (const row of numRelink) {
+        await updateDoc(doc(db, 'offers', row.id), { clientId: row.targetId, clientName: row.targetName });
+        done++;
+      }
+      setNumResult('✅ Opraveno ' + done + ' vazeb. Klikni znovu na "Zobrazit návrh".');
+      setNumRelink([]); setNumPlan(null); setNumSkipped([]);
+    } catch (err) {
+      console.error(err);
+      setNumResult('❌ Opraveno ' + done + ' z ' + numRelink.length + ', pak chyba: ' + err.message);
+    }
+    setNumRelinking(false);
   };
 
   const applyNumberingPlan = async () => {
@@ -413,6 +456,27 @@ export default function Settings({ colors }) {
           )}
           {numResult && <span style={{ fontSize: 13, color: numResult.startsWith('❌') ? '#dc2626' : '#27500A' }}>{numResult}</span>}
         </div>
+
+        {numRelink.length > 0 && (
+          <div style={{ marginTop: 14, background: '#FEF2F2', border: '1px solid #F0C4C4', borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#8A2020', marginBottom: 6 }}>
+              Nabídky s odkazem na smazaného klienta ({numRelink.length})
+            </div>
+            <div style={{ fontSize: 12, color: '#8A2020', marginBottom: 10, lineHeight: 1.5 }}>
+              Klient, na kterého tyto nabídky ukazují, už v seznamu není. Existuje ale klient se stejným jménem,
+              takže se vazba dá obnovit. Čísla se tím nepřidělí — po opravě klikni znovu na „Zobrazit návrh“.
+            </div>
+            {numRelink.map(r => (
+              <div key={r.id} style={{ fontSize: 12, color: '#8A2020' }}>
+                {r.offerName} → {r.targetName} ({r.targetCode})
+              </div>
+            ))}
+            <button onClick={applyRelink} disabled={numRelinking}
+              style={{ marginTop: 10, padding: '8px 16px', background: '#8A2020', color: colors.white, border: 'none', borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: numRelinking ? 0.6 : 1 }}>
+              {numRelinking ? 'Opravuji...' : `Opravit ${numRelink.length} vazeb`}
+            </button>
+          </div>
+        )}
 
         {numPlan && numPlan.length === 0 && (
           <div style={{ fontSize: 13, color: colors.muted, marginTop: 12 }}>Není co číslovat — všechny nabídky, které číslo dostat mohou, ho už mají.</div>
