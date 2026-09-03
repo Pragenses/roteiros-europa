@@ -922,6 +922,24 @@ const TaskList = ({ todos, onChange, colors }) => {
   );
 };
 
+// Text "Incluído no preço" se skládá z toho, co v nabídce opravdu je.
+// Dřív ho generovalo tlačítko, na které se zapomínalo; teď se hlídá sám.
+const buildIncludedText = (items) => {
+  const active = (items || []).filter(it => it.enabled !== false);
+  const hotels = active.filter(it => it.subType === 'hotel');
+  const tickets = active.filter(it => it.subType === 'ticket' && it.name);
+  const groupSvcs = active.filter(it => it.type === 'group' && it.name
+    && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
+  const hasTax = hotels.some(h => evalAmount(h.cityTax) > 0);
+  const lines = [];
+  if (hotels.length > 0) lines.push(`Hospedagem em hotéis selecionados, com café da manhã incluído (${hotels.length} ${hotels.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)`);
+  if (hasTax) lines.push('Taxas municipais (city tax) dos hotéis');
+  groupSvcs.forEach(it => lines.push(it.name));
+  tickets.forEach(it => lines.push(`1x ${it.name}`));
+  lines.push('Assistência da nossa equipe durante toda a viagem');
+  return lines.join('\n');
+};
+
 export default function OfferDetail({ offerId, navigate, colors, userRole, userEmail }) {
   const [offer, setOffer] = useState(null);
   const [clients, setClients] = useState([]);
@@ -2070,6 +2088,33 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       }).catch(err => console.error('Auto-save pricing settings failed:', err));
     }, 800);
   }, [margin, paxList, focCount, focType, loading, isLocked, offerId]);
+
+  // Kdyby se text přepisoval vždy, zmizely by ruční úpravy. Proto se vedle
+  // něj drží i poslední vygenerovaná podoba: dokud se textu nikdo nedotkl,
+  // aktualizuje se sám a tiše. Jakmile do něj někdo psal, jen se nabídne.
+  const includedGenerated = React.useMemo(() => buildIncludedText(items), [items]);
+  const includedTouched = !!(offer && offer.includedText
+    && offer.includedText !== offer.includedAuto);
+  // U starších nabídek žádná vygenerovaná podoba uložená není; tam se
+  // porovnává rovnou s tím, co v poli stojí, ať to nehlásí změnu zbytečně.
+  const includedBaseline = (offer && offer.includedAuto) || (offer && offer.includedText) || '';
+  const includedStale = includedTouched && includedGenerated !== includedBaseline;
+
+  const applyIncluded = React.useCallback(async () => {
+    await trackedUpdate({
+      includedText: includedGenerated,
+      includedAuto: includedGenerated,
+      updatedAt: new Date().toISOString(),
+    });
+    setOffer(prev => ({ ...prev, includedText: includedGenerated, includedAuto: includedGenerated }));
+  }, [includedGenerated, trackedUpdate]);
+
+  useEffect(() => {
+    if (loading || !offer || isLocked || !canEdit) return;
+    if (includedTouched) return;                       // ruční text nepřepisujeme
+    if (offer.includedText === includedGenerated) return;
+    applyIncluded().catch(err => console.error('Auto-update "Incluído no preço" selhalo:', err));
+  }, [loading, offer, isLocked, canEdit, includedTouched, includedGenerated, applyIncluded]);
 
   const handleSave = async () => {
     if (isLocked) { alert('Nabídka je zamčena. Nejprve ji odemkněte.'); return; }
@@ -3413,22 +3458,35 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>Incluído no preço</div>
-          <button onClick={() => {
-            const hotelItems = activeItems.filter(it => it.subType === 'hotel');
-            const ticketItems = activeItems.filter(it => it.subType === 'ticket' && it.name);
-            const groupSvcs = activeItems.filter(it => it.type === 'group' && it.name && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
-            const hasTax = hotelItems.some(h => evalAmount(h.cityTax) > 0);
-            const lines = [];
-            if (hotelItems.length > 0) lines.push(`Hospedagem em hotéis selecionados, com café da manhã incluído (${hotelItems.length} ${hotelItems.length === 1 ? 'hotel' : 'hotéis'}, conforme itinerário)`);
-            if (hasTax) lines.push('Taxas municipais (city tax) dos hotéis');
-            groupSvcs.forEach(it => lines.push(it.name));
-            ticketItems.forEach(it => lines.push(`1x ${it.name}`));
-            lines.push('Assistência da nossa equipe durante toda a viagem');
-            handleHeaderChange('includedText', lines.join('\n'));
-          }} style={{ padding: '5px 12px', background: colors.white, border: `1px solid ${colors.primary}`, color: colors.primary, borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
-            ↻ Gerar automaticamente
-          </button>
+          <div style={{ fontSize: 11, color: colors.muted }}>
+            {includedTouched ? 'ručně upraveno' : 'aktualizuje se samo'}
+          </div>
         </div>
+        {includedStale && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                        background: '#FFFBEB', border: '1px solid #854f0b', borderRadius: 8,
+                        padding: '8px 12px', marginBottom: 10, fontSize: 12, color: '#854f0b' }}>
+            <span>Nabídka se od poslední úpravy změnila. Text je psaný ručně, tak ho sám nepřepisuji.</span>
+            <div style={{ flex: 1 }} />
+            <button onClick={() => {
+              if (!window.confirm('Přepsat text podle aktuální nabídky? Ruční úpravy se ztratí.')) return;
+              applyIncluded();
+            }} style={{ padding: '4px 12px', background: '#854f0b', color: '#fff', border: 'none',
+                        borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+                        whiteSpace: 'nowrap' }}>
+              ↻ Aktualizovat
+            </button>
+            <button onClick={() => {
+              setOffer(prev => ({ ...prev, includedAuto: includedGenerated }));
+              trackedUpdate({ includedAuto: includedGenerated }).catch(err => console.error(err));
+            }} title="Nechat text tak, jak je, a už na tuhle změnu neupozorňovat"
+              style={{ padding: '4px 12px', background: 'transparent', color: '#854f0b',
+                       border: '1px solid #854f0b', borderRadius: 6, fontSize: 12,
+                       cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+              Nechat
+            </button>
+          </div>
+        )}
         <textarea key={offer.includedText} defaultValue={offer.includedText} onBlur={e => handleHeaderChange('includedText', e.target.value)} rows={6}
           placeholder={'Hospedagem em hotéis selecionados...\nTransporte por ônibus panorâmico...\n1x Visita ao Coliseu...'}
           style={{ ...iStyle, resize: 'vertical', lineHeight: 1.6 }} />
