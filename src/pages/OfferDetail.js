@@ -3600,6 +3600,21 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         offerId={offerId}
         legacyVersions={offer?.pdfVersions}
         getCurrentSnapshot={buildCurrentSnapshot}
+        canDelete={userRole === 'owner'}
+        onTrashLegacy={async (idx, toTrash) => {
+          // Koš u starších verzí: jen značka v nabídce, PDF zůstává.
+          const now = new Date().toISOString();
+          const me = auth.currentUser?.email || '';
+          const list = (offer?.pdfVersions || []).map((v, i) => {
+            if (i !== idx) return v;
+            return toTrash
+              ? { ...v, deletedAt: now, deletedBy: me }
+              : { ...v, deletedAt: null, deletedBy: null, restoredAt: now, restoredBy: me };
+          });
+          const ok = await trackedUpdate({ pdfVersions: list });
+          if (ok) setOffer(prev => ({ ...prev, pdfVersions: list }));
+          return ok;
+        }}
         colors={colors}
         onRenameLegacy={async (idx, label) => {
           // Starší verze leží přímo v nabídce — ukládá se přes trackedUpdate,
