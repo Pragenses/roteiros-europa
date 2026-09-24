@@ -14,7 +14,7 @@ const SERVICE_TYPES = [
   { value: 'other', label: 'Other', icon: '📋' },
 ];
 
-const CURRENCIES = ['EUR', 'GBP', 'CHF', 'CZK', 'PLN', 'NOK', 'DKK', 'USD'];
+const CURRENCIES = ['EUR', 'GBP', 'CHF', 'CZK', 'PLN', 'NOK', 'DKK', 'SEK', 'USD'];
 
 const SERVICE_STATUS = [
   { value: 'enquired', label: 'Enquired', bg: '#F1EFE8', color: '#444441' },
@@ -34,7 +34,7 @@ const ORDER_STATUS = [
   { value: 'completed', label: 'Completed' },
 ];
 
-const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, CZK: 0.040, USD: 0.92 };
+const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, SEK: 0.090, CZK: 0.040, USD: 0.92 };
 
 const SERVICE_TO_PROVIDER_TYPE = {
   hotel: 'hotel',
