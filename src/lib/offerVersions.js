@@ -13,12 +13,14 @@
 //     ani změna vzorce ve výpočtu starou verzi NEPŘEPÍŠE. Náhled a porovnání
 //     verzí se vždy kreslí z těchto uložených čísel, nikdy se nepřepočítávají.
 //
-// Číslo verze = nejvyšší dosavadní číslo u téže nabídky + 1. Smazané verze se
-// (až bude mazání) jen označí, aby se jejich číslo nikdy znovu nepoužilo.
+// Číslo verze = nejvyšší dosavadní číslo u téže nabídky + 1 (počítají se
+// i starší verze ze zeleného tlačítka). Název verze jde při ukládání i později
+// ručně změnit — třeba když klient už dostal NR1–NR4 mimo systém, první verze
+// v systému se přepíše na NR5 a další pak pokračují NR6, NR7…
 
 import { db, storage, auth } from './firebase';
-import { collection, getDocs, query, where, addDoc } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { collection, getDocs, query, where, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL, updateMetadata } from 'firebase/storage';
 
 // Pro název souboru: bez háčků a čárek, bez znaků, které v názvu souboru
 // dělají potíže (/ \ : * ? " < > | a podtržítko, které odděluje části).
@@ -45,25 +47,62 @@ export function versionFileName(offer, versionNo) {
   return parts.join('_') + '.pdf';
 }
 
-export async function nextVersionNo(offerId) {
+// Číslo verze z názvu: „NR5_BALCAS…" → 5, „NR 3" → 3. Bez NR na začátku → null.
+export function versionNoFromName(name) {
+  const m = /^\s*NR\s*(\d+)/i.exec(String(name || ''));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Úprava názvu zadaného ručně: pryč znaky, které v názvu souboru dělají potíže,
+// a na konci vždy .pdf. Háčky a podtržítka zůstávají — je to název, který
+// napsal člověk.
+export function cleanTypedFileName(raw) {
+  let s = String(raw || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  s = s.replace(/\.pdf$/i, '').trim();
+  return s ? s + '.pdf' : '';
+}
+
+// Hlavička, podle které prohlížeč pojmenuje soubor při stažení. `inline` =
+// PDF se dál otevírá v prohlížeči, jen při uložení dostane správný název.
+export function contentDispositionFor(fileName) {
+  const ascii = String(fileName).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '');
+  return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
+// Všechna čísla verzí použitá u nabídky — nové verze i ty starší ze
+// zeleného tlačítka (ty mají číslo jen v názvu, např. „NR 3").
+export async function usedVersionNumbers(offerId, legacyVersions) {
   const snap = await getDocs(query(collection(db, 'offerVersions'), where('offerId', '==', offerId)));
-  let max = 0;
+  const nums = [];
   snap.forEach(d => {
     const n = parseInt(d.data().versionNo, 10);
-    if (n > max) max = n;
+    if (n > 0) nums.push(n);
   });
-  return max + 1;
+  (legacyVersions || []).forEach(v => {
+    const n = versionNoFromName(v.label);
+    if (n) nums.push(n);
+  });
+  return nums;
+}
+
+export async function nextVersionNo(offerId, legacyVersions) {
+  const nums = await usedVersionNumbers(offerId, legacyVersions);
+  return (nums.length ? Math.max(...nums) : 0) + 1;
 }
 
 // Uloží PDF + výpočet. Vrací { versionNo, fileName }.
-// Číslo verze se zjišťuje znovu až těsně před uložením, ne už při otevření
-// okna — kdyby mezitím uložil verzi někdo jiný, dostane tahle další číslo.
-export async function saveOfferVersion({ offer, blob, snapshot, source }) {
-  const versionNo = await nextVersionNo(offer.id);
-  const fileName = versionFileName(offer, versionNo);
-  const path = `offers/${offer.id}/versions/${Date.now()}_${fileName.replace(/\s+/g, '-')}`;
+// `fileName` je název z okna (člověk ho mohl přepsat). Číslo verze se bere
+// z jeho začátku (NR5 → 5); když tam NR není, dostane verze další volné číslo,
+// aby se v seznamu správně řadila.
+export async function saveOfferVersion({ offer, blob, snapshot, source, fileName: typedName }) {
+  const fileName = cleanTypedFileName(typedName) || versionFileName(offer, await nextVersionNo(offer.id, offer.pdfVersions));
+  const versionNo = versionNoFromName(fileName) || await nextVersionNo(offer.id, offer.pdfVersions);
+  const path = `offers/${offer.id}/versions/${Date.now()}_${fileName.normalize('NFD').replace(/[^a-zA-Z0-9._-]+/g, '-')}`;
   const fileRef = storageRef(storage, path);
-  await uploadBytes(fileRef, blob, { contentType: 'application/pdf' });
+  await uploadBytes(fileRef, blob, { contentType: 'application/pdf', contentDisposition: contentDispositionFor(fileName) });
   const pdfUrl = await getDownloadURL(fileRef);
 
   await addDoc(collection(db, 'offerVersions'), {
@@ -83,4 +122,31 @@ export async function saveOfferVersion({ offer, blob, snapshot, source }) {
     snapshot,
   });
   return { versionNo, fileName };
+}
+
+// Přejmenování uložené verze. Mění se JEN název a číslo — ceny, výpočet
+// a samotné PDF zůstávají beze změny. Název ke stažení se přepíše i na
+// souboru ve Storage; kdyby to selhalo, přejmenování v seznamu přesto platí.
+export async function renameOfferVersion(version, newName) {
+  const fileName = cleanTypedFileName(newName);
+  if (!fileName) throw new Error('Název nesmí být prázdný.');
+  const versionNo = versionNoFromName(fileName) || version.versionNo || null;
+  await updateDoc(doc(db, 'offerVersions', version.id), {
+    fileName,
+    versionNo,
+    renamedAt: new Date().toISOString(),
+    renamedBy: auth.currentUser?.email || '',
+  });
+  await setDownloadName(version.pdfPath, fileName);
+  return { fileName, versionNo };
+}
+
+// Nastaví název, pod kterým se PDF stáhne. Chyba se jen zapíše do konzole.
+export async function setDownloadName(path, fileName) {
+  if (!path) return;
+  try {
+    await updateMetadata(storageRef(storage, path), { contentDisposition: contentDispositionFor(fileName) });
+  } catch (err) {
+    console.error('Název souboru ve Storage se nepodařilo změnit:', err);
+  }
 }
