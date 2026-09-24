@@ -150,3 +150,23 @@ export async function setDownloadName(path, fileName) {
     console.error('Název souboru ve Storage se nepodařilo změnit:', err);
   }
 }
+
+// --- Koš ---------------------------------------------------------------------
+// Smazání verzi jen přesune do koše: záznam, ceny i PDF zůstávají a verze jde
+// obnovit. Číslo verze v koši zůstává obsazené, aby po obnovení nevznikly
+// dvě verze se stejným NR.
+export async function trashOfferVersion(version) {
+  await updateDoc(doc(db, 'offerVersions', version.id), {
+    deletedAt: new Date().toISOString(),
+    deletedBy: auth.currentUser?.email || '',
+  });
+}
+
+export async function restoreOfferVersion(version) {
+  await updateDoc(doc(db, 'offerVersions', version.id), {
+    deletedAt: null,
+    deletedBy: null,
+    restoredAt: new Date().toISOString(),
+    restoredBy: auth.currentUser?.email || '',
+  });
+}
