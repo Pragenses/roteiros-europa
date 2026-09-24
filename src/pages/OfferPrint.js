@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
-import { db, storage } from '../lib/firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db } from '../lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
+import { nextVersionNo, versionFileName, saveOfferVersion } from '../lib/offerVersions';
 import coverBase64 from '../lib/coverBase64';
 import watermarkBase64 from '../lib/watermarkBase64';
 import logoBase64 from '../lib/logoBase64';
@@ -220,11 +220,10 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const [offer, setOffer] = useState(null);
   const [loading, setLoading] = useState(true);
   const [rates, setRates] = useState(DEFAULT_RATES);
-  const [showVersionDialog, setShowVersionDialog] = useState(false);
-  const [versionLabel, setVersionLabel] = useState('');
-  const [savingVersion, setSavingVersion] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const [versionError, setVersionError] = useState('');
+  // Okno „Uložit jako verzi?" před stažením PDF nebo tiskem.
+  // null = zavřené, jinak { mode: 'pdf' | 'print', nextName, busy, error }
+  const [versionDialog, setVersionDialog] = useState(null);
 
   const fetchData = useCallback(async () => {
     const snap = await getDoc(doc(db, 'offers', offerId));
@@ -404,59 +403,185 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     return [html];
   })();
   const createdDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const versions = offer.pdfVersions || [];
-
-  const loadHtml2Pdf = () => new Promise((resolve, reject) => {
-    if (window.html2pdf) { resolve(window.html2pdf); return; }
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
-    s.onload = () => resolve(window.html2pdf);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-
-  const handleSaveVersion = async () => {
-    if (!versionLabel.trim()) { setVersionError('Digite um número/label para esta versão (ex: NR 3).'); return; }
-    setSavingVersion(true);
-    setVersionError('');
-    try {
-      const html2pdf = await loadHtml2Pdf();
-      // Find the print-only content element to render
-      const printEl = document.querySelector('.op-print-only') || document.querySelector('.op-page');
-      const opt = {
-        margin: 0,
-        filename: `${(offer.name || 'oferta').replace(/[^a-z0-9]/gi, '_')}_${versionLabel.replace(/[^a-z0-9]/gi, '_')}.pdf`,
-        image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'] }
-      };
-      const worker = html2pdf().set(opt).from(printEl);
-      const pdfBlob = await worker.outputPdf('blob');
-
-      const fileName = `offers/${offerId}/${Date.now()}_${versionLabel.replace(/[^a-z0-9]/gi, '_')}.pdf`;
-      const fileRef = storageRef(storage, fileName);
-      await uploadBytes(fileRef, pdfBlob, { contentType: 'application/pdf' });
-      const url = await getDownloadURL(fileRef);
-
-      const newVersion = {
-        label: versionLabel.trim(),
-        url,
-        path: fileName,
-        savedAt: new Date().toISOString(),
-      };
-      const newVersions = [...versions, newVersion];
-      await updateDoc(doc(db, 'offers', offerId), { pdfVersions: newVersions });
-      setOffer(prev => ({ ...prev, pdfVersions: newVersions }));
-      setShowVersionDialog(false);
-      setVersionLabel('');
-    } catch (err) {
-      console.error(err);
-      setVersionError('Erro ao salvar versão: ' + err.message);
-    }
-    setSavingVersion(false);
+  // --- Tvorba PDF -----------------------------------------------------------
+  // Data pro PDF server. Beze změny převzato z dřívějšího tlačítka
+  // „Gerar PDF (novo)" — PDF vypadá přesně stejně jako dřív.
+  const buildPdfPayload = () => {
+    const payload = {
+      name: offer.name || '',
+      startDate: offer.startDate || '',
+      endDate: offer.endDate || '',
+      destinations: offer.destinations || '',
+      focType: offer.focType || 'dbl',
+      items: (() => {
+        const enabledOnly = (offer.items || []).filter(it => it.enabled !== false && it.enabled !== 'false');
+        // Remove hotel items with no name at all (incomplete entries)
+        const withNames = enabledOnly.filter(it => it.subType !== 'hotel' || (it.name && it.name.trim()));
+        // Also remove exact duplicate hotel entries (same name+city+dates) in case
+        // the offer data itself contains accidental duplicates.
+        const seen = new Set();
+        return withNames.filter(it => {
+          if (it.subType !== 'hotel') return true;
+          const key = [it.city, it.name, it.dateFrom, it.dateTo].join('|');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      })(),
+      pricingData: hasSplit ? { splitData } : { singleData: computeAllCombinedEUR() },
+      includedLines: offer.includedText || '',
+      notIncludedLines: offer.notIncludedText || '',
+      programText: offer.programText || '',
+    };
+    return payload;
   };
 
+  const fetchPdfBlob = async () => {
+    const res = await fetch('https://tour-pragenses.com/offer_pdf_api.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPdfPayload()),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error('Erro do servidor: ' + errText.slice(0, 200));
+    }
+    return res.blob();
+  };
+
+  const downloadBlob = (blob, fileName) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  };
+
+  // --- Zmrazený výpočet pro archiv verzí ------------------------------------
+  // Konečné ceny se berou PŘÍMO z výsledků, které jdou do PDF (rows, splitData),
+  // takže verze v archivu nemůže ukazovat jiné ceny, než dostal klient.
+  // Mezisoučty (group cost/pax, marže, FOC) se dopočítají stejnými vzorci jako
+  // výše a na konci se ověří: když by se jejich součet s konečnou cenou
+  // rozcházel, verze se označí `checkMismatch` a nic se nezamlčí.
+  const buildVersionSnapshot = () => {
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const combined = computeAllCombinedEUR().rows;
+    const focPoolAll = focType === 'sngl' ? perPaxSnglAllEUR : perPaxDblAllEUR;
+    let checkMismatch = false;
+    const combinedRows = combined.map(r => {
+      const groupPerPax = groupTotalAllEUR / r.pax;
+      const costDbl = groupPerPax + perPaxDblAllEUR;
+      const marginAmount = costDbl * (margin / 100);
+      const focShare = (focPoolAll * focCountNum) / r.pax;
+      if (Math.abs(costDbl + marginAmount + focShare - r.finalDbl) > 0.005) checkMismatch = true;
+      return {
+        pax: r.pax, groupPerPax: r2(groupPerPax), perPaxDbl: r2(perPaxDblAllEUR), costDbl: r2(costDbl),
+        marginAmount: r2(marginAmount), focShare: r2(focShare), finalDbl: r2(r.finalDbl), finalSngl: r2(r.finalSngl),
+      };
+    });
+
+    // Rozdělení podle měn (CHF/GBP + EUR) — jen když nějaká taková měna v nabídce je.
+    let split = null;
+    if (activeCurrencies.length > 0) {
+      const parts = hasSplit ? splitData : [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()];
+      split = parts.map(part => {
+        const focPool = focType === 'sngl' ? part.perPaxSngl : part.perPaxDbl;
+        return {
+          cur: part.cur, perPaxDbl: r2(part.perPaxDbl), perPaxSngl: r2(part.perPaxSngl),
+          groupTotal: r2(part.groupTotal), snglSupp: r2(part.snglSupp),
+          rows: part.rows.map(r => {
+            const costDbl = part.groupTotal / r.pax + part.perPaxDbl;
+            const marginAmount = costDbl * (margin / 100);
+            const focShare = (focPool * focCountNum) / r.pax;
+            if (Math.abs(costDbl + marginAmount + focShare - r.finalDbl) > 0.005) checkMismatch = true;
+            return { pax: r.pax, marginAmount: r2(marginAmount), focShare: r2(focShare), finalDbl: r2(r.finalDbl), finalSngl: r2(r.finalSngl) };
+          }),
+        };
+      });
+    }
+
+    const hotelsOnlyDbl = paxItemsAll.filter(it => it.subType === 'hotel').reduce((sum, it) => sum + toEUR(getEffDbl(it), it.currency), 0);
+
+    // Řádky nabídky — jen to, co určuje obsah a cenu. Zálohy, poznámky,
+    // přílohy a e-maily se neukládají (jsou interní a nabídku by zbytečně nafoukly).
+    const pick = ['id', 'type', 'subType', 'name', 'city', 'dateFrom', 'dateTo', 'nights', 'currency',
+      'pricePerNightDbl', 'pricePerNightSngl', 'cityTax', 'cityTaxSngl', 'costDbl', 'costSngl', 'groupCost', 'guideOverride'];
+    const itemsSnap = activeItems.map(it => {
+      const o = {};
+      pick.forEach(k => { if (it[k] !== undefined && it[k] !== null && it[k] !== '') o[k] = it[k]; });
+      if (it.type === 'per_pax') { o.effDbl = r2(getEffDbl(it)); o.effSngl = r2(getEffSngl(it)); }
+      if (it.type === 'group') o.effGroup = r2(evalAmount(it.groupCost));
+      return o;
+    });
+
+    return {
+      margin, paxList, focCount: focCountNum, focType,
+      showSplit: !!hasSplit, // true = klient dostal ceny rozdělené podle měn
+      rates: Object.fromEntries(Object.entries(rates).map(([c, v]) => [c, Math.round(v * 1e6) / 1e6])),
+      perPaxDblEUR: r2(perPaxDblAllEUR), perPaxSnglEUR: r2(perPaxSnglAllEUR),
+      snglSupplementEUR: r2(perPaxSnglAllEUR - perPaxDblAllEUR), groupTotalEUR: r2(groupTotalAllEUR),
+      hotelsOnlyDblEUR: r2(hotelsOnlyDbl), othersDblEUR: r2(perPaxDblAllEUR - hotelsOnlyDbl),
+      combinedRows, split, items: itemsSnap,
+      startDate: offer.startDate || '', endDate: offer.endDate || '', destinations: offer.destinations || '',
+      includedText: offer.includedText || '', notIncludedText: offer.notIncludedText || '',
+      checkMismatch,
+    };
+  };
+
+  // --- Okno „Uložit jako verzi?" --------------------------------------------
+  const openVersionDialog = async (mode) => {
+    setVersionDialog({ mode, nextName: '', busy: false, error: '' });
+    try {
+      const n = await nextVersionNo(offerId);
+      setVersionDialog(d => d && ({ ...d, nextName: versionFileName(offer, n) }));
+    } catch (err) {
+      console.error(err);
+      setVersionDialog(d => d && ({ ...d, nextName: '?' }));
+    }
+  };
+
+  // Stáhne PDF; při save=true ho zároveň uloží jako verzi (ten samý soubor).
+  const runPdfDownload = async (save) => {
+    setDownloadingPdf(true);
+    try {
+      const blob = await fetchPdfBlob();
+      if (save) {
+        setVersionDialog(d => d && ({ ...d, busy: true, error: '' }));
+        const { fileName } = await saveOfferVersion({ offer, blob, snapshot: buildVersionSnapshot(), source: 'pdf' });
+        downloadBlob(blob, fileName);
+      } else {
+        downloadBlob(blob, (offer.name || 'oferta').replace(/[^a-zA-Z0-9]/g, '_') + '.pdf');
+      }
+      setVersionDialog(null);
+    } catch (err) {
+      console.error(err);
+      if (save) setVersionDialog(d => d && ({ ...d, busy: false, error: 'Uložení se nepovedlo: ' + err.message + ' — nic se neuložilo ani nestáhlo.' }));
+      else { setVersionDialog(null); alert('Erro ao gerar PDF: ' + err.message); }
+    }
+    setDownloadingPdf(false);
+  };
+
+  // Tisk z prohlížeče aplikaci soubor nepředá. Při uložení se proto do archivu
+  // dá PDF z hnědého tlačítka — ceny a služby jsou totožné, liší se jen vzhled.
+  const runPrint = async (save) => {
+    if (save) {
+      setVersionDialog(d => d && ({ ...d, busy: true, error: '' }));
+      try {
+        const blob = await fetchPdfBlob();
+        await saveOfferVersion({ offer, blob, snapshot: buildVersionSnapshot(), source: 'print' });
+      } catch (err) {
+        console.error(err);
+        setVersionDialog(d => d && ({ ...d, busy: false, error: 'Uložení se nepovedlo: ' + err.message + ' — nic se neuložilo. Tisk můžete spustit i bez uložení.' }));
+        return;
+      }
+    }
+    setVersionDialog(null);
+    // Chvilka na zavření okna, aby se nevytisklo s ním.
+    setTimeout(() => window.print(), 150);
+  };
 
   const includedLines = (offer.includedText || '').split('\n').filter(l => l.trim());
   const notIncludedLines = (offer.notIncludedText || 'Voos internacionais e taxas de embarque\nBebidas e refeições não mencionadas\nGorjetas e despesas de caráter pessoal\nMaleteiros\nSeguro viagem').split('\n').filter(l => l.trim());
@@ -582,92 +707,52 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
       <div className="op-no-print" style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', padding: '16px', background: '#f7f6f3', flexWrap: 'wrap' }}>
         {!isPublic && <button onClick={() => navigate('offer-detail', { offerId })} style={{ padding: '8px 16px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit' }}>← Voltar</button>}
-        <button onClick={() => window.print()} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir</button>
-        <button onClick={async () => {
-          setDownloadingPdf(true);
-          try {
-            const payload = {
-              name: offer.name || '',
-              startDate: offer.startDate || '',
-              endDate: offer.endDate || '',
-              destinations: offer.destinations || '',
-              focType: offer.focType || 'dbl',
-              items: (() => {
-                const enabledOnly = (offer.items || []).filter(it => it.enabled !== false && it.enabled !== 'false');
-                // Remove hotel items with no name at all (incomplete entries)
-                const withNames = enabledOnly.filter(it => it.subType !== 'hotel' || (it.name && it.name.trim()));
-                // Also remove exact duplicate hotel entries (same name+city+dates) in case
-                // the offer data itself contains accidental duplicates.
-                const seen = new Set();
-                return withNames.filter(it => {
-                  if (it.subType !== 'hotel') return true;
-                  const key = [it.city, it.name, it.dateFrom, it.dateTo].join('|');
-                  if (seen.has(key)) return false;
-                  seen.add(key);
-                  return true;
-                });
-              })(),
-              pricingData: hasSplit ? { splitData } : { singleData: computeAllCombinedEUR() },
-              includedLines: offer.includedText || '',
-              notIncludedLines: offer.notIncludedText || '',
-              programText: offer.programText || '',
-            };
-            const res = await fetch('https://tour-pragenses.com/offer_pdf_api.php', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-            if (!res.ok) {
-              const errText = await res.text();
-              throw new Error('Erro do servidor: ' + errText.slice(0, 200));
-            }
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = (offer.name || 'oferta').replace(/[^a-zA-Z0-9]/g, '_') + '.pdf';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-          } catch (err) {
-            alert('Erro ao gerar PDF: ' + err.message);
-          }
-          setDownloadingPdf(false);
+        <button onClick={() => { if (isPublic) window.print(); else openVersionDialog('print'); }} style={{ padding: '8px 16px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>🖨️ Imprimir</button>
+        <button onClick={() => {
+          // Veřejný odkaz (klient) žádné verze neukládá — rovnou stáhne.
+          if (isPublic) { runPdfDownload(false); return; }
+          openVersionDialog('pdf');
         }} disabled={downloadingPdf} style={{ padding: '8px 16px', background: '#854f0b', color: '#fff', border: 'none', borderRadius: 7, cursor: downloadingPdf ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
           {downloadingPdf ? '⏳ Gerando...' : '⬇ Gerar PDF (novo)'}
         </button>
-        {!isPublic && <button onClick={() => { setVersionLabel(''); setVersionError(''); setShowVersionDialog(true); }} style={{ padding: '8px 16px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>📌 Salvar versão (NR)</button>}
         {!isPublic && createdDate && <span style={{ fontSize: 12, color: colors.muted }}>Criado em: {createdDate}</span>}
       </div>
 
-      {!isPublic && versions.length > 0 && (
-        <div className="op-no-print" style={{ margin: '0 16px 16px', padding: '14px 16px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>📁 Versões salvas</div>
-          {versions.slice().reverse().map((v, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: i < versions.length - 1 ? `1px solid ${colors.border}` : 'none' }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{v.label}</span>
-              <span style={{ fontSize: 12, color: colors.muted }}>{new Date(v.savedAt).toLocaleString('pt-BR')}</span>
-              <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', fontSize: 12, color: colors.primary, textDecoration: 'underline' }}>📥 Abrir / Baixar</a>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!isPublic && showVersionDialog && (
+      {!isPublic && versionDialog && (
         <div className="op-no-print" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: '2rem', width: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>📌 Salvar esta versão do PDF</div>
-            <div style={{ fontSize: 13, color: colors.muted, marginBottom: 16 }}>Digite o número/identificação desta proposta (ex: NR 3, v2, Final). O PDF exato será salvo e poderá ser reaberto depois.</div>
-            <input type="text" value={versionLabel} onChange={e => { setVersionLabel(e.target.value); setVersionError(''); }}
-              placeholder="ex: NR 3" autoFocus
-              style={{ width: '100%', padding: '10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 15, boxSizing: 'border-box', marginBottom: 8, fontFamily: 'inherit' }} />
-            {versionError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{versionError}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={handleSaveVersion} disabled={savingVersion} style={{ flex: 1, padding: '10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600, opacity: savingVersion ? 0.6 : 1 }}>
-                {savingVersion ? 'Salvando...' : 'Salvar'}
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1.75rem', width: 400, maxWidth: '92vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', fontFamily: 'inherit' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>📁 Uložit jako verzi nabídky?</div>
+            <div style={{ fontSize: 13, color: colors.muted, marginBottom: 6 }}>
+              Verze se uloží k nabídce i s cenami a půjde se k ní kdykoliv vrátit.
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, margin: '10px 0 14px', padding: '8px 10px', background: '#f7f6f3', borderRadius: 7 }}>
+              {versionDialog.nextName || 'Zjišťuji číslo verze…'}
+            </div>
+            {versionDialog.mode === 'print' && (
+              <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>
+                Do archivu se uloží PDF z tlačítka „Gerar PDF" — ceny a služby jsou stejné jako v tisku.
+              </div>
+            )}
+            {versionDialog.error && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 10 }}>{versionDialog.error}</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                disabled={versionDialog.busy || !versionDialog.nextName}
+                onClick={() => versionDialog.mode === 'pdf' ? runPdfDownload(true) : runPrint(true)}
+                style={{ padding: '10px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600, opacity: (versionDialog.busy || !versionDialog.nextName) ? 0.6 : 1 }}>
+                {versionDialog.busy ? 'Ukládám…' : (versionDialog.mode === 'pdf' ? 'Uložit verzi a stáhnout' : 'Uložit verzi a tisknout')}
               </button>
-              <button onClick={() => setShowVersionDialog(false)} disabled={savingVersion} style={{ flex: 1, padding: '10px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>Cancelar</button>
+              <button
+                disabled={versionDialog.busy}
+                onClick={() => versionDialog.mode === 'pdf' ? runPdfDownload(false) : runPrint(false)}
+                style={{ padding: '10px', background: '#fff', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, cursor: 'pointer' }}>
+                {versionDialog.mode === 'pdf' ? 'Jen stáhnout (neukládat)' : 'Jen tisknout (neukládat)'}
+              </button>
+              <button
+                disabled={versionDialog.busy}
+                onClick={() => setVersionDialog(null)}
+                style={{ padding: '8px', background: 'transparent', color: colors.muted, border: 'none', fontSize: 13, cursor: 'pointer' }}>
+                Zrušit
+              </button>
             </div>
           </div>
         </div>
