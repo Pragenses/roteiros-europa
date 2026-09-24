@@ -20,15 +20,29 @@ import { db, storage, auth } from './firebase';
 import { collection, getDocs, query, where, addDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-const safe = (s) => String(s || '')
+// Pro název souboru: bez háčků a čárek, bez znaků, které v názvu souboru
+// dělají potíže (/ \ : * ? " < > | a podtržítko, které odděluje části).
+// Mezery zůstávají, aby se název dobře četl.
+const clean = (s) => String(s || '')
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  .replace(/[^a-zA-Z0-9-]+/g, '_')
-  .replace(/^_+|_+$/g, '');
+  .replace(/[\\/:*?"<>|_\u0000-\u001f]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
 
-// AN-27001_v3.pdf, nebo u nabídky bez čísla NAZEV_SKUPINY_v3.pdf
+// NR1_BALCAS SOCAL_AN-27001_2027.pdf
+//   NR1          = pořadí verze
+//   BALCAS SOCAL = název skupiny (nabídky)
+//   AN-27001     = číslo nabídky (když ještě není, vynechá se)
+//   2027         = rok, kdy skupina jede (když chybí termín, vynechá se)
 export function versionFileName(offer, versionNo) {
-  const base = safe(offer.offerNumber) || safe(offer.name) || 'oferta';
-  return `${base}_v${versionNo}.pdf`;
+  const m = /^(\d{4})-\d{2}-\d{2}/.exec(String(offer.startDate || ''));
+  const parts = [
+    `NR${versionNo}`,
+    clean(offer.name) || 'oferta',
+    clean(offer.offerNumber),
+    m ? m[1] : '',
+  ].filter(Boolean);
+  return parts.join('_') + '.pdf';
 }
 
 export async function nextVersionNo(offerId) {
@@ -47,7 +61,7 @@ export async function nextVersionNo(offerId) {
 export async function saveOfferVersion({ offer, blob, snapshot, source }) {
   const versionNo = await nextVersionNo(offer.id);
   const fileName = versionFileName(offer, versionNo);
-  const path = `offers/${offer.id}/versions/${Date.now()}_${fileName}`;
+  const path = `offers/${offer.id}/versions/${Date.now()}_${fileName.replace(/\s+/g, '-')}`;
   const fileRef = storageRef(storage, path);
   await uploadBytes(fileRef, blob, { contentType: 'application/pdf' });
   const pdfUrl = await getDownloadURL(fileRef);
