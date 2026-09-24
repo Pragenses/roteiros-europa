@@ -5,6 +5,7 @@ import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject }
 import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
 import { parseServiceText, parseServiceDocument } from '../lib/ai';
 import { ensureOfferNumber } from '../lib/offerNumber';
+import OfferVersions from '../components/OfferVersions';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -3570,6 +3571,9 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           </div>
         )}
       </div>
+
+      {/* 📁 Verze nabídky — uložené verze pro klienta, jen pro čtení. */}
+      <OfferVersions offerId={offerId} legacyVersions={offer?.pdfVersions} colors={colors} />
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Programa da viagem (PT-BR)</div>
