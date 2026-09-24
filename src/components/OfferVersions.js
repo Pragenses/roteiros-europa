@@ -14,11 +14,15 @@
 // ⚖️ Porovnat: zaškrtnou se dvě verze (nebo verze a „Aktuální stav") a ukáže
 // se, jak se změnily ceny, nastavení, kurzy a služby. Logika je v
 // src/lib/offerCompare.js.
+//
+// 🗑 Mazání (jen Helena a Filip = role 'owner'): verze se přesune do koše po
+// dvojím potvrzení (ve druhém kroku se opisuje číslo verze). Z koše jde
+// obnovit — nic se nemaže natrvalo.
 
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { renameOfferVersion, versionNoFromName, cleanTypedFileName, setDownloadName } from '../lib/offerVersions';
+import { renameOfferVersion, versionNoFromName, cleanTypedFileName, setDownloadName, trashOfferVersion, restoreOfferVersion } from '../lib/offerVersions';
 import { compareSnapshots } from '../lib/offerCompare';
 
 const CUR_FLAG = { EUR: '🇪🇺', CHF: '🇨🇭', GBP: '🇬🇧' };
@@ -340,6 +344,57 @@ function ComparePanel({ left, right, onClose, colors }) {
   );
 }
 
+// Dvoukrokové potvrzení přesunu do koše.
+function DeleteDialog({ name, when, price, onConfirm, onCancel, colors }) {
+  const [step, setStep] = useState(1);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const no = versionNoFromName(name);
+  const token = no ? `NR${no}` : 'SMAZAT';
+  const ok = typed.replace(/\s+/g, '').toUpperCase() === token;
+  const go = async () => {
+    if (!ok) return;
+    setBusy(true); setErr('');
+    try { await onConfirm(); }
+    catch (e) { console.error(e); setErr('Přesun do koše se nepovedl: ' + e.message); setBusy(false); }
+  };
+  const btn = { padding: '10px', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' };
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 420, maxWidth: '92vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>🗑 Přesunout verzi do koše?</div>
+        <div style={{ fontSize: 14, fontWeight: 700, padding: '8px 10px', background: '#f7f6f3', borderRadius: 7, marginBottom: 6, wordBreak: 'break-word' }}>{name}</div>
+        <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>{[when, price].filter(Boolean).join(' · ')}</div>
+        {step === 1 ? (
+          <>
+            <div style={{ fontSize: 13, marginBottom: 14 }}>Verze zmizí ze seznamu. PDF i uložené ceny zůstanou v koši a verzi půjde obnovit.</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button onClick={() => setStep(2)} style={{ ...btn, background: '#dc2626', color: '#fff', fontWeight: 600 }}>Ano, pokračovat</button>
+              <button onClick={onCancel} style={{ ...btn, background: '#fff', border: `1px solid ${colors.border}` }}>Ne, nechat být</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 13, marginBottom: 6 }}>Pro potvrzení napište <b>{token}</b>:</div>
+            <input type="text" value={typed} autoFocus disabled={busy}
+              onChange={e => { setTyped(e.target.value); setErr(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') go(); if (e.key === 'Escape') onCancel(); }}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', fontSize: 14, border: `1px solid ${colors.border}`, borderRadius: 7, marginBottom: 10, fontFamily: 'inherit' }} />
+            {err && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{err}</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button onClick={go} disabled={!ok || busy} style={{ ...btn, background: '#dc2626', color: '#fff', fontWeight: 600, opacity: (!ok || busy) ? 0.5 : 1, cursor: ok ? 'pointer' : 'default' }}>
+                {busy ? 'Přesouvám…' : 'Přesunout do koše'}
+              </button>
+              <button onClick={onCancel} disabled={busy} style={{ ...btn, background: '#fff', border: `1px solid ${colors.border}` }}>Zrušit</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Políčko pro přejmenování jedné verze.
 function RenameBox({ initial, usedOthers, onSave, onCancel, colors }) {
   const [val, setVal] = useState(initial || '');
@@ -382,7 +437,7 @@ function RenameBox({ initial, usedOthers, onSave, onCancel, colors }) {
   );
 }
 
-export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy, getCurrentSnapshot, colors }) {
+export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy, onTrashLegacy, canDelete, getCurrentSnapshot, colors }) {
   const [versions, setVersions] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
@@ -391,6 +446,8 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
   // Porovnání: vybrané položky (id verze nebo 'current') a otevřený výsledek.
   const [picked, setPicked] = useState([]);
   const [compare, setCompare] = useState(null); // { left, right }
+  const [toDelete, setToDelete] = useState(null); // { kind: 'v'|'l', v }
+  const [showTrash, setShowTrash] = useState(false);
 
   useEffect(() => {
     if (!offerId) return undefined;
@@ -410,12 +467,18 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
     return unsub;
   }, [offerId]);
 
-  // Starší verze s původním pořadím (index) — kvůli přejmenování.
-  const legacy = (legacyVersions || []).map((v, idx) => ({ ...v, idx })).reverse();
+  // Verze v koši se v seznamu neukazují (jen v sekci Koš).
+  const allVersions = versions;
+  const trashed = allVersions.filter(v => v.deletedAt);
+  const active = allVersions.filter(v => !v.deletedAt);
+  // Starší verze s původním pořadím (index) — kvůli přejmenování a koši.
+  const legacyAll = (legacyVersions || []).map((v, idx) => ({ ...v, idx })).reverse();
+  const legacy = legacyAll.filter(v => !v.deletedAt);
+  const legacyTrashed = legacyAll.filter(v => v.deletedAt);
   // Čísla verzí použitá u nabídky, bez právě upravované verze.
   const usedExcept = (key) => [
     ...versions.filter(v => 'v:' + v.id !== key).map(v => parseInt(v.versionNo, 10)).filter(n => n > 0),
-    ...legacy.filter(v => 'l:' + v.idx !== key).map(v => versionNoFromName(v.label)).filter(Boolean),
+    ...legacyAll.filter(v => 'l:' + v.idx !== key).map(v => versionNoFromName(v.label)).filter(Boolean),
   ];
   const pencil = { padding: '2px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', lineHeight: 1.2 };
 
@@ -442,7 +505,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
       style={{ cursor: 'pointer', width: 15, height: 15, margin: 0 }}
     />
   );
-  const total = versions.length + legacy.length;
+  const total = active.length + legacy.length;
   const link = { fontSize: 12, color: colors.primary, textDecoration: 'underline', whiteSpace: 'nowrap' };
 
   return (
@@ -451,7 +514,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>
           📁 Verze nabídky {total > 0 && <span style={{ fontWeight: 400, color: colors.muted }}>({total})</span>}
         </div>
-        {versions.length > 0 && getCurrentSnapshot && (
+        {active.length > 0 && getCurrentSnapshot && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 12, color: colors.muted }}>
               {picked.length === 2 ? 'Vybráno 2' : `Zaškrtněte 2 k porovnání (${picked.length}/2)`}
@@ -466,7 +529,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
         )}
       </div>
 
-      {versions.length > 0 && getCurrentSnapshot && (
+      {active.length > 0 && getCurrentSnapshot && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', borderBottom: `1px dashed ${colors.border}` }}>
           {checkbox('current')}
           <span style={{ fontSize: 13, fontWeight: 600 }}>Aktuální stav nabídky</span>
@@ -483,7 +546,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
         </div>
       )}
 
-      {versions.map((v, i) => {
+      {active.map((v, i) => {
         const open = openId === v.id;
         return (
           <div key={v.id} style={{ borderBottom: `1px solid ${colors.border}`, background: i === 0 ? '#F4F8EE' : 'transparent', borderRadius: i === 0 ? 6 : 0 }}>
@@ -501,6 +564,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
               <span style={{ fontSize: 12, fontWeight: 600 }}>{priceSummary(v.snapshot)}</span>
               <button title="Přejmenovat" onClick={e => { e.stopPropagation(); setEditKey('v:' + v.id); }} style={{ ...pencil, marginLeft: 'auto' }}>✏️</button>
               <a href={v.pdfUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={link}>📥 Stáhnout</a>
+              {canDelete && <button title="Přesunout do koše" onClick={e => { e.stopPropagation(); setToDelete({ kind: 'v', v }); }} style={pencil}>🗑</button>}
             </div>
             {editKey === 'v:' + v.id && (
               <RenameBox
@@ -526,6 +590,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
                 <span style={{ fontSize: 12, color: colors.muted }}>{fmtWhen(v.savedAt)}</span>
                 {onRenameLegacy && <button title="Přejmenovat" onClick={() => setEditKey('l:' + v.idx)} style={{ ...pencil, marginLeft: 'auto' }}>✏️</button>}
                 <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ ...link, marginLeft: onRenameLegacy ? 0 : 'auto' }}>📥 Stáhnout</a>
+                {canDelete && onTrashLegacy && <button title="Přesunout do koše" onClick={() => setToDelete({ kind: 'l', v })} style={pencil}>🗑</button>}
               </div>
               {editKey === 'l:' + v.idx && (
                 <RenameBox
@@ -544,6 +609,57 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
             </div>
           ))}
         </div>
+      )}
+
+      {canDelete && (trashed.length + legacyTrashed.length) > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <button onClick={() => setShowTrash(!showTrash)} style={{ padding: '4px 10px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.muted, fontFamily: 'inherit' }}>
+            {showTrash ? '▾' : '▸'} 🗑 Koš ({trashed.length + legacyTrashed.length})
+          </button>
+          {showTrash && (
+            <div style={{ marginTop: 6, padding: '4px 8px', background: '#F7F6F3', borderRadius: 8 }}>
+              {[...trashed.map(v => ({ kind: 'v', v, name: v.fileName || `v${v.versionNo}`, url: v.pdfUrl, at: v.deletedAt, by: v.deletedBy })),
+                ...legacyTrashed.map(v => ({ kind: 'l', v, name: v.label, url: v.url, at: v.deletedAt, by: v.deletedBy }))]
+                .sort((x, y) => String(y.at || '').localeCompare(String(x.at || '')))
+                .map(t => (
+                  <div key={t.kind + (t.kind === 'v' ? t.v.id : t.v.idx)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 0', borderBottom: `1px solid ${colors.border}`, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, color: colors.muted, textDecoration: 'line-through' }}>{t.name}</span>
+                    <span style={{ fontSize: 12, color: colors.muted }}>smazáno {fmtWhen(t.at)}{t.by ? ' · ' + who(t.by) : ''}</span>
+                    <a href={t.url} target="_blank" rel="noopener noreferrer" style={{ ...link, marginLeft: 'auto' }}>📥 Stáhnout</a>
+                    <button onClick={async () => {
+                      try {
+                        if (t.kind === 'v') await restoreOfferVersion(t.v);
+                        else { const ok = await onTrashLegacy(t.v.idx, false); if (ok === false) throw new Error('nabídku právě upravuje někdo jiný.'); }
+                      } catch (e) { console.error(e); alert('Obnovení se nepovedlo: ' + e.message); }
+                    }} style={{ padding: '3px 10px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      ↩ Obnovit
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {toDelete && (
+        <DeleteDialog
+          name={toDelete.kind === 'v' ? (toDelete.v.fileName || `v${toDelete.v.versionNo}`) : toDelete.v.label}
+          when={fmtWhen(toDelete.kind === 'v' ? toDelete.v.createdAt : toDelete.v.savedAt)}
+          price={toDelete.kind === 'v' ? priceSummary(toDelete.v.snapshot) : ''}
+          colors={colors}
+          onCancel={() => setToDelete(null)}
+          onConfirm={async () => {
+            if (toDelete.kind === 'v') {
+              await trashOfferVersion(toDelete.v);
+              setPicked(p => p.filter(k => k !== toDelete.v.id));
+              if (openId === toDelete.v.id) setOpenId(null);
+            } else {
+              const ok = await onTrashLegacy(toDelete.v.idx, true);
+              if (ok === false) throw new Error('nabídku právě upravuje někdo jiný.');
+            }
+            setToDelete(null);
+          }}
+        />
       )}
     </div>
   );
