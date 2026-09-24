@@ -7,10 +7,14 @@
 // Starší verze uložené dřívějším zeleným tlačítkem („Salvar versão (NR)")
 // leží v nabídce v poli `pdfVersions` a mají jen PDF, bez výpočtu — ukazují
 // se proto jen ke stažení.
+//
+// Název verze jde tužkou ✏️ přejmenovat (třeba když klient dostal NR1–NR4 mimo
+// systém). Mění se jen název a číslo verze, nikdy ceny ani obsah.
 
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { renameOfferVersion, versionNoFromName, cleanTypedFileName, setDownloadName } from '../lib/offerVersions';
 
 const CUR_FLAG = { EUR: '🇪🇺', CHF: '🇨🇭', GBP: '🇬🇧' };
 const SUBTYPE_LABEL = { hotel: 'Hotel', ticket: 'Vstupenka', guide_hotel: 'Hotel průvodce', driver_hotel: 'Hotel řidiče' };
@@ -210,11 +214,54 @@ function VersionPreview({ v, colors }) {
   );
 }
 
-export default function OfferVersions({ offerId, legacyVersions, colors }) {
+// Políčko pro přejmenování jedné verze.
+function RenameBox({ initial, usedOthers, onSave, onCancel, colors }) {
+  const [val, setVal] = useState(initial || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [dupOk, setDupOk] = useState(false);
+  const no = versionNoFromName(val);
+  const dup = no && usedOthers.includes(no);
+
+  const save = async () => {
+    const name = cleanTypedFileName(val);
+    if (!name) { setErr('Název nesmí být prázdný.'); return; }
+    if (dup && !dupOk) { setDupOk(true); setErr(`NR${no} už u této nabídky existuje. Změňte číslo, nebo klikněte znovu a uloží se i tak.`); return; }
+    setBusy(true); setErr('');
+    try { await onSave(name); }
+    catch (e) { console.error(e); setErr('Přejmenování se nepovedlo: ' + e.message); setBusy(false); }
+  };
+
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ padding: '6px 8px 10px 34px' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          type="text" value={val} autoFocus disabled={busy}
+          onChange={e => { setVal(e.target.value); setErr(''); setDupOk(false); }}
+          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel(); }}
+          style={{ flex: '1 1 320px', padding: '6px 8px', fontSize: 13, fontWeight: 600, border: `1px solid ${colors.border}`, borderRadius: 6, fontFamily: 'inherit' }}
+        />
+        <button onClick={save} disabled={busy} style={{ padding: '6px 12px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', opacity: busy ? 0.6 : 1 }}>
+          {busy ? 'Ukládám…' : 'Uložit název'}
+        </button>
+        <button onClick={onCancel} disabled={busy} style={{ padding: '6px 10px', background: 'transparent', color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+          Zrušit
+        </button>
+      </div>
+      {err
+        ? <div style={{ fontSize: 12, color: dupOk ? '#854f0b' : '#dc2626', marginTop: 4 }}>{err}</div>
+        : dup ? <div style={{ fontSize: 12, color: '#854f0b', marginTop: 4 }}>⚠ NR{no} už u této nabídky existuje.</div>
+        : <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>Mění se jen název a číslo verze. Ceny a obsah verze zůstávají beze změny.</div>}
+    </div>
+  );
+}
+
+export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy, colors }) {
   const [versions, setVersions] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [openId, setOpenId] = useState(null);
+  const [editKey, setEditKey] = useState(null); // 'v:<id>' nebo 'l:<index>'
 
   useEffect(() => {
     if (!offerId) return undefined;
@@ -222,7 +269,7 @@ export default function OfferVersions({ offerId, legacyVersions, colors }) {
     const unsub = onSnapshot(q, snap => {
       const list = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-      list.sort((a, b) => (b.versionNo || 0) - (a.versionNo || 0));
+      list.sort((a, b) => ((b.versionNo || 0) - (a.versionNo || 0)) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
       setVersions(list);
       setLoaded(true);
       setError('');
@@ -234,7 +281,14 @@ export default function OfferVersions({ offerId, legacyVersions, colors }) {
     return unsub;
   }, [offerId]);
 
-  const legacy = (legacyVersions || []).slice().reverse();
+  // Starší verze s původním pořadím (index) — kvůli přejmenování.
+  const legacy = (legacyVersions || []).map((v, idx) => ({ ...v, idx })).reverse();
+  // Čísla verzí použitá u nabídky, bez právě upravované verze.
+  const usedExcept = (key) => [
+    ...versions.filter(v => 'v:' + v.id !== key).map(v => parseInt(v.versionNo, 10)).filter(n => n > 0),
+    ...legacy.filter(v => 'l:' + v.idx !== key).map(v => versionNoFromName(v.label)).filter(Boolean),
+  ];
+  const pencil = { padding: '2px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', lineHeight: 1.2 };
   const total = versions.length + legacy.length;
   const link = { fontSize: 12, color: colors.primary, textDecoration: 'underline', whiteSpace: 'nowrap' };
 
@@ -266,8 +320,18 @@ export default function OfferVersions({ offerId, legacyVersions, colors }) {
               <span style={{ fontSize: 12, color: colors.muted }}>{who(v.createdBy)}</span>
               {v.source === 'print' && <span style={{ fontSize: 11, color: colors.muted }}>(tisk)</span>}
               <span style={{ fontSize: 12, fontWeight: 600 }}>{priceSummary(v.snapshot)}</span>
-              <a href={v.pdfUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ ...link, marginLeft: 'auto' }}>📥 Stáhnout</a>
+              <button title="Přejmenovat" onClick={e => { e.stopPropagation(); setEditKey('v:' + v.id); }} style={{ ...pencil, marginLeft: 'auto' }}>✏️</button>
+              <a href={v.pdfUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={link}>📥 Stáhnout</a>
             </div>
+            {editKey === 'v:' + v.id && (
+              <RenameBox
+                initial={v.fileName}
+                usedOthers={usedExcept('v:' + v.id)}
+                colors={colors}
+                onCancel={() => setEditKey(null)}
+                onSave={async (name) => { await renameOfferVersion(v, name); setEditKey(null); }}
+              />
+            )}
             {open && <VersionPreview v={v} colors={colors} />}
           </div>
         );
@@ -276,11 +340,28 @@ export default function OfferVersions({ offerId, legacyVersions, colors }) {
       {legacy.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Starší verze (jen PDF, bez náhledu výpočtu)</div>
-          {legacy.map((v, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', borderBottom: `1px solid ${colors.border}` }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{v.label}</span>
-              <span style={{ fontSize: 12, color: colors.muted }}>{fmtWhen(v.savedAt)}</span>
-              <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ ...link, marginLeft: 'auto' }}>📥 Stáhnout</a>
+          {legacy.map(v => (
+            <div key={v.idx} style={{ borderBottom: `1px solid ${colors.border}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px' }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{v.label}</span>
+                <span style={{ fontSize: 12, color: colors.muted }}>{fmtWhen(v.savedAt)}</span>
+                {onRenameLegacy && <button title="Přejmenovat" onClick={() => setEditKey('l:' + v.idx)} style={{ ...pencil, marginLeft: 'auto' }}>✏️</button>}
+                <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ ...link, marginLeft: onRenameLegacy ? 0 : 'auto' }}>📥 Stáhnout</a>
+              </div>
+              {editKey === 'l:' + v.idx && (
+                <RenameBox
+                  initial={v.label}
+                  usedOthers={usedExcept('l:' + v.idx)}
+                  colors={colors}
+                  onCancel={() => setEditKey(null)}
+                  onSave={async (name) => {
+                    const ok = await onRenameLegacy(v.idx, name);
+                    if (ok === false) throw new Error('nabídku právě upravuje někdo jiný, nebo se nepodařilo uložit.');
+                    await setDownloadName(v.path, name);
+                    setEditKey(null);
+                  }}
+                />
+              )}
             </div>
           ))}
         </div>
