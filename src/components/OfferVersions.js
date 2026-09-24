@@ -10,11 +10,16 @@
 //
 // Název verze jde tužkou ✏️ přejmenovat (třeba když klient dostal NR1–NR4 mimo
 // systém). Mění se jen název a číslo verze, nikdy ceny ani obsah.
+//
+// ⚖️ Porovnat: zaškrtnou se dvě verze (nebo verze a „Aktuální stav") a ukáže
+// se, jak se změnily ceny, nastavení, kurzy a služby. Logika je v
+// src/lib/offerCompare.js.
 
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { renameOfferVersion, versionNoFromName, cleanTypedFileName, setDownloadName } from '../lib/offerVersions';
+import { compareSnapshots } from '../lib/offerCompare';
 
 const CUR_FLAG = { EUR: '🇪🇺', CHF: '🇨🇭', GBP: '🇬🇧' };
 const SUBTYPE_LABEL = { hotel: 'Hotel', ticket: 'Vstupenka', guide_hotel: 'Hotel průvodce', driver_hotel: 'Hotel řidiče' };
@@ -214,6 +219,127 @@ function VersionPreview({ v, colors }) {
   );
 }
 
+// --- Porovnání -------------------------------------------------------------
+const diffColor = (d) => (d > 0 ? '#dc2626' : d < 0 ? '#15803d' : '#777');
+const fmtDiff = (d) => (d === null ? '—' : d === 0 ? '0.00' : (d > 0 ? '+' : '') + n2(d));
+
+function CompareRowsTable({ rows, cur, colors }) {
+  const c = { padding: '5px 8px', textAlign: 'right', borderBottom: `1px solid ${colors.border}` };
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <thead>
+        <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
+          <th style={{ textAlign: 'left', padding: '5px 8px' }}>Pax</th>
+          <th style={{ ...c, borderBottom: 'none' }}>DBL starší</th>
+          <th style={{ ...c, borderBottom: 'none' }}>DBL novější</th>
+          <th style={{ ...c, borderBottom: 'none' }}>Rozdíl</th>
+          <th style={{ ...c, borderBottom: 'none' }}>SNGL starší</th>
+          <th style={{ ...c, borderBottom: 'none' }}>SNGL novější</th>
+          <th style={{ ...c, borderBottom: 'none' }}>Rozdíl</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.pax}>
+            <td style={{ ...c, textAlign: 'left', fontWeight: 600 }}>{r.pax}</td>
+            <td style={c}>{r.dblA === null ? '—' : n2(r.dblA)}</td>
+            <td style={{ ...c, fontWeight: 700 }}>{r.dblB === null ? '—' : n2(r.dblB)}</td>
+            <td style={{ ...c, fontWeight: 700, color: diffColor(r.dblDiff) }}>{fmtDiff(r.dblDiff)}</td>
+            <td style={c}>{r.snglA === null ? '—' : n2(r.snglA)}</td>
+            <td style={{ ...c, fontWeight: 700 }}>{r.snglB === null ? '—' : n2(r.snglB)}</td>
+            <td style={{ ...c, fontWeight: 700, color: diffColor(r.snglDiff) }}>{fmtDiff(r.snglDiff)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const itemTitle = (it) => [SUBTYPE_LABEL[it.subType] || (it.type === 'group' ? 'Skupinová služba' : 'Služba na osobu'), it.city, it.name].filter(Boolean).join(' · ');
+
+function ComparePanel({ left, right, onClose, colors }) {
+  const res = compareSnapshots(left.snapshot, right.snapshot);
+  const box = { marginTop: 14 };
+  const h = { fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 6 };
+  const nothing = !res.anyPriceChange && !res.settings.length && !res.rates.length && !res.added.length && !res.removed.length && !res.changed.length;
+  return (
+    <div style={{ border: `2px solid ${colors.primary}`, borderRadius: 10, padding: '12px 14px', margin: '4px 0 14px', background: '#FBFBF9', overflowX: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>⚖️ {left.label}</span>
+        <span style={{ color: colors.muted }}>→</span>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>{right.label}</span>
+        <button onClick={onClose} style={{ marginLeft: 'auto', padding: '3px 10px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>✕ Zavřít</button>
+      </div>
+      <div style={{ fontSize: 11, color: colors.muted, marginTop: 2 }}>Vlevo starší, vpravo novější. Červeně zdražení, zeleně zlevnění.</div>
+
+      {nothing && <div style={{ ...box, fontSize: 13 }}>Mezi těmito dvěma verzemi není žádný rozdíl.</div>}
+
+      {res.onlyRateEffect && (
+        <div style={{ ...box, fontSize: 13, padding: '8px 10px', background: '#FFF7E6', borderRadius: 7, color: '#854f0b' }}>
+          Ceny v EUR se liší <b>jen kvůli změně kurzu</b> — služby, jejich ceny ani nastavení se nezměnily.
+        </div>
+      )}
+
+      {(res.settings.length > 0 || res.rates.length > 0) && (
+        <div style={box}>
+          <div style={h}>Nastavení a kurzy</div>
+          {res.settings.map(sd => (
+            <div key={sd.label} style={{ fontSize: 12, marginBottom: 2 }}>{sd.label}: <s style={{ color: colors.muted }}>{sd.a || '—'}</s> → <b>{sd.b || '—'}</b></div>
+          ))}
+          {res.rates.map(r => (
+            <div key={r.cur} style={{ fontSize: 12, marginBottom: 2 }}>Kurz {r.cur} → EUR: <s style={{ color: colors.muted }}>{r.a.toFixed(4)}</s> → <b>{r.b.toFixed(4)}</b> <span style={{ color: colors.muted }}>(vliv kurzu, ne změna ceny u dodavatele)</span></div>
+          ))}
+        </div>
+      )}
+
+      {!nothing && (
+        <div style={box}>
+          <div style={h}>Cena na osobu — celkem v EUR</div>
+          <CompareRowsTable rows={res.combined} colors={colors} />
+        </div>
+      )}
+
+      {res.split && !nothing && (
+        <div style={box}>
+          <div style={h}>Cena podle měn <span style={{ fontWeight: 400, color: colors.muted, fontSize: 12 }}>(v původní měně — změna kurzu se tu neprojeví)</span></div>
+          {res.split.map(p => (
+            <div key={p.cur} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>{CUR_FLAG[p.cur] || ''} {p.cur}</div>
+              <CompareRowsTable rows={p.rows} colors={colors} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(res.added.length > 0 || res.removed.length > 0 || res.changed.length > 0) && (
+        <div style={box}>
+          <div style={h}>Služby</div>
+          {res.added.map((it, i) => (
+            <div key={'a' + i} style={{ fontSize: 12, padding: '4px 8px', marginBottom: 3, background: '#EAF6E4', borderRadius: 5 }}>
+              🟢 <b>přibylo:</b> {itemTitle(it)} {it.dateFrom ? `(${fmtDate(it.dateFrom)}${it.dateTo ? ' – ' + fmtDate(it.dateTo) : ''})` : ''} — {itemPrice(it)}
+            </div>
+          ))}
+          {res.removed.map((it, i) => (
+            <div key={'r' + i} style={{ fontSize: 12, padding: '4px 8px', marginBottom: 3, background: '#FDECEC', borderRadius: 5 }}>
+              🔴 <b>ubylo:</b> {itemTitle(it)} {it.dateFrom ? `(${fmtDate(it.dateFrom)}${it.dateTo ? ' – ' + fmtDate(it.dateTo) : ''})` : ''} — {itemPrice(it)}
+            </div>
+          ))}
+          {res.changed.map((ch, i) => (
+            <div key={'c' + i} style={{ fontSize: 12, padding: '4px 8px', marginBottom: 3, background: '#FFF4E0', borderRadius: 5 }}>
+              🟠 <b>změna:</b> {itemTitle(ch.item)}
+              <div style={{ paddingLeft: 22 }}>
+                {ch.diffs.map(d => (
+                  <div key={d.field}>{d.label}: <s style={{ color: colors.muted }}>{(d.field === 'dateFrom' || d.field === 'dateTo') ? fmtDate(d.a) || d.a || '—' : (d.a || '—')}</s> → <b>{(d.field === 'dateFrom' || d.field === 'dateTo') ? fmtDate(d.b) || d.b || '—' : (d.b || '—')}</b></div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Políčko pro přejmenování jedné verze.
 function RenameBox({ initial, usedOthers, onSave, onCancel, colors }) {
   const [val, setVal] = useState(initial || '');
@@ -256,12 +382,15 @@ function RenameBox({ initial, usedOthers, onSave, onCancel, colors }) {
   );
 }
 
-export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy, colors }) {
+export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy, getCurrentSnapshot, colors }) {
   const [versions, setVersions] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [openId, setOpenId] = useState(null);
   const [editKey, setEditKey] = useState(null); // 'v:<id>' nebo 'l:<index>'
+  // Porovnání: vybrané položky (id verze nebo 'current') a otevřený výsledek.
+  const [picked, setPicked] = useState([]);
+  const [compare, setCompare] = useState(null); // { left, right }
 
   useEffect(() => {
     if (!offerId) return undefined;
@@ -289,14 +418,63 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
     ...legacy.filter(v => 'l:' + v.idx !== key).map(v => versionNoFromName(v.label)).filter(Boolean),
   ];
   const pencil = { padding: '2px 6px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', lineHeight: 1.2 };
+
+  const togglePick = (key) => setPicked(p => (p.includes(key) ? p.filter(k => k !== key) : (p.length >= 2 ? p : [...p, key])));
+  const runCompare = () => {
+    // Starší vlevo, novější vpravo. Aktuální stav je vždy nejnovější.
+    const entries = picked.map(key => {
+      if (key === 'current') return { label: 'Aktuální stav nabídky', snapshot: getCurrentSnapshot(), at: '9999' };
+      const v = versions.find(x => x.id === key);
+      return v ? { label: `${v.fileName || 'v' + v.versionNo} (${fmtWhen(v.createdAt)})`, snapshot: v.snapshot, at: String(v.createdAt || '') } : null;
+    }).filter(Boolean);
+    if (entries.length !== 2) return;
+    entries.sort((x, y) => x.at.localeCompare(y.at));
+    setCompare({ left: entries[0], right: entries[1] });
+  };
+  const checkbox = (key) => (
+    <input
+      type="checkbox"
+      title="Vybrat k porovnání"
+      checked={picked.includes(key)}
+      disabled={!picked.includes(key) && picked.length >= 2}
+      onClick={e => e.stopPropagation()}
+      onChange={() => togglePick(key)}
+      style={{ cursor: 'pointer', width: 15, height: 15, margin: 0 }}
+    />
+  );
   const total = versions.length + legacy.length;
   const link = { fontSize: 12, color: colors.primary, textDecoration: 'underline', whiteSpace: 'nowrap' };
 
   return (
     <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>
-        📁 Verze nabídky {total > 0 && <span style={{ fontWeight: 400, color: colors.muted }}>({total})</span>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>
+          📁 Verze nabídky {total > 0 && <span style={{ fontWeight: 400, color: colors.muted }}>({total})</span>}
+        </div>
+        {versions.length > 0 && getCurrentSnapshot && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: colors.muted }}>
+              {picked.length === 2 ? 'Vybráno 2' : `Zaškrtněte 2 k porovnání (${picked.length}/2)`}
+            </span>
+            <button
+              onClick={runCompare}
+              disabled={picked.length !== 2}
+              style={{ padding: '5px 12px', background: picked.length === 2 ? colors.primary : colors.white, color: picked.length === 2 ? colors.white : colors.muted, border: `1px solid ${picked.length === 2 ? colors.primary : colors.border}`, borderRadius: 7, fontSize: 12, cursor: picked.length === 2 ? 'pointer' : 'default', fontFamily: 'inherit', fontWeight: 600 }}>
+              ⚖️ Porovnat
+            </button>
+          </div>
+        )}
       </div>
+
+      {versions.length > 0 && getCurrentSnapshot && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px', borderBottom: `1px dashed ${colors.border}` }}>
+          {checkbox('current')}
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Aktuální stav nabídky</span>
+          <span style={{ fontSize: 12, color: colors.muted }}>(to, co je teď v tabulce výše, s dnešními kurzy)</span>
+        </div>
+      )}
+
+      {compare && <ComparePanel left={compare.left} right={compare.right} onClose={() => setCompare(null)} colors={colors} />}
 
       {error && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{error}</div>}
       {loaded && !error && total === 0 && (
@@ -313,6 +491,7 @@ export default function OfferVersions({ offerId, legacyVersions, onRenameLegacy,
               onClick={() => setOpenId(open ? null : v.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px', cursor: 'pointer', flexWrap: 'wrap' }}
             >
+              {getCurrentSnapshot && checkbox(v.id)}
               <span style={{ width: 14, color: colors.muted }}>{open ? '▾' : '▸'}</span>
               <span style={{ fontWeight: 700, fontSize: 13 }}>{v.fileName || `v${v.versionNo}`}</span>
               {i === 0 && <span style={{ fontSize: 11, background: '#27500A', color: '#fff', borderRadius: 5, padding: '1px 6px' }}>poslední</span>}
