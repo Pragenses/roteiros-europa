@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
-import { nextVersionNo, versionFileName, saveOfferVersion } from '../lib/offerVersions';
+import { usedVersionNumbers, versionFileName, versionNoFromName, cleanTypedFileName, saveOfferVersion } from '../lib/offerVersions';
 import coverBase64 from '../lib/coverBase64';
 import watermarkBase64 from '../lib/watermarkBase64';
 import logoBase64 from '../lib/logoBase64';
@@ -222,7 +222,10 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   // Okno „Uložit jako verzi?" před stažením PDF nebo tiskem.
-  // null = zavřené, jinak { mode: 'pdf' | 'print', nextName, busy, error }
+  // null = zavřené, jinak { mode: 'pdf' | 'print', name, used, dupOk, busy, error }
+  //   name  = název souboru v políčku (předvyplněný, jde přepsat)
+  //   used  = čísla verzí, která už u nabídky existují (kvůli upozornění)
+  //   dupOk = uživatel už byl upozorněn, že číslo existuje, a chce uložit i tak
   const [versionDialog, setVersionDialog] = useState(null);
 
   const fetchData = useCallback(async () => {
@@ -533,24 +536,52 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   // --- Okno „Uložit jako verzi?" --------------------------------------------
   const openVersionDialog = async (mode) => {
-    setVersionDialog({ mode, nextName: '', busy: false, error: '' });
+    setVersionDialog({ mode, name: '', used: null, dupOk: false, busy: false, error: '' });
     try {
-      const n = await nextVersionNo(offerId);
-      setVersionDialog(d => d && ({ ...d, nextName: versionFileName(offer, n) }));
+      const used = await usedVersionNumbers(offerId, offer.pdfVersions);
+      const n = (used.length ? Math.max(...used) : 0) + 1;
+      setVersionDialog(d => d && ({ ...d, used, name: d.name || versionFileName(offer, n) }));
     } catch (err) {
       console.error(err);
-      setVersionDialog(d => d && ({ ...d, nextName: '?' }));
+      setVersionDialog(d => d && ({ ...d, used: [], name: d.name || versionFileName(offer, 1), error: 'Nepodařilo se zjistit dosavadní verze: ' + err.message }));
     }
+  };
+
+  // Kontrola názvu před uložením. Vrací upravený název, nebo null (a do okna
+  // napíše proč). Když číslo verze už u nabídky existuje, první kliknutí jen
+  // upozorní, druhé uloží.
+  const checkVersionName = async () => {
+    const d = versionDialog;
+    const name = cleanTypedFileName(d && d.name);
+    if (!name) {
+      setVersionDialog(x => x && ({ ...x, error: 'Vyplňte název verze.' }));
+      return null;
+    }
+    const no = versionNoFromName(name);
+    if (no && !d.dupOk) {
+      let used = d.used || [];
+      try { used = await usedVersionNumbers(offerId, offer.pdfVersions); } catch (err) { console.error(err); }
+      if (used.includes(no)) {
+        setVersionDialog(x => x && ({ ...x, used, dupOk: true, error: `NR${no} už u této nabídky existuje. Změňte číslo, nebo klikněte znovu a uloží se i tak.` }));
+        return null;
+      }
+    }
+    return name;
   };
 
   // Stáhne PDF; při save=true ho zároveň uloží jako verzi (ten samý soubor).
   const runPdfDownload = async (save) => {
     setDownloadingPdf(true);
     try {
+      let typedName = null;
+      if (save) {
+        typedName = await checkVersionName();
+        if (!typedName) { setDownloadingPdf(false); return; }
+      }
       const blob = await fetchPdfBlob();
       if (save) {
         setVersionDialog(d => d && ({ ...d, busy: true, error: '' }));
-        const { fileName } = await saveOfferVersion({ offer, blob, snapshot: buildVersionSnapshot(), source: 'pdf' });
+        const { fileName } = await saveOfferVersion({ offer, blob, snapshot: buildVersionSnapshot(), source: 'pdf', fileName: typedName });
         downloadBlob(blob, fileName);
       } else {
         downloadBlob(blob, (offer.name || 'oferta').replace(/[^a-zA-Z0-9]/g, '_') + '.pdf');
@@ -568,10 +599,12 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
   // dá PDF z hnědého tlačítka — ceny a služby jsou totožné, liší se jen vzhled.
   const runPrint = async (save) => {
     if (save) {
+      const typedName = await checkVersionName();
+      if (!typedName) return;
       setVersionDialog(d => d && ({ ...d, busy: true, error: '' }));
       try {
         const blob = await fetchPdfBlob();
-        await saveOfferVersion({ offer, blob, snapshot: buildVersionSnapshot(), source: 'print' });
+        await saveOfferVersion({ offer, blob, snapshot: buildVersionSnapshot(), source: 'print', fileName: typedName });
       } catch (err) {
         console.error(err);
         setVersionDialog(d => d && ({ ...d, busy: false, error: 'Uložení se nepovedlo: ' + err.message + ' — nic se neuložilo. Tisk můžete spustit i bez uložení.' }));
@@ -725,20 +758,34 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
             <div style={{ fontSize: 13, color: colors.muted, marginBottom: 6 }}>
               Verze se uloží k nabídce i s cenami a půjde se k ní kdykoliv vrátit.
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, margin: '10px 0 14px', padding: '8px 10px', background: '#f7f6f3', borderRadius: 7 }}>
-              {versionDialog.nextName || 'Zjišťuji číslo verze…'}
-            </div>
+            <div style={{ fontSize: 12, color: colors.muted, marginTop: 10 }}>Název souboru (jde přepsat, např. na NR5, když klient už dostal NR1–NR4):</div>
+            <input
+              type="text"
+              value={versionDialog.name}
+              placeholder={versionDialog.used === null ? 'Zjišťuji číslo verze…' : ''}
+              disabled={versionDialog.busy}
+              onChange={e => { const v = e.target.value; setVersionDialog(d => d && ({ ...d, name: v, dupOk: false, error: '' })); }}
+              style={{ width: '100%', boxSizing: 'border-box', fontSize: 14, fontWeight: 600, margin: '4px 0 6px', padding: '8px 10px', background: '#f7f6f3', border: `1px solid ${colors.border}`, borderRadius: 7, fontFamily: 'inherit' }}
+            />
+            {(() => {
+              const no = versionNoFromName(versionDialog.name);
+              const used = versionDialog.used || [];
+              if (!versionDialog.name || versionDialog.error) return null;
+              if (!no) return <div style={{ fontSize: 12, color: '#854f0b', marginBottom: 8 }}>Název nezačíná NR a číslem — verze dostane pořadí automaticky.</div>;
+              if (used.includes(no)) return <div style={{ fontSize: 12, color: '#854f0b', marginBottom: 8 }}>⚠ NR{no} už u této nabídky existuje.</div>;
+              return <div style={{ marginBottom: 8 }} />;
+            })()}
             {versionDialog.mode === 'print' && (
               <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>
                 Do archivu se uloží PDF z tlačítka „Gerar PDF" — ceny a služby jsou stejné jako v tisku.
               </div>
             )}
-            {versionDialog.error && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 10 }}>{versionDialog.error}</div>}
+            {versionDialog.error && <div style={{ color: versionDialog.dupOk ? '#854f0b' : '#dc2626', fontSize: 12, marginBottom: 10 }}>{versionDialog.error}</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <button
-                disabled={versionDialog.busy || !versionDialog.nextName}
+                disabled={versionDialog.busy || versionDialog.used === null}
                 onClick={() => versionDialog.mode === 'pdf' ? runPdfDownload(true) : runPrint(true)}
-                style={{ padding: '10px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600, opacity: (versionDialog.busy || !versionDialog.nextName) ? 0.6 : 1 }}>
+                style={{ padding: '10px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontWeight: 600, opacity: (versionDialog.busy || versionDialog.used === null) ? 0.6 : 1 }}>
                 {versionDialog.busy ? 'Ukládám…' : (versionDialog.mode === 'pdf' ? 'Uložit verzi a stáhnout' : 'Uložit verzi a tisknout')}
               </button>
               <button

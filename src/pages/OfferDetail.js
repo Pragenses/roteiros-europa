@@ -3573,7 +3573,19 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       </div>
 
       {/* 📁 Verze nabídky — uložené verze pro klienta, jen pro čtení. */}
-      <OfferVersions offerId={offerId} legacyVersions={offer?.pdfVersions} colors={colors} />
+      <OfferVersions
+        offerId={offerId}
+        legacyVersions={offer?.pdfVersions}
+        colors={colors}
+        onRenameLegacy={async (idx, label) => {
+          // Starší verze leží přímo v nabídce — ukládá se přes trackedUpdate,
+          // aby platila pojistka proti přepsání, když nabídku upravuje někdo jiný.
+          const list = (offer?.pdfVersions || []).map((v, i) => (i === idx ? { ...v, label, renamedAt: new Date().toISOString() } : v));
+          const ok = await trackedUpdate({ pdfVersions: list });
+          if (ok) setOffer(prev => ({ ...prev, pdfVersions: list }));
+          return ok;
+        }}
+      />
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Programa da viagem (PT-BR)</div>
