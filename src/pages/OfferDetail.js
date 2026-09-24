@@ -2723,6 +2723,29 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     return { pax, groupPerPax, costDbl, marginAmount, sellingBeforeFoc, focShare, finalDbl, finalSngl };
   });
 
+  // Aktuální stav nabídky ve stejném tvaru jako uložená verze — jen pro
+  // porovnání verzí. Čísla jsou přesně ta, která ukazuje tabulka výše
+  // („Selling price per pax"), s dnešními kurzy. Nic se tím neukládá.
+  const buildCurrentSnapshot = () => {
+    const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+    const marginNum = parseFloat(margin) || 0;
+    const pick = ['id', 'type', 'subType', 'name', 'city', 'dateFrom', 'dateTo', 'nights', 'currency',
+      'pricePerNightDbl', 'pricePerNightSngl', 'cityTax', 'cityTaxSngl', 'costDbl', 'costSngl', 'groupCost', 'guideOverride'];
+    const parts = hasSplit ? [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()] : null;
+    return {
+      margin: marginNum, paxList, focCount: focCountNum, focType,
+      showSplit: !!(showSplit && hasSplit),
+      rates: Object.fromEntries(Object.entries(rates).map(([c, v]) => [c, Math.round(v * 1e6) / 1e6])),
+      combinedRows: rows.map(r => ({ pax: r.pax, finalDbl: r2(r.finalDbl), finalSngl: r2(r.finalSngl) })),
+      split: parts ? parts.map(p => ({ cur: p.cur, rows: p.rows.map(r => ({ pax: r.pax, finalDbl: r2(r.finalDbl), finalSngl: r2(r.finalSngl) })) })) : null,
+      items: activeItems.map(it => {
+        const o = {};
+        pick.forEach(k => { if (it[k] !== undefined && it[k] !== null && it[k] !== '') o[k] = it[k]; });
+        return o;
+      }),
+    };
+  };
+
   return (
     <div>
       {/* Lišta se stavem ukládání. Drží se nahoře i při rolování a nikdy nemizí —
@@ -3576,6 +3599,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       <OfferVersions
         offerId={offerId}
         legacyVersions={offer?.pdfVersions}
+        getCurrentSnapshot={buildCurrentSnapshot}
         colors={colors}
         onRenameLegacy={async (idx, label) => {
           // Starší verze leží přímo v nabídce — ukládá se přes trackedUpdate,
