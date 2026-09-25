@@ -662,7 +662,7 @@ const noteEntriesToText = (list) => (list || [])
   .map(e => [[e.stamp, e.author].filter(Boolean).join(' - '), e.text].filter(Boolean).join('\n'))
   .filter(Boolean).join('\n\n');
 
-const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel }) => {
+const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId }) => {
   const [openIds, setOpenIds] = React.useState(() => new Set());
   const [expandAll, setExpandAll] = React.useState(false);
   const [showOlder, setShowOlder] = React.useState(false);
@@ -681,6 +681,7 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel }
     onMakeTask({
       text: (picked || entry.text || '').trim(),
       source: sourceLabel || '',
+      itemId: sourceItemId !== undefined && sourceItemId !== null ? sourceItemId : '',
       mark: () => onChange(list.map(e => (e.id === entry.id ? { ...e, hasTask: true } : e))),
     });
   };
@@ -848,9 +849,34 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel }
 };
 
 // --- Úkoly u nabídky ------------------------------------------------------
+// Popisek karty — STEJNÝ tvar, jaký zápis u karty ukládá do úkolu jako
+// `source` (viz sourceLabel u NoteLog). Podle něj se dohledávají starší úkoly.
+const itemSourceLabel = (it) => [it.city, it.name].filter(Boolean).join(' – ') || 'položka';
+
+const itemTypeIcon = (it) => {
+  if (it.subType === 'hotel') return '🏨';
+  if (it.subType === 'ticket') return '🎟';
+  if (it.subType === 'guide_hotel') return '🧭';
+  if (it.subType === 'driver_hotel') return '🚌';
+  return '🚐';
+};
+
+// Ke které kartě úkol patří. Nový úkol má itemId přímo. Starší úkol má jen
+// text `source` — pak se karta bere, jen když je se stejným popiskem PRÁVĚ
+// JEDNA. Radši žádné tlačítko než skok na špatnou kartu.
+const resolveTaskItem = (t, items) => {
+  const list = items || [];
+  if (t.itemId !== undefined && t.itemId !== null && t.itemId !== '') {
+    return list.find(it => String(it.id) === String(t.itemId)) || null;
+  }
+  if (!t.source) return null;
+  const matches = list.filter(it => itemSourceLabel(it) === t.source);
+  return matches.length === 1 ? matches[0] : null;
+};
+
 // Seznam, ne jedno velké pole, aby se dalo odškrtávat. Hotové se nemažou,
 // jen přeškrtnou a spadnou dolů — ať je vidět, co už se udělalo.
-const TaskList = ({ todos, onChange, colors }) => {
+const TaskList = ({ todos, onChange, colors, items }) => {
   const [draft, setDraft] = React.useState({ text: '', due: '', who: '' });
 
   const list = Array.isArray(todos) ? todos : [];
@@ -871,6 +897,18 @@ const TaskList = ({ todos, onChange, colors }) => {
   };
 
   const upd = (id, field, value) => onChange(list.map(t => (t.id === id ? { ...t, [field]: value } : t)));
+  const updMany = (id, fields) => onChange(list.map(t => (t.id === id ? { ...t, ...fields } : t)));
+
+  const cards = Array.isArray(items) ? items : [];
+  const assignCard = (taskId, itemId) => {
+    const it = cards.find(x => String(x.id) === String(itemId));
+    if (!it) return;
+    updMany(taskId, { itemId: it.id, source: itemSourceLabel(it) });
+  };
+  const unassignCard = (taskId) => {
+    if (!window.confirm('Zrušit přiřazení úkolu ke kartě?')) return;
+    updMany(taskId, { itemId: '', source: '' });
+  };
   const del = (id) => {
     if (!window.confirm('Smazat tento úkol?')) return;
     onChange(list.filter(t => t.id !== id));
@@ -893,13 +931,40 @@ const TaskList = ({ todos, onChange, colors }) => {
         <input type="text" value={t.text} onChange={e => upd(t.id, 'text', e.target.value)}
           style={{ ...small, flex: 1, border: 'none', background: 'transparent', fontSize: 13,
                    textDecoration: t.done ? 'line-through' : 'none', color: colors.text }} />
-        {t.source && (
-          <span title={`Vzniklo ze zápisu: ${t.source}`}
-            style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap', maxWidth: 150,
-                     overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            ↩ {t.source}
-          </span>
-        )}
+        {(() => {
+          const card = resolveTaskItem(t, cards);
+          const srcSpan = t.source ? (
+            <span title={`Patří ke kartě: ${t.source}`}
+              style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap', maxWidth: 150,
+                       overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              ↩ {t.source}
+            </span>
+          ) : null;
+          if (card) {
+            return (
+              <>
+                {srcSpan}
+                <JumpToCard itemId={card.id} colors={colors} />
+                <button type="button" onClick={() => unassignCard(t.id)} title="Zrušit přiřazení ke kartě"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.muted, fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>
+              </>
+            );
+          }
+          if (cards.length === 0) return srcSpan;
+          return (
+            <>
+              {srcSpan}
+              <select value="" onChange={e => assignCard(t.id, e.target.value)}
+                title="Přiřadit úkol k servisní kartě"
+                style={{ ...small, maxWidth: 150, color: colors.muted }}>
+                <option value="">přiřadit ke kartě…</option>
+                {cards.map(it => (
+                  <option key={it.id} value={String(it.id)}>{itemTypeIcon(it)} {itemSourceLabel(it)}</option>
+                ))}
+              </select>
+            </>
+          );
+        })()}
         <DateDMY dateKey={`todo-${t.id}`} value={t.due || ''} colors={colors}
           onChange={v => upd(t.id, 'due', v)} />
         {overdue && <span style={{ fontSize: 11, color: colors.danger, fontWeight: 700, whiteSpace: 'nowrap' }}>po termínu</span>}
@@ -2468,8 +2533,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     await trackedUpdate({ todos: list, updatedAt: new Date().toISOString() });
   };
 
-  const startTodoFromNote = ({ text, source, mark }) => {
-    setTodoDraft({ text, source: source || '', due: '', who: '', mark });
+  const startTodoFromNote = ({ text, source, itemId, mark }) => {
+    setTodoDraft({ text, source: source || '', itemId: itemId !== undefined ? itemId : '', due: '', who: '', mark });
   };
 
   const confirmTodoDraft = async () => {
@@ -2481,6 +2546,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       due: todoDraft.due || '',
       who: todoDraft.who || '',
       source: todoDraft.source || '',
+      itemId: todoDraft.itemId !== undefined ? todoDraft.itemId : '',
       done: false,
       createdAt: new Date().toISOString(),
     }, ...list]);
@@ -3122,7 +3188,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               : null;
           })()}
         </div>
-        <TaskList todos={offer.todos} onChange={handleTodos} colors={colors} />
+        <TaskList todos={offer.todos} onChange={handleTodos} colors={colors} items={items} />
       </div>
 
       <HotelSummary items={activeItems} colors={colors} />
@@ -3555,7 +3621,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                       colors={colors}
                       compact
                       onMakeTask={startTodoFromNote}
-                      sourceLabel={[it.city, it.name].filter(Boolean).join(' – ') || 'položka'}
+                      sourceLabel={itemSourceLabel(it)}
+                      sourceItemId={it.id}
                     />
                   </div>
                 )}
