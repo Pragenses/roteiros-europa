@@ -14,7 +14,8 @@ class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
-import { auth } from './lib/firebase';
+import { auth, db } from './lib/firebase';
+import { collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import Dashboard from './pages/Dashboard';
 import Clients from './pages/Clients';
@@ -156,7 +157,51 @@ export default function App() {
   }, [applyHash]);
 
   // Změna hashe je to, co přidá položku do historie; applyHash pak dopraví stav.
+  // ── Hledani napric systemem ──────────────────────────────────────────
+  // Pole sedi v levem panelu, takze je dostupne z kazde stranky vcetne
+  // otevrene nabidky. Data se nactou az pri prvnim psani, ne pri startu
+  // aplikace, aby se nezdrzovalo prihlaseni. Pak zustanou v pameti.
+  const [gQuery, setGQuery] = useState('');
+  const [gData, setGData] = useState(null);      // { offers, orders } nebo null = jeste nenacteno
+  const [gLoading, setGLoading] = useState(false);
+
+  useEffect(() => {
+    if (gQuery.trim().length < 2 || gData || gLoading) return;
+    let cancelled = false;
+    setGLoading(true);
+    (async () => {
+      try {
+        const [offSnap, ordSnap] = await Promise.all([
+          getDocs(collection(db, 'offers')),
+          getDocs(collection(db, 'orders')),
+        ]);
+        if (cancelled) return;
+        setGData({
+          offers: offSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          orders: ordSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+        });
+      } catch (err) {
+        console.error('Hledani: data se nepodarilo nacist', err);
+        if (!cancelled) setGData({ offers: [], orders: [] });
+      }
+      if (!cancelled) setGLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [gQuery, gData, gLoading]);
+
+  const gTerm = gQuery.trim().toLowerCase();
+  const gMatch = (o) => [o.offerNumber, o.name, o.clientName, o.destinations]
+    .some(v => String(v || '').toLowerCase().includes(gTerm));
+  const gOffers = gTerm.length >= 2 && gData ? gData.offers.filter(gMatch).slice(0, 12) : [];
+  const gOrders = gTerm.length >= 2 && gData ? gData.orders.filter(gMatch).slice(0, 12) : [];
+  const gOpen = gTerm.length >= 2;
+
+  const gGo = (p, data) => { setGQuery(''); navigate(p, data); };
+
   const navigate = (p, data) => {
+    // Pri kazde zmene stranky zahodime nactena data hledani, aby dalsi
+    // hledani pracovalo s aktualnim stavem (nova nabidka, zmeneny nazev).
+    setGData(null);
     setNavParams(data || {});
     const id = data?.offerId || data?.orderId || null;
     const target = '#' + p + (id ? '/' + id : '');
@@ -250,6 +295,59 @@ export default function App() {
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.1em', color: COLORS.accent, marginBottom: 4 }}>EURO ESTRELLA DMC</div>
           <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.white }}>Roteiros Europa</div>
         </div>
+        <div style={{ padding: '0.875rem 1rem 0', position: 'relative' }}>
+          <input value={gQuery} onChange={e => setGQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setGQuery(''); }}
+            placeholder="Hledat…"
+            style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.08)', color: COLORS.white, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }} />
+          {gOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 12, width: 380, maxHeight: 460, overflowY: 'auto', background: COLORS.white, border: `1px solid ${COLORS.border}`, borderRadius: 10, boxShadow: '0 10px 28px rgba(0,0,0,0.22)', zIndex: 50, marginTop: 6 }}>
+              {gLoading || !gData ? (
+                <div style={{ padding: '12px 14px', fontSize: 13, color: COLORS.muted }}>Načítám…</div>
+              ) : (gOffers.length === 0 && gOrders.length === 0) ? (
+                <div style={{ padding: '12px 14px', fontSize: 13, color: COLORS.muted }}>Nic nenalezeno.</div>
+              ) : (
+                <>
+                  {gOffers.length > 0 && (
+                    <div>
+                      <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: COLORS.muted, background: '#F4F6F8' }}>Nabídky</div>
+                      {gOffers.map(o => (
+                        <div key={'go-' + o.id} onClick={() => gGo('offer-detail', { offerId: o.id })}
+                          style={{ padding: '8px 14px', cursor: 'pointer', borderTop: `1px solid ${COLORS.border}` }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#F7F6F3'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, display: 'flex', gap: 8, alignItems: 'center' }}>
+                            {o.offerNumber ? <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>{o.offerNumber}</span> : null}
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: COLORS.muted }}>{o.clientName || '— bez klienta —'}{o.startDate ? ' · ' + o.startDate : ''}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {gOrders.length > 0 && (
+                    <div>
+                      <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: COLORS.muted, background: '#F4F6F8' }}>Zakázky</div>
+                      {gOrders.map(o => (
+                        <div key={'gr-' + o.id} onClick={() => gGo('order-detail', { orderId: o.id })}
+                          style={{ padding: '8px 14px', cursor: 'pointer', borderTop: `1px solid ${COLORS.border}` }}
+                          onMouseEnter={e => e.currentTarget.style.background = '#F7F6F3'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, display: 'flex', gap: 8, alignItems: 'center' }}>
+                            {o.offerNumber ? <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>{o.offerNumber}</span> : null}
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: COLORS.muted }}>{o.clientName || ''}{o.startDate ? ' · ' + o.startDate : ''}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
         <nav style={{ flex: 1, padding: '1rem 0' }}>
           {visibleNav.map(n => (
             <button key={n.id} onClick={() => navigate(n.id)}
