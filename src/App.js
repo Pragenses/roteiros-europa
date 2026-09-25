@@ -22,6 +22,7 @@ import Clients from './pages/Clients';
 import Orders from './pages/Orders';
 import OrderDetail from './pages/OrderDetail';
 import Offers from './pages/Offers';
+import OffersWorkflow from './pages/OffersWorkflow';
 import OfferDetail from './pages/OfferDetail';
 import OfferPrint from './pages/OfferPrint';
 import Providers from './pages/Providers';
@@ -62,6 +63,7 @@ const NAV = [
   { id: 'clients', label: 'Clients', icon: '◉', ownerOnly: true },
   { id: 'orders', label: 'Orders', icon: '◧' },
   { id: 'offers', label: 'Offers', icon: '◫' },
+  { id: 'offers-workflow', label: 'Offers workflow', icon: '📌' },
   { id: 'providers', label: 'Providers', icon: '◎' },
   { id: 'hotels',    label: 'Hotels',    icon: '🏨' },
   { id: 'bus',       label: 'Bus',       icon: '🚌' },
@@ -268,6 +270,7 @@ export default function App() {
   const renderPage = () => {
     if (page === 'order-detail') return <OrderDetail orderId={selectedOrder} navigate={navigate} colors={COLORS} />;
     if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
+    if (page === 'offers-workflow') return <OffersWorkflow navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
     if (page === 'offer-detail') {
       const oid = selectedOfferRef.current || selectedOffer;
       return oid
