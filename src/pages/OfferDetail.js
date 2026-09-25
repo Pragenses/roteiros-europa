@@ -662,8 +662,28 @@ const noteEntriesToText = (list) => (list || [])
   .map(e => [[e.stamp, e.author].filter(Boolean).join(' - '), e.text].filter(Boolean).join('\n'))
   .filter(Boolean).join('\n\n');
 
-const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId }) => {
+// Čas zápisu pro řazení: createdAt, jinak razítko „dd.mm.rrrr …“, jinak id
+// (to je u nových zápisů čas vzniku). Stará jednolitá poznámka = nejstarší.
+const noteTime = (e) => {
+  if (e.createdAt) { const t = Date.parse(e.createdAt); if (Number.isFinite(t)) return t; }
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})/.exec(e.stamp || '');
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], 12).getTime();
+  if (typeof e.id === 'number' && e.id > 1e12) return e.id;
+  return 0;
+};
+
+// linkedEntries = zápisy ze servisních kart [{ entry, itemId, label }].
+// Zobrazují se tu JEN KE ČTENÍ — uložené jsou u karty a upravují se tam.
+const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId, linkedEntries }) => {
   const [openIds, setOpenIds] = React.useState(() => new Set());
+  const linked = Array.isArray(linkedEntries) ? linkedEntries : [];
+  const [showLinked, setShowLinked] = React.useState(() => {
+    try { return localStorage.getItem('offerNotes.showLinked') !== '0'; } catch (e) { return true; }
+  });
+  const setLinkedPref = (v) => {
+    setShowLinked(v);
+    try { localStorage.setItem('offerNotes.showLinked', v ? '1' : '0'); } catch (e) { /* nevadí */ }
+  };
   const [expandAll, setExpandAll] = React.useState(false);
   const [showOlder, setShowOlder] = React.useState(false);
   const focusId = React.useRef(null);
@@ -686,9 +706,17 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
     });
   };
 
+  // Co se zobrazuje: vlastní zápisy, případně i zápisy od karet, podle data.
+  const display = (linked.length > 0 && showLinked)
+    ? [
+        ...list.map((entry, i) => ({ key: entry.id, entry, own: true, t: noteTime(entry), i })),
+        ...linked.map((l, i) => ({ key: `card-${l.itemId}-${l.entry.id}`, entry: l.entry, own: false, itemId: l.itemId, cardLabel: l.label, t: noteTime(l.entry), i: list.length + i })),
+      ].sort((a, b) => (b.t - a.t) || (a.i - b.i))
+    : list.map(entry => ({ key: entry.id, entry, own: true }));
+
   const VISIBLE = 5;
-  const visible = showOlder ? list : list.slice(0, VISIBLE);
-  const hidden = list.length - visible.length;
+  const visible = showOlder ? display : display.slice(0, VISIBLE);
+  const hidden = display.length - visible.length;
 
   const addEntry = (code) => {
     const entry = {
@@ -731,9 +759,23 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
           {a.code}
         </button>
       ))}
-      {list.length > 1 && (
+      {linked.length > 0 && (
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', border: `1px solid ${colors.border}`, borderRadius: 5, overflow: 'hidden', fontSize: 11 }}>
+          {[[true, `Vše (+${linked.length} od karet)`], [false, 'Jen obecné']].map(([v, lbl]) => (
+            <span key={lbl} role="button" tabIndex={0}
+              onClick={() => setLinkedPref(v)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLinkedPref(v); } }}
+              style={{ padding: '3px 9px', cursor: 'pointer', userSelect: 'none',
+                       background: showLinked === v ? colors.primary : 'transparent',
+                       color: showLinked === v ? '#fff' : colors.muted, fontWeight: showLinked === v ? 600 : 400 }}>
+              {lbl}
+            </span>
+          ))}
+        </span>
+      )}
+      {display.length > 1 && (
         <button type="button" onClick={() => setExpandAll(v => !v)}
-          style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: 5, fontSize: 11,
+          style={{ marginLeft: linked.length > 0 ? 0 : 'auto', padding: '3px 10px', borderRadius: 5, fontSize: 11,
                    cursor: 'pointer', background: 'transparent', color: colors.muted,
                    border: `1px solid ${colors.border}`, fontFamily: 'inherit' }}>
           {expandAll ? 'Sbalit vše' : 'Rozbalit vše'}
@@ -745,20 +787,27 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {btnRow}
-      {list.length === 0 ? (
+      {display.length === 0 ? (
         <div style={{ fontSize: 12, color: colors.muted, fontStyle: 'italic' }}>
           Zatím žádný zápis.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {visible.map(entry => {
+          {visible.map(row => {
+            const entry = row.entry;
             const a = noteAuthor(entry.author);
-            const isOpen = expandAll || openIds.has(entry.id);
+            const isOpen = expandAll || openIds.has(row.key);
             const label = [entry.stamp, entry.author].filter(Boolean).join(' - ');
+            const cardTag = !row.own ? (
+              <span title={`Zápis u karty: ${row.cardLabel}`}
+                style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                ↩ {row.cardLabel}
+              </span>
+            ) : null;
             if (!isOpen) {
               const firstLine = (entry.text || '').split('\n')[0].trim();
               return (
-                <div key={entry.id} onClick={() => toggle(entry.id)}
+                <div key={row.key} onClick={() => toggle(row.key)}
                   title="Kliknutím rozbalit celý zápis"
                   style={{
                     display: 'flex', alignItems: 'baseline', gap: 6, cursor: 'pointer',
@@ -771,19 +820,43 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
                       {label}
                     </span>
                   )}
-                  <span style={{ color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {cardTag}
+                  <span style={{ color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
                     {firstLine || <em style={{ color: colors.muted }}>(prázdný zápis)</em>}
                   </span>
+                  {!row.own && <JumpToCard itemId={row.itemId} colors={colors} />}
+                </div>
+              );
+            }
+            if (!row.own) {
+              return (
+                <div key={row.key}
+                  style={{ padding: '4px 6px', borderRadius: 4, background: '#fafafa',
+                           border: `1px dashed ${a ? a.border : colors.border}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span onClick={() => toggle(row.key)} title="Kliknutím sbalit"
+                      style={{ fontWeight: 700, fontSize: 12, cursor: 'pointer', color: a ? a.color : colors.muted }}>
+                      {label || 'Starší poznámka'}
+                    </span>
+                    {cardTag}
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 10, color: colors.muted }}>jen ke čtení — upravuje se u karty</span>
+                    <JumpToCard itemId={row.itemId} colors={colors} />
+                  </div>
+                  <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.5, padding: '6px 8px',
+                                color: colors.text, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6 }}>
+                    {entry.text || <em style={{ color: colors.muted }}>(prázdný zápis)</em>}
+                  </div>
                 </div>
               );
             }
             const rows = Math.min(Math.max((entry.text || '').split('\n').length + 1, 3), 14);
             return (
-              <div key={entry.id}
+              <div key={row.key}
                 style={{ padding: '4px 6px', borderRadius: 4, background: '#fff',
                          border: `1px solid ${a ? a.border : colors.border}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                  <span onClick={() => toggle(entry.id)}
+                  <span onClick={() => toggle(row.key)}
                     title="Kliknutím sbalit"
                     style={{ fontWeight: 700, fontSize: 12, cursor: 'pointer',
                              color: a ? a.color : colors.muted }}>
@@ -834,7 +907,7 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
               + {hidden} starších
             </button>
           )}
-          {showOlder && list.length > VISIBLE && (
+          {showOlder && display.length > VISIBLE && (
             <button type="button" onClick={() => setShowOlder(false)}
               style={{ alignSelf: 'flex-start', background: 'none', border: 'none',
                        color: colors.muted, cursor: 'pointer', fontSize: 12,
@@ -3175,6 +3248,9 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           onChange={handleOfferNotes}
           colors={colors}
           onMakeTask={startTodoFromNote}
+          linkedEntries={items.flatMap(it => asNoteEntries(it.noteEntries, it.note)
+            .filter(e => (e.text || '').trim())
+            .map(e => ({ entry: e, itemId: it.id, label: `${itemTypeIcon(it)} ${itemSourceLabel(it)}` })))}
         />
       </div>
 
