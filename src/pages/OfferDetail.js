@@ -1252,6 +1252,15 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // Dřív se chyby automatického ukládání vypisovaly jen do konzole a uživatel
   // se o nich nedozvěděl.
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'ok' | 'error'
+  // Rozbalovací nabídka „+ Přidat kartu“ v horní liště.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!addMenuOpen) return;
+    const close = (e) => { if (addMenuRef.current && !addMenuRef.current.contains(e.target)) setAddMenuOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [addMenuOpen]);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const trackedUpdate = React.useCallback((payload) => {
     // Pojistka proti přepsání cizí práce: kdo nedrží štafetu, neuloží nic.
@@ -2768,6 +2777,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             ? 'Uloženo ' + lastSavedAt.toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })
             : 'Zatím neuloženo')}
         </span>
+        {/* Kde právě jsem: číslo nabídky, skupina, klient — vidět i při rolování. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', paddingLeft: 12, borderLeft: `1px solid ${colors.border}` }}>
+          {offer.offerNumber
+            ? <span style={{ fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 8px', whiteSpace: 'nowrap' }}>{offer.offerNumber}</span>
+            : <span style={{ color: colors.muted, whiteSpace: 'nowrap' }}>bez čísla</span>}
+          <span title={offer.name || ''} style={{ fontWeight: 700, color: colors.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{offer.name || 'bez názvu'}</span>
+          {offer.clientName && (
+            <span title={offer.clientName} style={{ color: colors.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{offer.clientName}</span>
+          )}
+        </div>
         <div style={{ flex: 1 }} />
         {!baton.alone && baton.canEdit && (
           <span style={{ color: colors.muted }}>
@@ -2788,6 +2807,31 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             )}
           </>
         )}
+        {/* Přidání servisní karty odkudkoli — stejné funkce jako tlačítka pod kartami. */}
+        <div ref={addMenuRef} style={{ position: 'relative' }}>
+          <button onClick={() => setAddMenuOpen(o => !o)} disabled={isLocked || !canEdit}
+            style={{ padding: '5px 12px', background: colors.white, color: (isLocked || !canEdit) ? colors.muted : colors.primary, border: `1px solid ${(isLocked || !canEdit) ? colors.border : colors.primary}`, borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: (isLocked || !canEdit) ? 'default' : 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+            + Přidat kartu ▾
+          </button>
+          {addMenuOpen && !isLocked && canEdit && (
+            <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 8, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', padding: 4, minWidth: 260, zIndex: 950 }}>
+              {[
+                ['Hotel (price/night × nights)', 'per_pax', 'hotel'],
+                ['Ticket / meal (flat per-pax price)', 'per_pax', 'ticket'],
+                ['Group cost (bus, flight)', 'group', undefined],
+                ['Hotel guide (hotéis + ingressos)', 'group', 'guide_hotel'],
+                ['Hotel driver (somente hotéis)', 'group', 'driver_hotel'],
+              ].map(([label, type, sub]) => (
+                <button key={label} onClick={() => { setAddMenuOpen(false); addItem(type, sub); }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f7f6f3'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', background: 'transparent', border: 'none', borderRadius: 5, fontSize: 13, fontFamily: 'inherit', color: colors.text, cursor: 'pointer' }}>
+                  + {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button onClick={handleSave} disabled={isLocked || !canEdit}
           style={{ padding: '5px 14px', background: isLocked ? colors.border : colors.primary, color: isLocked ? colors.muted : colors.white, border: 'none', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: isLocked ? 'default' : 'pointer', fontWeight: 500 }}>
           Uložit
