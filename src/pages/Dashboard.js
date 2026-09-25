@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
 
 const STATUS_COLORS = {
@@ -157,6 +157,56 @@ const dashAgo = (iso) => {
 
 const DASH_PERSON_KEY = 'dashPerson';
 
+// --- Pořadí sekcí -----------------------------------------------------------
+// Každý přihlášený má své pořadí: v databázi (settings/dashboardLayouts,
+// pole podle kódu osoby) a pro jistotu i v prohlížeči.
+const DEFAULT_SECTION_ORDER = ['metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
+const SECTION_NAMES = {
+  metrics: 'Čísla', attention: 'Vyžaduje pozornost', wip: 'Rozpracované',
+  notes: 'Poznámky a úkoly', departures: 'Upcoming departures', quick: 'Quick actions',
+};
+const LAYOUT_LOCAL_KEY = 'dashSectionOrder';
+
+// Uložené pořadí doplní o sekce, které přibyly později (na konec),
+// a vyhodí ty, které už neexistují.
+const normalizeOrder = (saved) => {
+  const list = Array.isArray(saved) ? saved.filter(id => DEFAULT_SECTION_ORDER.includes(id)) : [];
+  const unique = list.filter((id, i) => list.indexOf(id) === i);
+  return [...unique, ...DEFAULT_SECTION_ORDER.filter(id => !unique.includes(id))];
+};
+
+function SectionFrame({ id, idx, total, visible, children, colors, onMove, dragState }) {
+  const [grab, setGrab] = React.useState(false);
+  if (!visible) return null;
+  const isOver = dragState.over === id && dragState.from !== null && dragState.from !== id;
+  const btn = (disabled) => ({
+    border: 'none', background: 'transparent', cursor: disabled ? 'default' : 'pointer',
+    color: disabled ? '#ccc' : colors.muted, fontSize: 11, padding: '0 3px', fontFamily: 'inherit', lineHeight: 1,
+  });
+  return (
+    <div
+      draggable={grab}
+      onDragStart={e => { dragState.start(id); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); } catch (err) {} }}
+      onDragEnter={() => dragState.enter(id)}
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => e.preventDefault()}
+      onDragEnd={() => { setGrab(false); dragState.end(); }}
+      style={{ position: 'relative', opacity: dragState.from === id ? 0.45 : 1,
+               boxShadow: isOver ? `0 -3px 0 0 ${colors.accent}` : 'none', borderRadius: 12 }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ position: 'absolute', top: -9, right: 18, zIndex: 5, display: 'flex', alignItems: 'center', gap: 1,
+                 background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '2px 5px' }}>
+        <span title={`Přetáhnout sekci ${SECTION_NAMES[id] || ''}`}
+          onMouseDown={() => setGrab(true)} onMouseUp={() => setGrab(false)}
+          style={{ cursor: 'grab', color: colors.muted, fontSize: 12, padding: '0 3px', userSelect: 'none', letterSpacing: '-2px' }}>⋮⋮</span>
+        <button type="button" title="Posunout výš" disabled={idx === 0} onClick={() => onMove(id, -1)} style={btn(idx === 0)}>▲</button>
+        <button type="button" title="Posunout níž" disabled={idx === total - 1} onClick={() => onMove(id, 1)} style={btn(idx === total - 1)}>▼</button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({ active: 0, clients: 0, urgentOptions: 0 });
@@ -172,6 +222,51 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   });
   useEffect(() => { try { localStorage.setItem(DASH_PERSON_KEY, person); } catch (e) {} }, [person]);
   const [pinError, setPinError] = useState('');
+
+  // Pořadí sekcí přihlášeného člověka.
+  const layoutKey = myCode || String(userEmail || 'anon').toLowerCase();
+  const [sectionOrder, setSectionOrder] = useState(() => {
+    try { return normalizeOrder(JSON.parse(localStorage.getItem(LAYOUT_LOCAL_KEY) || 'null')); } catch (e) { return [...DEFAULT_SECTION_ORDER]; }
+  });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'settings', 'dashboardLayouts'));
+        const saved = snap.exists() ? (snap.data() || {})[layoutKey] : null;
+        if (!cancelled && Array.isArray(saved)) setSectionOrder(normalizeOrder(saved));
+      } catch (e) { console.warn('Pořadí sekcí se z databáze nenačetlo, používám uložené v prohlížeči.', e); }
+    })();
+    return () => { cancelled = true; };
+  }, [layoutKey]);
+  const saveOrder = (order) => {
+    setSectionOrder(order);
+    try { localStorage.setItem(LAYOUT_LOCAL_KEY, JSON.stringify(order)); } catch (e) {}
+    setDoc(doc(db, 'settings', 'dashboardLayouts'), { [layoutKey]: order }, { merge: true })
+      .catch(e => console.warn('Pořadí sekcí se do databáze neuložilo, zůstává v prohlížeči.', e));
+  };
+  // Tažení myší: pustí se sekce na místo té, nad kterou je kurzor.
+  const [drag, setDrag] = useState({ from: null, over: null });
+  const dragRef = React.useRef({ from: null, over: null });
+  const dragState = {
+    from: drag.from, over: drag.over,
+    start: (id) => { dragRef.current = { from: id, over: null }; setDrag({ from: id, over: null }); },
+    enter: (id) => { if (dragRef.current.from === null) return; dragRef.current.over = id; setDrag(d => (d.over === id ? d : { ...d, over: id })); },
+    end: () => {
+      const { from, over } = dragRef.current;
+      dragRef.current = { from: null, over: null };
+      setDrag({ from: null, over: null });
+      if (from === null || over === null || from === over) return;
+      const list = sectionOrder.filter(x => x !== from);
+      list.splice(list.indexOf(over), 0, from);
+      // Při tažení dolů patří sekce ZA cílovou.
+      if (sectionOrder.indexOf(from) < sectionOrder.indexOf(over)) {
+        const k = list.indexOf(from); list.splice(k, 1); list.splice(k + 1, 0, from);
+      }
+      saveOrder(list);
+    },
+  };
+  const isDefaultOrder = sectionOrder.join(',') === DEFAULT_SECTION_ORDER.join(',');
   const [loading, setLoading] = useState(true);
   // Sbalení sekce „Vyžaduje pozornost“ — pamatuje si to tento prohlížeč.
   const [attnCollapsed, setAttnCollapsed] = useState(() => {
@@ -405,30 +500,36 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
     </div>
   );
 
-  return (
-    <div>
-      <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: colors.primary, margin: 0 }}>Dashboard</h1>
-          <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Orbis Europa DMC — Booking Overview</div>
-        </div>
-        {/* Čí rozpracované nabídky a úkoly se ukazují. */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button type="button" onClick={() => setPerson('ALL')} style={personChip(person === 'ALL')}>Všichni</button>
-          {PEOPLE.map(p => (
-            <button key={p.code} type="button" onClick={() => setPerson(p.code)} style={personChip(person === p.code, p.color)}>
-              {p.short}{p.code === myCode ? ' (já)' : ''}
-            </button>
-          ))}
-        </div>
-      </div>
+  // ── Sekce Dashboardu (pořadí si každý nastaví sám) ─────────────────
+  const SECTION_VISIBLE = {
+    metrics: true, attention: hotelTasks.length > 0 || balanceTasks.length > 0,
+    wip: !loading, notes: boardView.length > 0, departures: true, quick: true,
+  };
+  // Šipky a tažení počítají jen se sekcemi, které jsou právě vidět.
+  const orderedSections = sectionOrder.filter(id => SECTION_VISIBLE[id]);
+  const onMove = (id, dir) => {
+    const vis = orderedSections;
+    const i = vis.indexOf(id);
+    const other = vis[i + dir];
+    if (!other) return;
+    const list = [...sectionOrder];
+    const a = list.indexOf(id), b = list.indexOf(other);
+    [list[a], list[b]] = [list[b], list[a]];
+    saveOrder(list);
+  };
+  const SECTION_JSX = {
+    metrics: (
+      <>
       <div style={{ display: 'flex', gap: 12, marginBottom: '1.5rem' }}>
         <Metric val={stats.active} label="Active orders" />
         <Metric val={stats.clients} label="Clients 2027" />
         <Metric val={stats.urgentOptions} label="Options expiring soon" />
         <Metric val="15%" label="Margin" />
       </div>
-
+      </>
+    ),
+    attention: (
+      <>
       {(hotelTasks.length > 0 || balanceTasks.length > 0) && (
         <div style={{ background: '#FFFBF0', border: `1px solid #E8D9A8`, borderRadius: 12, padding: attnCollapsed ? '0.75rem 1.25rem' : '1.25rem', marginBottom: '1.25rem' }}>
           <div onClick={toggleAttn} title={attnCollapsed ? 'Rozbalit' : 'Sbalit'}
@@ -460,7 +561,10 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           </div>}
         </div>
       )}
-
+      </>
+    ),
+    wip: (
+      <>
       {!loading && (
         <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '0.75rem' }}>
@@ -494,7 +598,10 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           )}
         </div>
       )}
-
+      </>
+    ),
+    notes: (
+      <>
       {boardView.length > 0 && (
         <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: colors.muted, textTransform: 'uppercase', marginBottom: '1rem' }}>
@@ -508,7 +615,10 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           </div>
         </div>
       )}
-
+      </>
+    ),
+    departures: (
+      <>
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: colors.muted, textTransform: 'uppercase', marginBottom: '1rem' }}>Upcoming departures</div>
         {loading ? <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div> :
@@ -540,7 +650,11 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           ))
         }
       </div>
-      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
+      </>
+    ),
+    quick: (
+      <>
+      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: colors.muted, textTransform: 'uppercase', marginBottom: '1rem' }}>Quick actions</div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {[['New order', 'orders'], ['New client', 'clients'], ['New provider', 'providers'], ['Calendar', 'calendar']].map(([label, p]) => (
@@ -551,6 +665,40 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           ))}
         </div>
       </div>
+      </>
+    ),
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: colors.primary, margin: 0 }}>Dashboard</h1>
+          <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Orbis Europa DMC — Booking Overview</div>
+        </div>
+        {/* Čí rozpracované nabídky a úkoly se ukazují. */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button type="button" onClick={() => setPerson('ALL')} style={personChip(person === 'ALL')}>Všichni</button>
+          {PEOPLE.map(p => (
+            <button key={p.code} type="button" onClick={() => setPerson(p.code)} style={personChip(person === p.code, p.color)}>
+              {p.short}{p.code === myCode ? ' (já)' : ''}
+            </button>
+          ))}
+          {!isDefaultOrder && (
+            <button type="button" onClick={() => saveOrder([...DEFAULT_SECTION_ORDER])} title="Vrátit sekce do původního pořadí"
+              style={{ marginLeft: 6, padding: '5px 10px', borderRadius: 16, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+                       border: `1px dashed ${colors.border}`, background: 'transparent', color: colors.muted }}>
+              ↺ Výchozí pořadí
+            </button>
+          )}
+        </div>
+      </div>
+      {orderedSections.map((id, idx) => (
+        <SectionFrame key={id} id={id} idx={idx} total={orderedSections.length} visible
+          colors={colors} onMove={onMove} dragState={dragState}>
+          {SECTION_JSX[id]}
+        </SectionFrame>
+      ))}
     </div>
   );
 }
