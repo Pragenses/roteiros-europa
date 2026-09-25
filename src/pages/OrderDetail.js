@@ -602,6 +602,9 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       paxCount: f.paxCount.value,
       status: f.status.value,
       notes: f.notes.value,
+      // Cislo nabidky. U novych zakazek se prenese pri prevodu z nabidky,
+      // u starych se da dopsat rucne — proto je pole editovatelne.
+      offerNumber: String(f.offerNumber?.value || '').toUpperCase().trim(),
     });
     setEditingOrder(false);
     fetchData();
@@ -848,7 +851,12 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         </button>
         <div style={{ color: colors.border }}>|</div>
         <div style={{ flex: 1 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: colors.primary, margin: 0 }}>{order.name}</h1>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: colors.primary, margin: 0, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {order.offerNumber
+              ? <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '3px 8px' }}>{order.offerNumber}</span>
+              : <span style={{ fontSize: 12, fontWeight: 600, background: '#FDF3D8', color: '#7A5A00', borderRadius: 5, padding: '3px 8px' }}>bez čísla</span>}
+            {order.name}
+          </h1>
           <div style={{ fontSize: 13, color: colors.muted }}>
             {order.clientName} · {order.startDate} – {order.endDate} · {order.paxCount ? order.paxCount + ' pax' : 'pax TBC'} · FOC {order.focCount ?? 1} ({order.focType || 'dbl'}) · Margin {order.margin || 15}%
           </div>
@@ -869,6 +877,14 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 </select>
               </div>
               <div>{lbl('Notes')}<input name="notes" type="text" defaultValue={order.notes} style={iStyle} /></div>
+              <div>
+                {lbl('Číslo nabídky')}
+                <input name="offerNumber" type="text" defaultValue={order.offerNumber || ''} placeholder="AT-27001"
+                  style={{ ...iStyle, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }} />
+                <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>
+                  U zakázek převedených z nabídky se doplní samo. U starších ho opiš z nabídky ručně.
+                </div>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="submit" style={{ padding: '7px 16px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>Save</button>

@@ -191,7 +191,10 @@ export default function Orders({ navigate, colors }) {
                   </div>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>{o.name}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {o.offerNumber ? <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{o.offerNumber}</span> : null}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                  </div>
                   <div style={{ fontSize: 12, color: colors.muted }}>{o.clientName} · {o.destinations || ''}{o.paxCount ? ` · ${o.paxCount} pax` : ''} · FOC {o.focCount ?? 1} ({o.focType || 'dbl'})</div>
                 </div>
                 <Badge status={o.status} />

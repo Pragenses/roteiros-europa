@@ -93,7 +93,7 @@ export default function Calendar({ navigate, colors }) {
                       <div key={`offer-${o.id}`} onClick={() => navigate('offer-detail', { offerId: o.id })}
                         style={{ background: '#FCEBF3', color: '#9D2466', fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: '1px solid #9D246622' }}>
                         <div style={{ fontWeight: 700 }}>
-                          📋 {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.name}
+                          📋 {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.offerNumber ? o.offerNumber + ' · ' : ''}{o.name}
                         </div>
                         <div style={{ opacity: 0.75 }}>{o.clientName}{o.status ? ` · ${o.status}` : ''}</div>
                       </div>
@@ -104,7 +104,7 @@ export default function Calendar({ navigate, colors }) {
                         <div key={`order-${o.id}`} onClick={() => navigate('order-detail', { orderId: o.id })}
                           style={{ background: CLIENT_PALETTE[idx], color: CLIENT_TEXT_PALETTE[idx], fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: `1px solid ${CLIENT_TEXT_PALETTE[idx]}22` }}>
                           <div style={{ fontWeight: 700 }}>
-                            {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.name}
+                            {o.startDate ? new Date(o.startDate).getDate() + '/' + (new Date(o.startDate).getMonth() + 1) : ''} {o.offerNumber ? o.offerNumber + ' · ' : ''}{o.name}
                           </div>
                           <div style={{ opacity: 0.75 }}>{o.clientName}{o.paxCount ? ` · ${o.paxCount} pax` : ''}</div>
                         </div>
@@ -125,7 +125,7 @@ export default function Calendar({ navigate, colors }) {
             {offers.filter(o => !o.startDate).map(o => (
               <div key={`offer-nodate-${o.id}`} onClick={() => navigate('offer-detail', { offerId: o.id })}
                 style={{ background: '#FCEBF3', color: '#9D2466', fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3, border: '1px solid #9D246622' }}>
-                <div style={{ fontWeight: 700 }}>📋 {o.name}</div>
+                <div style={{ fontWeight: 700 }}>📋 {o.offerNumber ? o.offerNumber + ' · ' : ''}{o.name}</div>
                 <div style={{ opacity: 0.75 }}>{o.clientName || ''}{o.status ? ` · ${o.status}` : ''}</div>
               </div>
             ))}

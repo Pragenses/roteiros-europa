@@ -28,6 +28,7 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null); // null = show client list
+  const [search, setSearch] = useState('');
   const formRef = useRef(null);
 
   const fetchAll = useCallback(async () => {
@@ -102,12 +103,50 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
   // Offers for selected client
   const clientOffers = selectedClient ? (clientGroups[selectedClient] || []) : [];
 
+  // Hledani jede pres VSECHNY nabidky, bez ohledu na vybraneho klienta.
+  // Hleda se v cisle nabidky, nazvu, jmenu klienta a destinacich.
+  const searchTerm = search.trim().toLowerCase();
+  const searchResults = searchTerm
+    ? offers.filter(o => [o.offerNumber, o.name, o.clientName, o.destinations]
+        .some(v => String(v || '').toLowerCase().includes(searchTerm)))
+    : [];
+
   const Badge = ({ status }) => {
     const s = STATUS_STYLE[status || 'draft'] || STATUS_STYLE.draft;
     return <span style={{ background: s.bg, color: s.color, fontSize: 11, padding: '3px 8px', borderRadius: 6, fontWeight: 500 }}>
       {(STATUS_OPTS.find(o => o.value === (status || 'draft')) || {}).label}
     </span>;
   };
+
+  // Jeden radek nabidky. Stejny tvar v seznamu klienta i ve vysledcich hledani,
+  // aby se pri uprave nemuselo zasahovat na dvou mistech.
+  const OfferRow = ({ o, last, showClient }) => (
+    <div key={o.id}
+      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 1.25rem', borderBottom: last ? 'none' : `1px solid ${colors.border}`, cursor: 'pointer', background: clientColorMap[o.clientName] || colors.white }}
+      onClick={() => navigate('offer-detail', { offerId: o.id })}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {o.offerNumber
+            ? <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{o.offerNumber}</span>
+            : null}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+        </div>
+        <div style={{ fontSize: 12, color: colors.muted }}>
+          {showClient ? `${o.clientName || '— No client —'} · ` : ''}
+          {o.destinations ? `${o.destinations} · ` : ''}{o.startDate || ''}{o.endDate ? ` – ${o.endDate}` : ''} · {o.items?.length || 0} item(s) · margin {o.margin || 15}%
+          {(() => {
+            const openTodos = (o.todos || []).filter(t => !t.done).length;
+            return openTodos > 0
+              ? <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: '#854f0b', background: '#fff8e1', borderRadius: 10, padding: '1px 7px' }}>
+                  ✓ {openTodos} úkol{openTodos === 1 ? '' : (openTodos < 5 ? 'y' : 'ů')}
+                </span>
+              : null;
+          })()}
+        </div>
+      </div>
+      <Badge status={o.status} />
+    </div>
+  );
 
   const iStyle = { width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   const lbl = (t) => <label style={{ fontSize: 12, color: colors.muted, display: 'block', marginBottom: 4 }}>{t}</label>;
@@ -128,6 +167,18 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
           style={{ padding: '9px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
           + New offer
         </button>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem' }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Hledat podle čísla, názvu, klienta nebo destinace…"
+          style={{ flex: 1, maxWidth: 520, padding: '9px 12px', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 14, fontFamily: 'Georgia, serif', boxSizing: 'border-box' }} />
+        {searchTerm && (
+          <button onClick={() => setSearch('')}
+            style={{ padding: '8px 14px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', color: colors.muted, fontFamily: 'inherit' }}>
+            Zrušit hledání
+          </button>
+        )}
       </div>
 
       {showForm && (
@@ -166,8 +217,23 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
 
       {loading ? <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div> : (
 
+        // ── Vysledky hledani (napric vsemi klienty) ───────────────────────
+        searchTerm ? (
+          <div>
+            <div style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>
+              {searchResults.length === 0 ? 'Nic nenalezeno.' : `Nalezeno: ${searchResults.length}`}
+            </div>
+            {searchResults.length > 0 && (
+              <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                {searchResults.map((o, i) => (
+                  <OfferRow key={o.id} o={o} last={i === searchResults.length - 1} showClient />
+                ))}
+              </div>
+            )}
+          </div>
+
         // ── LEVEL 1: Client list ──────────────────────────────────────────
-        !selectedClient ? (
+        ) : !selectedClient ? (
           clientList.length === 0 ? (
             <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '3rem', textAlign: 'center', color: colors.muted, fontSize: 14 }}>
               No offers yet.
@@ -209,35 +275,9 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
             <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflow: 'hidden' }}>
               {clientOffers.length === 0 ? (
                 <div style={{ padding: '2rem', textAlign: 'center', color: colors.muted }}>No offers for this client.</div>
-              ) : clientOffers.map((o, i) => {
-                const bg = clientColorMap[o.clientName] || colors.white;
-                return (
-                  <div key={o.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 1.25rem', borderBottom: i < clientOffers.length - 1 ? `1px solid ${colors.border}` : 'none', cursor: 'pointer', background: bg }}
-                    onClick={() => navigate('offer-detail', { offerId: o.id })}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {o.offerNumber
-                          ? <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{o.offerNumber}</span>
-                          : null}
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
-                      </div>
-                      <div style={{ fontSize: 12, color: colors.muted }}>
-                        {o.destinations ? `${o.destinations} · ` : ''}{o.startDate || ''}{o.endDate ? ` – ${o.endDate}` : ''} · {o.items?.length || 0} item(s) · margin {o.margin || 15}%
-                        {(() => {
-                          const openTodos = (o.todos || []).filter(t => !t.done).length;
-                          return openTodos > 0
-                            ? <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: '#854f0b', background: '#fff8e1', borderRadius: 10, padding: '1px 7px' }}>
-                                ✓ {openTodos} úkol{openTodos === 1 ? '' : (openTodos < 5 ? 'y' : 'ů')}
-                              </span>
-                            : null;
-                        })()}
-                      </div>
-                    </div>
-                    <Badge status={o.status} />
-                  </div>
-                );
-              })}
+              ) : clientOffers.map((o, i) => (
+                <OfferRow key={o.id} o={o} last={i === clientOffers.length - 1} />
+              ))}
             </div>
           </div>
         )
