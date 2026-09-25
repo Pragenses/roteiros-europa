@@ -994,6 +994,35 @@ const buildIncludedText = (items) => {
 // počítá.
 const fmtMoney = (n) => (Number.isFinite(n) ? n : 0).toFixed(2);
 
+// Skok na servisní kartu dole v nabídce (Souhrn hotelů, později i Úkoly).
+// Jen posouvá stránku a na chvíli kartu orámuje — nic nemění, proto funguje
+// i v režimu jen ke čtení. Karta se hledá podle data-item-id.
+const jumpToItem = (itemId) => {
+  const el = document.querySelector(`[data-item-id="${String(itemId)}"]`);
+  if (!el) return false;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  const prevOutline = el.style.outline;
+  const prevOffset = el.style.outlineOffset;
+  el.style.outline = '3px solid #2563eb';
+  el.style.outlineOffset = '2px';
+  setTimeout(() => { el.style.outline = prevOutline; el.style.outlineOffset = prevOffset; }, 2000);
+  return true;
+};
+
+// Odkaz „↓ Na kartu“. Schválně to není <button>: Souhrn leží uvnitř
+// <fieldset disabled>, který v režimu jen ke čtení vypne všechna tlačítka.
+const JumpToCard = ({ itemId, colors }) => {
+  const go = (e) => { e.stopPropagation(); jumpToItem(itemId); };
+  return (
+    <span role="button" tabIndex={0} title="Přejít na servisní kartu"
+      onClick={go}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } }}
+      style={{ fontSize: 11, fontWeight: 600, color: colors.primary, border: `1px solid ${colors.primary}`, background: '#fff', borderRadius: 10, padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none' }}>
+      ↓ Na kartu
+    </span>
+  );
+};
+
 const HotelSummaryRow = ({ it, colors }) => {
   const [open, setOpen] = React.useState(false);
 
@@ -1068,6 +1097,7 @@ const HotelSummaryRow = ({ it, colors }) => {
             fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
             background: st.bg, color: st.color, border: `1px solid ${st.border}`,
           }}>{st.label}</span>
+          <JumpToCard itemId={it.id} colors={colors} />
         </span>
       </div>
 
@@ -3288,6 +3318,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               return (
                 <React.Fragment key={it.id}>
                 <div ref={it.id === newItemId ? newItemRef : null}
+                  data-item-id={String(it.id)}
                   draggable
                   onDragStart={() => handleDragStart(idx)}
                   onDragEnter={() => handleDragEnter(idx)}
