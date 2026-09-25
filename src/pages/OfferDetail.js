@@ -2999,6 +2999,33 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <div style={{ marginTop: 10 }}>
           {lbl('Destinations')}<input type="text" defaultValue={offer.destinations} onBlur={e => handleHeaderChange('destinations', e.target.value)} style={iStyle} />
         </div>
+        {/* Kdo má nabídku na starost (dlouhodobě) a připnutí „teď na tom
+            děláme“ (krátkodobě). Obojí je interní, do PDF klientovi nejde.
+            Hodnoty: responsible = '' (společné) | 'HD' | 'FD' | 'HŠ';
+            pinnedFor = '' (nepřipnuto) | 'ALL' (všichni) | 'HD' | 'FD' | 'HŠ'. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 3fr', gap: 12, marginTop: 10, alignItems: 'end' }}>
+          <div>{lbl('Má na starost')}
+            <select value={offer.responsible || ''} onChange={e => handleHeaderChange('responsible', e.target.value)}
+              style={{ ...iStyle, color: noteAuthor(offer.responsible)?.color || colors.text, fontWeight: offer.responsible ? 700 : 400 }}>
+              <option value="">— (společné)</option>
+              {NOTE_AUTHORS.map(a => <option key={a.code} value={a.code}>{a.code} – {a.name}</option>)}
+            </select>
+          </div>
+          <div>{lbl('📌 Připnuto pro')}
+            <select value={offer.pinnedFor || ''} onChange={e => {
+                // Připnutí se nepočítá jako úprava nabídky, proto se nemění updatedAt.
+                const v = e.target.value;
+                setOffer(prev => ({ ...prev, pinnedFor: v }));
+                trackedUpdate({ pinnedFor: v });
+              }}
+              style={{ ...iStyle, background: offer.pinnedFor ? '#FFF4D6' : colors.white, fontWeight: offer.pinnedFor ? 700 : 400 }}>
+              <option value="">nepřipnuto</option>
+              <option value="ALL">📌 všichni</option>
+              {NOTE_AUTHORS.map(a => <option key={a.code} value={a.code}>📌 {a.code} – {a.name}</option>)}
+            </select>
+          </div>
+          <div />
+        </div>
       </div>
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
