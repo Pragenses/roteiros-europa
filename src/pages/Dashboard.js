@@ -140,6 +140,17 @@ export default function Dashboard({ navigate, colors }) {
   const [balanceTasks, setBalanceTasks] = useState([]);
   const [noteBoard, setNoteBoard] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Sbalení sekce „Vyžaduje pozornost“ — pamatuje si to tento prohlížeč.
+  const [attnCollapsed, setAttnCollapsed] = useState(() => {
+    try { return localStorage.getItem('dashAttnCollapsed') === '1'; } catch (e) { return false; }
+  });
+  const toggleAttn = () => {
+    setAttnCollapsed(v => {
+      const next = !v;
+      try { localStorage.setItem('dashAttnCollapsed', next ? '1' : '0'); } catch (e) {}
+      return next;
+    });
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -256,11 +267,14 @@ export default function Dashboard({ navigate, colors }) {
       </div>
 
       {(hotelTasks.length > 0 || balanceTasks.length > 0) && (
-        <div style={{ background: '#FFFBF0', border: `1px solid #E8D9A8`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: '#854f0b', textTransform: 'uppercase', marginBottom: '1rem' }}>
+        <div style={{ background: '#FFFBF0', border: `1px solid #E8D9A8`, borderRadius: 12, padding: attnCollapsed ? '0.75rem 1.25rem' : '1.25rem', marginBottom: '1.25rem' }}>
+          <div onClick={toggleAttn} title={attnCollapsed ? 'Rozbalit' : 'Sbalit'}
+            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: '#854f0b', textTransform: 'uppercase', marginBottom: attnCollapsed ? 0 : '1rem', cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, width: 12 }}>{attnCollapsed ? '▸' : '▾'}</span>
             ⚠️ Vyžaduje pozornost ({hotelTasks.length + balanceTasks.length})
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {/* Vlastní rolování, aby tabulka nezabírala celou stránku. */}
+          {!attnCollapsed && <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 230, overflowY: 'auto', paddingRight: 4 }}>
             {hotelTasks.map((t, i) => (
               <div key={'h' + i} onClick={() => navigate('offer-detail', { offerId: t.offerId })}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13 }}>
@@ -280,7 +294,7 @@ export default function Dashboard({ navigate, colors }) {
                 <span style={{ color: t.remaining > 0 ? colors.primary : '#7f1d1d', fontWeight: 700 }}>{t.remaining.toFixed(2)} {t.currency}</span>
               </div>
             ))}
-          </div>
+          </div>}
         </div>
       )}
 
