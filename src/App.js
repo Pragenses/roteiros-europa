@@ -164,10 +164,15 @@ export default function App() {
   const [gQuery, setGQuery] = useState('');
   const [gData, setGData] = useState(null);      // { offers, orders } nebo null = jeste nenacteno
   const [gLoading, setGLoading] = useState(false);
+  // Priznak "stahovani uz bezi" musi zit mimo stav komponenty. Kdyby byl ve
+  // stavu, jeho zmena by efekt spustila znovu a ten by prave bezici stahovani
+  // zrusil — hledani by navzdy zustalo na "Nacitam...".
+  const gFetching = React.useRef(false);
 
   useEffect(() => {
-    if (gQuery.trim().length < 2 || gData || gLoading) return;
-    let cancelled = false;
+    if (gQuery.trim().length < 2) return;
+    if (gData || gFetching.current) return;
+    gFetching.current = true;
     setGLoading(true);
     (async () => {
       try {
@@ -175,19 +180,18 @@ export default function App() {
           getDocs(collection(db, 'offers')),
           getDocs(collection(db, 'orders')),
         ]);
-        if (cancelled) return;
         setGData({
           offers: offSnap.docs.map(d => ({ id: d.id, ...d.data() })),
           orders: ordSnap.docs.map(d => ({ id: d.id, ...d.data() })),
         });
       } catch (err) {
         console.error('Hledani: data se nepodarilo nacist', err);
-        if (!cancelled) setGData({ offers: [], orders: [] });
+        setGData({ offers: [], orders: [] });
       }
-      if (!cancelled) setGLoading(false);
+      gFetching.current = false;
+      setGLoading(false);
     })();
-    return () => { cancelled = true; };
-  }, [gQuery, gData, gLoading]);
+  }, [gQuery, gData]);
 
   const gTerm = gQuery.trim().toLowerCase();
   const gMatch = (o) => [o.offerNumber, o.name, o.clientName, o.destinations]
@@ -202,6 +206,7 @@ export default function App() {
     // Pri kazde zmene stranky zahodime nactena data hledani, aby dalsi
     // hledani pracovalo s aktualnim stavem (nova nabidka, zmeneny nazev).
     setGData(null);
+    gFetching.current = false;
     setNavParams(data || {});
     const id = data?.offerId || data?.orderId || null;
     const target = '#' + p + (id ? '/' + id : '');
