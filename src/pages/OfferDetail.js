@@ -947,6 +947,64 @@ const resolveTaskItem = (t, items) => {
   return matches.length === 1 ? matches[0] : null;
 };
 
+// Text úkolu: v klidu jeden řádek (dlouhý nebo víceřádkový text končí „…“),
+// po kliknutí se rozbalí pole na celou výšku textu, po kliknutí jinam se sbalí.
+// Ukládá se stejně jako dřív — při každé změně textu.
+const TaskText = ({ value, done, onChange, colors }) => {
+  const [editing, setEditing] = React.useState(false);
+  const taRef = React.useRef(null);
+  const text = value || '';
+
+  const fit = () => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+  };
+
+  React.useLayoutEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    fit();
+    el.focus();
+    const end = el.value.length;
+    try { el.setSelectionRange(end, end); } catch (e) { /* nevadí */ }
+  }, [editing]);
+
+  React.useLayoutEffect(() => { if (editing) fit(); }, [text, editing]);
+
+  const base = { flex: 1, minWidth: 0, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.45,
+                 color: colors.text, textDecoration: done ? 'line-through' : 'none' };
+
+  if (editing) {
+    return (
+      <textarea ref={taRef} value={text} rows={1}
+        onChange={e => onChange(e.target.value)}
+        onBlur={() => setEditing(false)}
+        onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
+        style={{ ...base, padding: '3px 7px', boxSizing: 'border-box', resize: 'none', overflow: 'hidden',
+                 border: `1px solid ${colors.primary}`, borderRadius: 5, background: '#fff', alignSelf: 'stretch' }} />
+    );
+  }
+
+  const lines = text.split('\n');
+  const firstLine = lines[0];
+  const moreLines = lines.slice(1).some(l => l.trim());
+  return (
+    <div role="button" tabIndex={0}
+      onClick={() => setEditing(true)}
+      onFocus={() => setEditing(true)}
+      title={text || 'Kliknutím upravit'}
+      style={{ ...base, padding: '4px 8px', cursor: 'text', whiteSpace: 'nowrap',
+               overflow: 'hidden', textOverflow: 'ellipsis', border: '1px solid transparent', borderRadius: 5 }}>
+      {text.trim()
+        ? <>{firstLine}{moreLines ? ' …' : ''}</>
+        : <em style={{ color: colors.muted }}>(prázdný úkol)</em>}
+    </div>
+  );
+};
+
 // Seznam, ne jedno velké pole, aby se dalo odškrtávat. Hotové se nemažou,
 // jen přeškrtnou a spadnou dolů — ať je vidět, co už se udělalo.
 const TaskList = ({ todos, onChange, colors, items }) => {
@@ -954,7 +1012,19 @@ const TaskList = ({ todos, onChange, colors, items }) => {
 
   const list = Array.isArray(todos) ? todos : [];
   const open = list.filter(t => !t.done);
-  const done = list.filter(t => t.done);
+  // Hotové: naposledy dokončené nahoře. Starší úkoly čas dokončení nemají —
+  // ty jdou za ně v pořadí, v jakém jsou v seznamu (nové se přidávají nahoru).
+  const done = list
+    .map((t, i) => ({ t, i }))
+    .filter(x => x.t.done)
+    .sort((a, b) => {
+      const da = a.t.doneAt || '', db = b.t.doneAt || '';
+      if (da !== db) return da < db ? 1 : -1;
+      return a.i - b.i;
+    })
+    .map(x => x.t);
+  const [showAllDone, setShowAllDone] = React.useState(false);
+  const DONE_VISIBLE = 3;
 
   const add = () => {
     if (!draft.text.trim()) return;
@@ -998,12 +1068,11 @@ const TaskList = ({ todos, onChange, colors, items }) => {
         borderRadius: 5, background: '#fff', border: `1px solid ${colors.border}`,
         opacity: t.done ? 0.55 : 1,
       }}>
-        <input type="checkbox" checked={!!t.done} onChange={e => upd(t.id, 'done', e.target.checked)}
+        <input type="checkbox" checked={!!t.done} onChange={e => updMany(t.id, { done: e.target.checked, doneAt: e.target.checked ? new Date().toISOString() : '' })}
           title={t.done ? 'Vrátit mezi nesplněné' : 'Označit jako hotové'}
           style={{ width: 15, height: 15, cursor: 'pointer', flexShrink: 0 }} />
-        <input type="text" value={t.text} onChange={e => upd(t.id, 'text', e.target.value)}
-          style={{ ...small, flex: 1, border: 'none', background: 'transparent', fontSize: 13,
-                   textDecoration: t.done ? 'line-through' : 'none', color: colors.text }} />
+        <TaskText value={t.text} done={!!t.done} colors={colors}
+          onChange={v => upd(t.id, 'text', v)} />
         {(() => {
           const card = resolveTaskItem(t, cards);
           const srcSpan = t.source ? (
@@ -1078,9 +1147,21 @@ const TaskList = ({ todos, onChange, colors, items }) => {
         <>
           {open.map(row)}
           {done.length > 0 && (
-            <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>Hotové ({done.length})</div>
+            <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>✔ Hotové úkoly ({done.length})</div>
           )}
-          {done.map(row)}
+          {showAllDone && done.length > DONE_VISIBLE ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto', paddingRight: 2 }}>
+              {done.map(row)}
+            </div>
+          ) : done.slice(0, DONE_VISIBLE).map(row)}
+          {done.length > DONE_VISIBLE && (
+            <button type="button" onClick={() => setShowAllDone(v => !v)}
+              style={{ alignSelf: 'flex-start', background: 'none', border: 'none',
+                       color: colors.primary, cursor: 'pointer', fontSize: 12,
+                       padding: '2px 0', fontFamily: 'inherit', textDecoration: 'underline' }}>
+              {showAllDone ? 'Sbalit ▴' : `Zobrazit všechny hotové (${done.length}) ▾`}
+            </button>
+          )}
         </>
       )}
     </div>
