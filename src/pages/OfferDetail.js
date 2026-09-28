@@ -3016,6 +3016,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     };
   };
 
+  // Potvrzené hotely, které NEJSOU zaškrtnuté pro kalkulaci (typicky druhý
+  // hotel ve stejném městě, potvrzený jen kvůli výběru pro klienta). Dokud
+  // nejsou zrušené, visí v horní liště velké upozornění — jinak by se na ně
+  // zapomnělo a hrozil by storno poplatek. Předschválené hotely upozornění
+  // nespouští, závazně potvrzené ještě nejsou.
+  const strayConfirmed = (items || []).filter(it =>
+    it.type === 'per_pax' && it.subType === 'hotel'
+    && it.enabled === false
+    && itemStatus(it) === 'confirmed');
+
   return (
     <div>
       {/* Lišta se stavem ukládání. Drží se nahoře i při rolování a nikdy nemizí —
@@ -3023,7 +3033,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           Sem později přibude i informace, kdo je v nabídce a kdo ji upravuje. */}
       <div style={{
         position: 'sticky', top: 0, zIndex: 900,
-        display: 'flex', alignItems: 'center', gap: 12,
+        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
         padding: '8px 14px', marginBottom: '0.75rem',
         borderRadius: 8, fontSize: 13,
         background: saveState === 'error' ? '#FEF2F2' : (saveState === 'blocked' ? '#FFFBEB' : colors.white),
@@ -3097,6 +3107,32 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           style={{ padding: '5px 14px', background: isLocked ? colors.border : colors.primary, color: isLocked ? colors.muted : colors.white, border: 'none', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', cursor: isLocked ? 'default' : 'pointer', fontWeight: 500 }}>
           Uložit
         </button>
+        {strayConfirmed.length > 0 && (
+          <div style={{
+            flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 4,
+            background: '#FFF7ED', border: '2px solid #ea580c', borderRadius: 6,
+            padding: '8px 12px', color: '#9a3412',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>
+              ⚠ {strayConfirmed.length === 1
+                ? '1 potvrzený hotel není ve výběru pro kalkulaci'
+                : `${strayConfirmed.length} potvrzené hotely nejsou ve výběru pro kalkulaci`}
+              <span style={{ fontWeight: 400, fontSize: 12 }}> — zaškrtněte ho, nebo ho u hotelu zrušte a nastavte stav Zrušeno</span>
+            </div>
+            {strayConfirmed.map(it => (
+              <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>{[it.city, it.name].filter(Boolean).join(' – ') || 'hotel bez názvu'}</span>
+                {(it.dateFrom || it.dateTo) && (
+                  <span style={{ fontSize: 12 }}>{fmtDateBR(it.dateFrom) || '?'} – {fmtDateBR(it.dateTo) || '?'}</span>
+                )}
+                <button onClick={() => jumpToItem(it.id)}
+                  style={{ padding: '2px 8px', background: '#fff', color: '#9a3412', border: '1px solid #ea580c', borderRadius: 5, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>
+                  ↓ Na kartu
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
