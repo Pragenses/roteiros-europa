@@ -26,8 +26,16 @@ const BOOKING_STATUS = [
   { value: '',            label: 'Stav?',        border: null,      bg: '#fff',    color: null },
   { value: 'requested',   label: '🟡 Poptáno',   border: '#854f0b', bg: '#fff8e1', color: '#854f0b' },
   { value: 'negotiating', label: '🟠 V jednání', border: '#c2410c', bg: '#ffedd5', color: '#c2410c' },
+  { value: 'preapproved', label: '🔵 Předschváleno', border: '#1d4ed8', bg: '#dbeafe', color: '#1d4ed8' },
   { value: 'confirmed',   label: '🟢 Potvrzeno', border: '#2d6a4f', bg: '#e8f5e9', color: '#2d6a4f' },
+  { value: 'cancelled',   label: '🔴 Zrušeno',   border: '#dc2626', bg: '#fee2e2', color: '#dc2626' },
 ];
+
+// "Zrušeno" má v aplikaci jedinou pravdu: příznak it.cancelled (ten, který
+// nastavuje i tlačítko 🚫 po odeslání storna). bookingStatus se při zrušení
+// NEMĚNÍ — díky tomu se po "ZRUŠENO ✕" (vrátit) karta sama vrátí do stavu,
+// ve kterém byla předtím. Stav položky se proto vždy čte přes tuto funkci.
+const itemStatus = (it) => (it && it.cancelled) ? 'cancelled' : ((it && it.bookingStatus) || '');
 
 // Deposit actually PAID OUT to the supplier for one line item. Not to be
 // confused with the client ledger in Clients.js, which tracks money coming IN.
@@ -1259,7 +1267,7 @@ const HotelSummaryRow = ({ it, colors }) => {
   const perPaxDbl = getEffectiveCostDbl(it);
   const perPaxSngl = getEffectiveCostSngl(it);
 
-  const st = BOOKING_STATUS.find(o => o.value === (it.bookingStatus || '')) || BOOKING_STATUS[0];
+  const st = BOOKING_STATUS.find(o => o.value === itemStatus(it)) || BOOKING_STATUS[0];
 
   const deposits = Array.isArray(it.deposits) ? it.deposits : [];
   const depositsTotal = deposits.reduce((s, d) => s + readAmount(d.amount), 0);
@@ -1307,11 +1315,6 @@ const HotelSummaryRow = ({ it, colors }) => {
         </span>
         {taxDbl > 0 && <span style={cell}>· taxa {fmtMoney(taxDbl)} {cur}</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          {it.cancelled && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#dc2626', padding: '2px 6px', borderRadius: 4 }}>
-              ZRUŠENO
-            </span>
-          )}
           <span style={{
             fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
             background: st.bg, color: st.color, border: `1px solid ${st.border}`,
@@ -2219,6 +2222,14 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   // Same as updateItem but sets several fields on the item at once (used for attachments,
   // where filename + URL + storage path must all land together in a single save).
+  // Volba stavu v menu. "Zrušeno" jen nastaví příznak cancelled (bez e-mailu);
+  // volba jiného stavu u zrušené karty zrušení zároveň vrátí.
+  const pickBookingStatus = (it, v) => {
+    if (v === 'cancelled') updateItem(it.id, 'cancelled', true);
+    else if (it.cancelled) updateItemFields(it.id, { cancelled: false, bookingStatus: v });
+    else updateItem(it.id, 'bookingStatus', v);
+  };
+
   const updateItemFields = (id, fields) => {
     setItems(prev => {
       const newItems = prev.map(it => it.id === id ? { ...it, ...fields } : it);
@@ -3626,7 +3637,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     )}
                     {isHotel && (
                       <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <BookingStatusSelect value={it.bookingStatus} onChange={v => updateItem(it.id, 'bookingStatus', v)} colors={colors} />
+                        <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
                         <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} />
                         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                           <span style={{ fontSize: 9, color: colors.muted }}>Option:</span>
@@ -3662,7 +3673,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                         second line just for the attachment they already had. */}
                     {!isHotel && (
                       <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <BookingStatusSelect value={it.bookingStatus} onChange={v => updateItem(it.id, 'bookingStatus', v)} colors={colors} />
+                        <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
                         <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} />
                         {(isTicket || isTransportGroup) && (
                           <HotelAttachment
