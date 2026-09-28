@@ -310,6 +310,8 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
         allOffers.forEach(offer => {
           (offer.items || []).forEach(item => {
             if (!(item.type === 'per_pax' && item.subType === 'hotel')) return;
+            // Zrušený hotel už opci ani storno lhůtu hlídat nepotřebuje.
+            if (item.cancelled) return;
             if (item.optionDate && item.bookingStatus !== 'confirmed') {
               const diff = Math.round((new Date(item.optionDate) - today) / 86400000);
               if (diff <= 14) hTasks.push({ kind: 'option', offerId: offer.id, offerName: offer.name, hotelName: item.name, date: item.optionDate, diff });
