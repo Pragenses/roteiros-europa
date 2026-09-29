@@ -1410,10 +1410,30 @@ const HotelSummaryRow = ({ it, colors }) => {
 };
 
 const HotelSummary = ({ items, colors }) => {
-  // Jen zaškrtnuté hotelové karty, ve stejném pořadí jako dole v nabídce.
-  const hotels = (items || []).filter(it => it.enabled !== false && it.subType === 'hotel');
+  // Zaškrtnuté hotelové karty, ve stejném pořadí jako dole v nabídce.
+  const all = (items || []).filter(it => it.subType === 'hotel');
+  const hotels = all.filter(it => it.enabled !== false);
+  // Alternativy: potvrzené, ale nezaškrtnuté hotely (viz upozornění v horní
+  // liště). Zobrazí se hned pod posledním vybraným hotelem ve stejném městě;
+  // když v tom městě žádný vybraný hotel není, zůstanou na svém místě.
+  const strays = all.filter(it => it.enabled === false && itemStatus(it) === 'confirmed');
 
-  if (hotels.length === 0) return null;
+  if (hotels.length === 0 && strays.length === 0) return null;
+
+  const cityKey = (it) => String(it.city || '').trim().toLowerCase();
+  const lastSelectedOfCity = {};
+  hotels.forEach(it => { if (cityKey(it)) lastSelectedOfCity[cityKey(it)] = it.id; });
+  const rows = [];
+  all.forEach(it => {
+    if (it.enabled !== false) {
+      rows.push({ it, alt: false });
+      if (lastSelectedOfCity[cityKey(it)] === it.id) {
+        strays.filter(x => cityKey(x) === cityKey(it)).forEach(x => rows.push({ it: x, alt: true }));
+      }
+    } else if (strays.includes(it) && !(cityKey(it) && lastSelectedOfCity[cityKey(it)])) {
+      rows.push({ it, alt: true });
+    }
+  });
 
   return (
     <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
@@ -1422,11 +1442,25 @@ const HotelSummary = ({ items, colors }) => {
         <span style={{ fontSize: 12, fontWeight: 600, background: '#eef2f7', color: colors.primary, padding: '2px 8px', borderRadius: 10 }}>
           {hotels.length}
         </span>
+        {strays.length > 0 && (
+          <span style={{ fontSize: 12, fontWeight: 700, background: '#FFF7ED', color: '#9a3412', border: '1px solid #ea580c', padding: '1px 8px', borderRadius: 10 }}>
+            ⚠ + {strays.length} {strays.length === 1 ? 'alternativa' : 'alternativy'}
+          </span>
+        )}
         <span style={{ marginLeft: 'auto', fontSize: 11, color: colors.muted }}>
           klikněte na hotel pro rozpis
         </span>
       </div>
-      {hotels.map(it => <HotelSummaryRow key={it.id} it={it} colors={colors} />)}
+      {rows.map(({ it, alt }) => alt ? (
+        <div key={it.id} style={{ marginLeft: 18, paddingLeft: 10, borderLeft: '3px solid #ea580c', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#9a3412', marginBottom: 3 }}>
+            ⚠ ALTERNATIVA – potvrzeno, není v kalkulaci
+          </div>
+          <HotelSummaryRow it={it} colors={colors} />
+        </div>
+      ) : (
+        <HotelSummaryRow key={it.id} it={it} colors={colors} />
+      ))}
     </div>
   );
 };
@@ -3395,7 +3429,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <TaskList todos={offer.todos} onChange={handleTodos} colors={colors} items={items} />
       </div>
 
-      <HotelSummary items={activeItems} colors={colors} />
+      <HotelSummary items={items} colors={colors} />
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         {showItineraryBox && (
