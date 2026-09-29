@@ -281,7 +281,7 @@ export default function App() {
     }
     if (page === 'offer-print') return <OfferPrint offerId={selectedOffer} navigate={navigate} colors={COLORS} />;
     if (page === 'dashboard') return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
-    if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} />;
+    if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
     if (page === 'clients') return <Clients navigate={navigate} colors={COLORS} />;
     if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
     if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
