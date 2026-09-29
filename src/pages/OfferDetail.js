@@ -2112,29 +2112,41 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     });
   };
 
+  // Přesun karty o jedno místo (šipky ▲▼). Funkční zápis, aby se nepracovalo
+  // se zastaralým seznamem.
   const moveItem = (index, direction) => {
-    const newItems = [...items];
-    const target = index + direction;
-    if (target < 0 || target >= newItems.length) return;
-    [newItems[index], newItems[target]] = [newItems[target], newItems[index]];
-    setItems(newItems);
+    setItems(prev => {
+      const target = index + direction;
+      if (target < 0 || target >= prev.length) return prev;
+      const newItems = [...prev];
+      [newItems[index], newItems[target]] = [newItems[target], newItems[index]];
+      return newItems;
+    });
   };
 
-  const dragItem = React.useRef(null);
-  const dragOverItem = React.useRef(null);
-
-  const handleDragStart = (idx) => { dragItem.current = idx; };
-  const handleDragEnter = (idx) => { dragOverItem.current = idx; };
+  // Přetahování myší: kartu lze chytit JEN za úchyt ⠿ (dragArmedId), jinak by
+  // se tah pletl s označováním textu v políčkách. dragFrom/dragOver drží stav
+  // pro zobrazení čáry, kam karta dopadne.
+  const [dragArmedId, setDragArmedId] = React.useState(null);
+  const [dragFrom, setDragFrom] = React.useState(null);
+  const [dragOver, setDragOverIdx] = React.useState(null);
+  const handleDragStart = (e, idx) => {
+    setDragFrom(idx);
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)); } catch (err) {}
+  };
+  const handleDragEnter = (idx) => { if (dragFrom !== null) setDragOverIdx(idx); };
   const handleDragEnd = () => {
-    const from = dragItem.current;
-    const to = dragOverItem.current;
-    if (from === null || to === null || from === to) { dragItem.current = null; dragOverItem.current = null; return; }
-    const newItems = [...items];
-    const dragged = newItems.splice(from, 1)[0];
-    newItems.splice(to, 0, dragged);
-    setItems(newItems);
-    dragItem.current = null;
-    dragOverItem.current = null;
+    const from = dragFrom;
+    const to = dragOver;
+    setDragFrom(null); setDragOverIdx(null); setDragArmedId(null);
+    if (from === null || to === null || from === to) return;
+    setItems(prev => {
+      if (from >= prev.length || to >= prev.length) return prev;
+      const newItems = [...prev];
+      const dragged = newItems.splice(from, 1)[0];
+      newItems.splice(to, 0, dragged);
+      return newItems;
+    });
   };
 
   const updateItem = (id, field, value) => {
@@ -2591,6 +2603,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   }, [othersPresent, userEmail, myClaimAt, presenceTick]);
 
   const canEdit = baton.canEdit;
+  // Pořadí karet smí měnit jen ten, kdo nabídku právě upravuje, a ne u zamčené.
+  const canMoveCards = !isLocked && canEdit;
+  const arrowBtn = (disabled) => ({
+    border: 'none', background: 'transparent', cursor: disabled ? 'default' : 'pointer',
+    color: disabled ? '#ccc' : colors.muted, fontSize: 10, padding: '0 2px', fontFamily: 'inherit', lineHeight: 1,
+  });
   const canEditRef = React.useRef(true);
   useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
 
@@ -3651,15 +3669,25 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                 <React.Fragment key={it.id}>
                 <div ref={it.id === newItemId ? newItemRef : null}
                   data-item-id={String(it.id)}
-                  draggable
-                  onDragStart={() => handleDragStart(idx)}
+                  draggable={canMoveCards && dragArmedId === it.id}
+                  onDragStart={e => { if (!canMoveCards || dragArmedId !== it.id) { e.preventDefault(); return; } handleDragStart(e, idx); }}
                   onDragEnter={() => handleDragEnter(idx)}
                   onDragEnd={handleDragEnd}
                   onDragOver={e => e.preventDefault()}
-                  style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth, opacity: isEnabled ? 1 : 0.45, cursor: 'grab' }}>
+                  onDrop={e => e.preventDefault()}
+                  style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth,
+                    opacity: dragFrom === idx ? 0.35 : (isEnabled ? 1 : 0.45),
+                    boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
                     <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-                    <span title="Přetáhněte pro přesunutí" style={{ fontSize: 14, color: colors.muted, cursor: 'grab', lineHeight: 1, userSelect: 'none' }}>⠿</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <button type="button" title="Posunout výš" disabled={!canMoveCards || idx === 0} onClick={() => moveItem(idx, -1)} style={arrowBtn(!canMoveCards || idx === 0)}>▲</button>
+                      <span title={canMoveCards ? 'Chyťte a přetáhněte' : 'Nabídku teď nelze upravovat'}
+                        onMouseDown={() => { if (canMoveCards) setDragArmedId(it.id); }}
+                        onMouseUp={() => setDragArmedId(null)}
+                        style={{ fontSize: 14, color: canMoveCards ? colors.muted : '#ccc', cursor: canMoveCards ? 'grab' : 'default', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}>⠿</span>
+                      <button type="button" title="Posunout níž" disabled={!canMoveCards || idx === items.length - 1} onClick={() => moveItem(idx, 1)} style={arrowBtn(!canMoveCards || idx === items.length - 1)}>▼</button>
+                    </div>
                   </div>
                   <div>
                     {isHotel ? (
