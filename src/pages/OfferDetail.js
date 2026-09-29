@@ -2817,6 +2817,17 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   };
 
   const handleConvertToOrder = async () => {
+    // Potvrzené, ale nezaškrtnuté hotely se do zakázky NEpřenesou — upozornit.
+    const strays = (itemsRef.current || []).filter(it =>
+      it.type === 'per_pax' && it.subType === 'hotel' && it.enabled === false && itemStatus(it) === 'confirmed');
+    if (strays.length > 0) {
+      const names = strays.map(it => '• ' + ([it.city, it.name].filter(Boolean).join(' – ') || 'hotel bez názvu')).join('\n');
+      const ok = window.confirm(
+        '⚠ POZOR: tyto POTVRZENÉ hotely nejsou ve výběru a do zakázky se NEPŘENESOU:\n\n' + names +
+        '\n\nNezapomeňte je u hotelu zrušit a v nabídce nastavit stav Zrušeno (dál je hlídá Dashboard i kalendář).' +
+        '\n\nPokračovat v převodu na zakázku?');
+      if (!ok) return;
+    }
     if (!window.confirm('Create a new Order from this offer? Hotels and tickets will be copied as services.')) return;
     const data = {
       name: offer.name,

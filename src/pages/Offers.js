@@ -22,6 +22,19 @@ const CLIENT_PALETTE = [
   '#E0F7FA', '#FFF3E0', '#F9FBE7', '#EDE7F6', '#E8EAF6',
 ];
 
+// Počet potvrzených, ale nezaškrtnutých a nezrušených hotelů (alternativ).
+const strayHotelCount = (o) => (o.items || []).filter(it =>
+  it.type === 'per_pax' && it.subType === 'hotel' && it.enabled === false && !it.cancelled && it.bookingStatus === 'confirmed').length;
+const StrayBadge = ({ o }) => {
+  const n = strayHotelCount(o);
+  if (n === 0) return null;
+  return (
+    <span title="Potvrzený hotel mimo výběr pro kalkulaci" style={{ fontSize: 11, fontWeight: 700, color: '#9a3412', background: '#FFF7ED', border: '1px solid #ea580c', borderRadius: 10, padding: '1px 7px', flexShrink: 0 }}>
+      ⚠ {n} {n === 1 ? 'alternativa' : 'alternativy'}
+    </span>
+  );
+};
+
 export default function Offers({ navigate, colors, userRole, userEmail }) {
   const [offers, setOffers] = useState([]);
   const [clients, setClients] = useState([]);
@@ -130,6 +143,7 @@ export default function Offers({ navigate, colors, userRole, userEmail }) {
             ? <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', background: '#EEF2F7', color: '#334', borderRadius: 5, padding: '2px 6px', flexShrink: 0 }}>{o.offerNumber}</span>
             : null}
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+          <StrayBadge o={o} />
         </div>
         <div style={{ fontSize: 12, color: colors.muted }}>
           {showClient ? `${o.clientName || '— No client —'} · ` : ''}

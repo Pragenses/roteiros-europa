@@ -54,6 +54,19 @@ const dmy = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
 
 const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
+// Počet potvrzených, ale nezaškrtnutých a nezrušených hotelů (alternativ).
+const strayHotelCount = (o) => (o.items || []).filter(it =>
+  it.type === 'per_pax' && it.subType === 'hotel' && it.enabled === false && !it.cancelled && it.bookingStatus === 'confirmed').length;
+const StrayBadge = ({ o }) => {
+  const n = strayHotelCount(o);
+  if (n === 0) return null;
+  return (
+    <span title="Potvrzený hotel mimo výběr pro kalkulaci" style={{ fontSize: 11, fontWeight: 700, color: '#9a3412', background: '#FFF7ED', border: '1px solid #ea580c', borderRadius: 10, padding: '1px 7px', flexShrink: 0 }}>
+      ⚠ {n} {n === 1 ? 'alternativa' : 'alternativy'}
+    </span>
+  );
+};
+
 export default function OffersWorkflow({ navigate, colors, userRole, userEmail }) {
   const myCode = codeForEmail(userEmail);
   const saved = loadFilters();
@@ -199,6 +212,7 @@ export default function OffersWorkflow({ navigate, colors, userRole, userEmail }
             <span style={{ fontSize: 14, fontWeight: 600, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {o.name || '(bez názvu)'}
             </span>
+            <StrayBadge o={o} />
           </div>
           <div style={{ fontSize: 12, color: colors.muted, marginTop: 2, display: 'flex', flexWrap: 'wrap', gap: '2px 10px', alignItems: 'center' }}>
             <span>{o.clientName || '— bez klienta —'}</span>
