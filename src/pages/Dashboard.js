@@ -211,6 +211,8 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({ active: 0, clients: 0, urgentOptions: 0 });
   const [hotelTasks, setHotelTasks] = useState([]);
+  // Potvrzené hotely mimo výběr pro kalkulaci (alternativy) ze všech nabídek.
+  const [strayHotels, setStrayHotels] = useState([]);
   const [balanceTasks, setBalanceTasks] = useState([]);
   const [noteBoard, setNoteBoard] = useState([]);
   const [wipOffers, setWipOffers] = useState([]);
@@ -324,6 +326,31 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
         });
         hTasks.sort((a, b) => a.diff - b.diff);
         setHotelTasks(hTasks);
+
+        // Potvrzené, ale nezaškrtnuté a nezrušené hotely — ze VŠECH nabídek,
+        // i odmítnutých a už převedených na zakázku (tam se alternativa
+        // nepřenesla, takže hrozí, že se na ni zapomene).
+        const strays = [];
+        offSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(o => userRole !== 'limited' || (o.allowedUsers || []).includes(userEmail))
+          .forEach(offer => {
+            (offer.items || []).forEach(item => {
+              if (!(item.type === 'per_pax' && item.subType === 'hotel')) return;
+              if (item.enabled !== false || item.cancelled || item.bookingStatus !== 'confirmed') return;
+              const diff = item.cancellationDeadline
+                ? Math.round((new Date(item.cancellationDeadline) - today) / 86400000) : null;
+              strays.push({
+                key: offer.id + '-' + item.id, offerId: offer.id,
+                offerLabel: [offer.offerNumber, offer.name].filter(Boolean).join(' · ') || '(bez názvu)',
+                clientName: offer.clientName || '', declined: !!offer.declined,
+                hotelLabel: [item.city, item.name].filter(Boolean).join(' – ') || 'hotel bez názvu',
+                deadline: item.cancellationDeadline || '', diff,
+              });
+            });
+          });
+        // Nejdřív hotely bez storno lhůty, pak podle nejbližší lhůty.
+        strays.sort((a, b) => (a.diff === null ? -99999 : a.diff) - (b.diff === null ? -99999 : b.diff));
+        setStrayHotels(strays);
 
         // Poznámky a nesplněné úkoly ze všech nabídek — včetně zápisů, které
         // leží u jednotlivých hotelů a služeb.
@@ -695,6 +722,25 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           )}
         </div>
       </div>
+      {strayHotels.length > 0 && (
+        <div style={{ background: '#FFF7ED', border: '2px solid #ea580c', borderRadius: 10, padding: '0.875rem 1.25rem', marginBottom: '1.25rem', color: '#9a3412' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
+            ⚠ Potvrzené hotely mimo výběr ({strayHotels.length})
+            <span style={{ fontSize: 12, fontWeight: 400 }}> — zaškrtněte je v nabídce, nebo je u hotelu zrušte a nastavte stav Zrušeno</span>
+          </div>
+          {strayHotels.map(h => (
+            <div key={h.key} onClick={() => navigate('offer-detail', { offerId: h.offerId })}
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '6px 8px', borderTop: '1px solid #fed7aa', cursor: 'pointer', fontSize: 13 }}>
+              <span style={{ fontWeight: 700 }}>{h.hotelLabel}</span>
+              <span>{h.offerLabel}{h.clientName ? ` · ${h.clientName}` : ''}{h.declined ? ' (odmítnutá nabídka)' : ''}</span>
+              <span style={{ marginLeft: 'auto', fontWeight: 700, color: (h.diff === null || h.diff <= 7) ? '#dc2626' : '#9a3412' }}>
+                {h.diff === null ? 'chybí storno lhůta'
+                  : `storno do ${h.deadline.split('-').reverse().join('.')} · ` + (h.diff < 0 ? `${-h.diff} dní po lhůtě` : h.diff === 0 ? 'dnes' : `za ${h.diff} dní`)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {orderedSections.map((id, idx) => (
         <SectionFrame key={id} id={id} idx={idx} total={orderedSections.length} visible
           colors={colors} onMove={onMove} dragState={dragState}>
