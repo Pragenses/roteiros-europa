@@ -1486,6 +1486,23 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Příchod z kalendáře (klik na opci, storno lhůtu, úkol…): po načtení
+  // nabídky sjede rovnou na danou servisní kartu. Karta se může vykreslit
+  // o chvilku později, proto se to pár krát zkusí.
+  useEffect(() => {
+    if (loading) return undefined;
+    let target = null;
+    try { target = JSON.parse(sessionStorage.getItem('focusCard') || 'null'); } catch (e) {}
+    if (!target || target.offerId !== offerId) return undefined;
+    try { sessionStorage.removeItem('focusCard'); } catch (e) {}
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      if (jumpToItem(target.itemId) || tries > 20) clearInterval(timer);
+    }, 150);
+    return () => clearInterval(timer);
+  }, [loading, offerId]);
   const [showSplit, setShowSplit] = useState(false);
 
   const fetchData = useCallback(async () => {
