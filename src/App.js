@@ -94,6 +94,18 @@ export default function App() {
   const selectedOfferRef = React.useRef(initial.page === 'offer-detail' || initial.page === 'offer-print' ? initial.id : null);
   const [page, setPage] = useState(initial.page);
   const [navParams, setNavParams] = useState({});
+  // Telefon = uzka obrazovka. Na pocitaci (i na iPadu) zustava vse jako dosud.
+  const MOBILE_QUERY = '(max-width: 768px)';
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(MOBILE_QUERY).matches : false);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener('change', onChange); else mq.addListener(onChange);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange); };
+  }, []);
+  const [mSheet, setMSheet] = useState(null); // null | 'more' | 'search'
   const [email, setEmail] = useState('');
   const userRole = user ? (USER_ROLES[user.email] === 'limited' ? 'limited' : 'owner') : null;
 
@@ -209,6 +221,7 @@ export default function App() {
     // hledani pracovalo s aktualnim stavem (nova nabidka, zmeneny nazev).
     setGData(null);
     gFetching.current = false;
+    setMSheet(null);
     setNavParams(data || {});
     const id = data?.offerId || data?.orderId || null;
     const target = '#' + p + (id ? '/' + id : '');
@@ -267,50 +280,8 @@ export default function App() {
     </div>
   );
 
-  const renderPage = () => {
-    if (page === 'order-detail') return <OrderDetail orderId={selectedOrder} navigate={navigate} colors={COLORS} />;
-    if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
-    if (page === 'offers-workflow') return <OffersWorkflow navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
-    if (page === 'offer-detail') {
-      const oid = selectedOfferRef.current || selectedOffer;
-      return oid
-        ? <OfferDetail offerId={oid} navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />
-        : <div style={{ padding: 40, color: COLORS.muted }}>
-            <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
-          </div>;
-    }
-    if (page === 'offer-print') return <OfferPrint offerId={selectedOffer} navigate={navigate} colors={COLORS} />;
-    if (page === 'dashboard') return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
-    if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
-    if (page === 'clients') return <Clients navigate={navigate} colors={COLORS} />;
-    if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
-    if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
-    if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} navParams={navParams} />;
-    if (page === 'bus')       return <Bus navigate={navigate} colors={COLORS} navParams={navParams} />;
-    if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
-    if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
-    if (page === 'settings')  return <Settings colors={COLORS} />;
-    return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
-  };
-
-  const visibleNav = NAV.filter(n => !n.ownerOnly || userRole === 'owner');
-
-  return (
-    <div className="app-shell" style={{ display: 'flex', height: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
-      <style>{`@media print { .app-sidebar { display: none !important; } .app-shell { display: block !important; height: auto !important; } .app-main { margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; } }`}</style>
-      <aside className="app-sidebar" style={{ width: 220, background: COLORS.primary, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        <div style={{ padding: '1.5rem 1.25rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.1em', color: COLORS.accent, marginBottom: 4 }}>EURO ESTRELLA DMC</div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.white }}>Roteiros Europa</div>
-        </div>
-        <div style={{ padding: '0.875rem 1rem 0', position: 'relative' }}>
-          <input value={gQuery} onChange={e => setGQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Escape') setGQuery(''); }}
-            placeholder="Hledat…"
-            style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.08)', color: COLORS.white, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }} />
-          {gOpen && (
-            <div style={{ position: 'absolute', top: '100%', left: 12, width: 380, maxHeight: 460, overflowY: 'auto', background: COLORS.white, border: `1px solid ${COLORS.border}`, borderRadius: 10, boxShadow: '0 10px 28px rgba(0,0,0,0.22)', zIndex: 50, marginTop: 6 }}>
-              {gLoading || !gData ? (
+  const searchResults = (
+    gLoading || !gData ? (
                 <div style={{ padding: '12px 14px', fontSize: 13, color: COLORS.muted }}>Načítám…</div>
               ) : (gOffers.length === 0 && gOrders.length === 0) ? (
                 <div style={{ padding: '12px 14px', fontSize: 13, color: COLORS.muted }}>Nic nenalezeno.</div>
@@ -351,7 +322,167 @@ export default function App() {
                     </div>
                   )}
                 </>
+              )
+  );
+
+  const renderPage = () => {
+    if (page === 'order-detail') return <OrderDetail orderId={selectedOrder} navigate={navigate} colors={COLORS} />;
+    if (page === 'offers') return <Offers navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
+    if (page === 'offers-workflow') return <OffersWorkflow navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
+    if (page === 'offer-detail') {
+      const oid = selectedOfferRef.current || selectedOffer;
+      return oid
+        ? <OfferDetail offerId={oid} navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />
+        : <div style={{ padding: 40, color: COLORS.muted }}>
+            <button onClick={() => navigate('offers')} style={{ color: COLORS.primary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>← Zpět na nabídky</button>
+          </div>;
+    }
+    if (page === 'offer-print') return <OfferPrint offerId={selectedOffer} navigate={navigate} colors={COLORS} />;
+    if (page === 'dashboard') return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
+    if (page === 'calendar') return <Calendar navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
+    if (page === 'clients') return <Clients navigate={navigate} colors={COLORS} />;
+    if (page === 'orders') return <Orders navigate={navigate} colors={COLORS} />;
+    if (page === 'providers') return <Providers navigate={navigate} colors={COLORS} navParams={navParams} />;
+    if (page === 'hotels')    return <Hotels navigate={navigate} colors={COLORS} navParams={navParams} />;
+    if (page === 'bus')       return <Bus navigate={navigate} colors={COLORS} navParams={navParams} />;
+    if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
+    if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
+    if (page === 'settings')  return <Settings colors={COLORS} />;
+    return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
+  };
+
+  const visibleNav = NAV.filter(n => !n.ownerOnly || userRole === 'owner');
+
+  // ── Telefonni rozlozeni ──────────────────────────────────────────────
+  // Jen na uzke obrazovce. Stranky samotne se nemeni: dostanou jen vic mista
+  // a misto bocniho menu je nahore lista a dole panel s nejcastejsimi strankami.
+  if (isMobile) {
+    const TAB_IDS = ['dashboard', 'offers-workflow', 'calendar', 'orders'];
+    const tabs = TAB_IDS.map(id => visibleNav.find(n => n.id === id)).filter(Boolean);
+    const moreNav = visibleNav.filter(n => !TAB_IDS.includes(n.id));
+    const TAB_LABELS = { 'dashboard': 'Dashboard', 'offers-workflow': 'Workflow', 'calendar': 'Kalendář', 'orders': 'Zakázky' };
+    const tabActive = (id) =>
+      page === id ||
+      (id === 'offers-workflow' && (page === 'offer-detail' || page === 'offer-print')) ||
+      (id === 'orders' && page === 'order-detail');
+    const moreActive = !tabs.some(t => tabActive(t.id));
+    const titleFor = () => {
+      if (page === 'offer-detail' || page === 'offer-print') return 'Nabídka';
+      if (page === 'order-detail') return 'Zakázka';
+      return (NAV.find(n => n.id === page) || NAV[0]).label;
+    };
+    const barBtn = { background: 'none', border: 'none', color: COLORS.white, fontSize: 20, padding: '6px 8px', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 };
+
+    return (
+      <div className="app-shell app-shell-m" style={{ display: 'flex', flexDirection: 'column', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
+        <style>{`
+          .app-shell-m { height: 100vh; height: 100dvh; }
+          @media print { .m-bar, .m-tabs, .m-sheet { display: none !important; } .app-shell { display: block !important; height: auto !important; } .app-main { margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; } }
+          /* iPhone priblizuje stranku, kdyz ma pole pismo mensi nez 16 px */
+          .app-shell-m input, .app-shell-m select, .app-shell-m textarea { font-size: 16px !important; }
+        `}</style>
+
+        <header className="m-bar" style={{ background: COLORS.primary, color: COLORS.white, paddingTop: 'env(safe-area-inset-top)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px 8px 14px', minHeight: 48 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: COLORS.accent }}>ROTEIROS EUROPA</div>
+              <div style={{ fontSize: 17, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleFor()}</div>
+            </div>
+            <button aria-label="Hledat" onClick={() => setMSheet('search')} style={barBtn}>🔍</button>
+          </div>
+        </header>
+
+        <main className="app-main" style={{ flex: 1, overflow: 'auto', WebkitOverflowScrolling: 'touch', padding: '12px 10px 16px' }}>
+          <ErrorBoundary>
+            {renderPage()}
+          </ErrorBoundary>
+        </main>
+
+        <nav className="m-tabs" style={{ display: 'flex', background: COLORS.white, borderTop: `1px solid ${COLORS.border}`, paddingBottom: 'env(safe-area-inset-bottom)', flexShrink: 0 }}>
+          {tabs.map(t => {
+            const on = tabActive(t.id);
+            return (
+              <button key={t.id} onClick={() => navigate(t.id)}
+                style={{ flex: 1, background: 'none', border: 'none', borderTop: `3px solid ${on ? COLORS.accent : 'transparent'}`, padding: '6px 2px 8px', cursor: 'pointer', fontFamily: 'inherit', color: on ? COLORS.primary : COLORS.muted, fontWeight: on ? 700 : 400 }}>
+                <div style={{ fontSize: 20, lineHeight: 1.2 }}>{t.icon}</div>
+                <div style={{ fontSize: 11 }}>{TAB_LABELS[t.id] || t.label}</div>
+              </button>
+            );
+          })}
+          <button onClick={() => setMSheet('more')}
+            style={{ flex: 1, background: 'none', border: 'none', borderTop: `3px solid ${moreActive ? COLORS.accent : 'transparent'}`, padding: '6px 2px 8px', cursor: 'pointer', fontFamily: 'inherit', color: moreActive ? COLORS.primary : COLORS.muted, fontWeight: moreActive ? 700 : 400 }}>
+            <div style={{ fontSize: 20, lineHeight: 1.2 }}>☰</div>
+            <div style={{ fontSize: 11 }}>Další</div>
+          </button>
+        </nav>
+
+        {mSheet && (
+          <div className="m-sheet" onClick={() => { setMSheet(null); setGQuery(''); }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2000, display: 'flex', flexDirection: 'column', justifyContent: mSheet === 'search' ? 'flex-start' : 'flex-end' }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ background: COLORS.white, maxHeight: '85%', display: 'flex', flexDirection: 'column',
+                borderRadius: mSheet === 'search' ? '0 0 14px 14px' : '14px 14px 0 0',
+                paddingTop: mSheet === 'search' ? 'env(safe-area-inset-top)' : 0,
+                paddingBottom: mSheet === 'search' ? 0 : 'env(safe-area-inset-bottom)' }}>
+              {mSheet === 'search' ? (
+                <>
+                  <div style={{ display: 'flex', gap: 8, padding: 12, borderBottom: `1px solid ${COLORS.border}` }}>
+                    <input autoFocus value={gQuery} onChange={e => setGQuery(e.target.value)}
+                      placeholder="Hledat nabídku, zakázku, číslo…"
+                      style={{ flex: 1, padding: '10px 12px', border: `1px solid ${COLORS.border}`, borderRadius: 8, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                    <button onClick={() => { setMSheet(null); setGQuery(''); }}
+                      style={{ background: 'none', border: 'none', color: COLORS.primary, fontSize: 15, fontFamily: 'inherit', cursor: 'pointer', padding: '0 4px' }}>Zavřít</button>
+                  </div>
+                  <div style={{ overflowY: 'auto' }}>
+                    {gOpen
+                      ? searchResults
+                      : <div style={{ padding: '14px', fontSize: 13, color: COLORS.muted }}>Napište aspoň 2 znaky.</div>}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.border, margin: '8px auto 4px' }} />
+                  <div style={{ overflowY: 'auto' }}>
+                    {moreNav.map(n => {
+                      const on = page === n.id;
+                      return (
+                        <button key={n.id} onClick={() => navigate(n.id)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 20px', background: on ? 'rgba(200,168,75,0.15)' : 'none', border: 'none', borderBottom: `1px solid ${COLORS.border}`, fontSize: 16, fontFamily: 'inherit', color: COLORS.text, cursor: 'pointer', textAlign: 'left' }}>
+                          <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>{n.icon}</span>
+                          {n.label}
+                        </button>
+                      );
+                    })}
+                    <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <span style={{ fontSize: 12, color: COLORS.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</span>
+                      <button onClick={handleLogout} style={{ fontSize: 14, color: COLORS.danger, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>Odhlásit</button>
+                    </div>
+                  </div>
+                </>
               )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-shell" style={{ display: 'flex', height: '100vh', background: COLORS.bg, fontFamily: 'Georgia, serif' }}>
+      <style>{`@media print { .app-sidebar { display: none !important; } .app-shell { display: block !important; height: auto !important; } .app-main { margin: 0 !important; padding: 0 !important; height: auto !important; overflow: visible !important; } }`}</style>
+      <aside className="app-sidebar" style={{ width: 220, background: COLORS.primary, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        <div style={{ padding: '1.5rem 1.25rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.1em', color: COLORS.accent, marginBottom: 4 }}>EURO ESTRELLA DMC</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.white }}>Roteiros Europa</div>
+        </div>
+        <div style={{ padding: '0.875rem 1rem 0', position: 'relative' }}>
+          <input value={gQuery} onChange={e => setGQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Escape') setGQuery(''); }}
+            placeholder="Hledat…"
+            style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.08)', color: COLORS.white, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }} />
+          {gOpen && (
+            <div style={{ position: 'absolute', top: '100%', left: 12, width: 380, maxHeight: 460, overflowY: 'auto', background: COLORS.white, border: `1px solid ${COLORS.border}`, borderRadius: 10, boxShadow: '0 10px 28px rgba(0,0,0,0.22)', zIndex: 50, marginTop: 6 }}>
+              {searchResults}
             </div>
           )}
         </div>
