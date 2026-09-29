@@ -160,8 +160,9 @@ const DASH_PERSON_KEY = 'dashPerson';
 // --- Pořadí sekcí -----------------------------------------------------------
 // Každý přihlášený má své pořadí: v databázi (settings/dashboardLayouts,
 // pole podle kódu osoby) a pro jistotu i v prohlížeči.
-const DEFAULT_SECTION_ORDER = ['metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
+const DEFAULT_SECTION_ORDER = ['stray', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
 const SECTION_NAMES = {
+  stray: 'Potvrzené hotely mimo výběr',
   metrics: 'Čísla', attention: 'Vyžaduje pozornost', wip: 'Rozpracované',
   notes: 'Poznámky a úkoly', departures: 'Upcoming departures', quick: 'Quick actions',
 };
@@ -172,7 +173,9 @@ const LAYOUT_LOCAL_KEY = 'dashSectionOrder';
 const normalizeOrder = (saved) => {
   const list = Array.isArray(saved) ? saved.filter(id => DEFAULT_SECTION_ORDER.includes(id)) : [];
   const unique = list.filter((id, i) => list.indexOf(id) === i);
-  return [...unique, ...DEFAULT_SECTION_ORDER.filter(id => !unique.includes(id))];
+  const missing = DEFAULT_SECTION_ORDER.filter(id => !unique.includes(id));
+  // Upozornění na potvrzené hotely mimo výběr přibude nahoru, ostatní nové sekce na konec.
+  return [...missing.filter(id => id === 'stray'), ...unique, ...missing.filter(id => id !== 'stray')];
 };
 
 function SectionFrame({ id, idx, total, visible, children, colors, onMove, dragState }) {
@@ -274,6 +277,16 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const [attnCollapsed, setAttnCollapsed] = useState(() => {
     try { return localStorage.getItem('dashAttnCollapsed') === '1'; } catch (e) { return false; }
   });
+  const [strayCollapsed, setStrayCollapsed] = useState(() => {
+    try { return localStorage.getItem('dashStrayCollapsed') === '1'; } catch (e) { return false; }
+  });
+  const toggleStray = () => {
+    setStrayCollapsed(v => {
+      const next = !v;
+      try { localStorage.setItem('dashStrayCollapsed', next ? '1' : '0'); } catch (e) {}
+      return next;
+    });
+  };
   const toggleAttn = () => {
     setAttnCollapsed(v => {
       const next = !v;
@@ -531,6 +544,7 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
 
   // ── Sekce Dashboardu (pořadí si každý nastaví sám) ─────────────────
   const SECTION_VISIBLE = {
+    stray: strayHotels.length > 0,
     metrics: true, attention: hotelTasks.length > 0 || balanceTasks.length > 0,
     wip: !loading, notes: boardView.length > 0, departures: true, quick: true,
   };
@@ -547,6 +561,27 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
     saveOrder(list);
   };
   const SECTION_JSX = {
+    stray: (
+      <div style={{ background: '#FFF7ED', border: '2px solid #ea580c', borderRadius: 10, padding: strayCollapsed ? '0.75rem 1.25rem' : '0.875rem 1.25rem', marginBottom: '1.25rem', color: '#9a3412' }}>
+        <div onClick={toggleStray} title={strayCollapsed ? 'Rozbalit' : 'Sbalit'}
+          style={{ fontSize: 15, fontWeight: 700, marginBottom: strayCollapsed ? 0 : 8, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, width: 12 }}>{strayCollapsed ? '▸' : '▾'}</span>
+          <span>⚠ Potvrzené hotely mimo výběr ({strayHotels.length})</span>
+          {!strayCollapsed && <span style={{ fontSize: 12, fontWeight: 400 }}>— zaškrtněte je v nabídce, nebo je u hotelu zrušte a nastavte stav Zrušeno</span>}
+        </div>
+        {!strayCollapsed && strayHotels.map(h => (
+          <div key={h.key} onClick={() => navigate('offer-detail', { offerId: h.offerId })}
+            style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '6px 8px', borderTop: '1px solid #fed7aa', cursor: 'pointer', fontSize: 13 }}>
+            <span style={{ fontWeight: 700 }}>{h.hotelLabel}</span>
+            <span>{h.offerLabel}{h.clientName ? ` · ${h.clientName}` : ''}{h.declined ? ' (odmítnutá nabídka)' : ''}</span>
+            <span style={{ marginLeft: 'auto', fontWeight: 700, color: (h.diff === null || h.diff <= 7) ? '#dc2626' : '#9a3412' }}>
+              {h.diff === null ? 'chybí storno lhůta'
+                : `storno do ${h.deadline.split('-').reverse().join('.')} · ` + (h.diff < 0 ? `${-h.diff} dní po lhůtě` : h.diff === 0 ? 'dnes' : `za ${h.diff} dní`)}
+            </span>
+          </div>
+        ))}
+      </div>
+    ),
     metrics: (
       <>
       <div style={{ display: 'flex', gap: 12, marginBottom: '1.5rem' }}>
@@ -722,25 +757,6 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           )}
         </div>
       </div>
-      {strayHotels.length > 0 && (
-        <div style={{ background: '#FFF7ED', border: '2px solid #ea580c', borderRadius: 10, padding: '0.875rem 1.25rem', marginBottom: '1.25rem', color: '#9a3412' }}>
-          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
-            ⚠ Potvrzené hotely mimo výběr ({strayHotels.length})
-            <span style={{ fontSize: 12, fontWeight: 400 }}> — zaškrtněte je v nabídce, nebo je u hotelu zrušte a nastavte stav Zrušeno</span>
-          </div>
-          {strayHotels.map(h => (
-            <div key={h.key} onClick={() => navigate('offer-detail', { offerId: h.offerId })}
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '6px 8px', borderTop: '1px solid #fed7aa', cursor: 'pointer', fontSize: 13 }}>
-              <span style={{ fontWeight: 700 }}>{h.hotelLabel}</span>
-              <span>{h.offerLabel}{h.clientName ? ` · ${h.clientName}` : ''}{h.declined ? ' (odmítnutá nabídka)' : ''}</span>
-              <span style={{ marginLeft: 'auto', fontWeight: 700, color: (h.diff === null || h.diff <= 7) ? '#dc2626' : '#9a3412' }}>
-                {h.diff === null ? 'chybí storno lhůta'
-                  : `storno do ${h.deadline.split('-').reverse().join('.')} · ` + (h.diff < 0 ? `${-h.diff} dní po lhůtě` : h.diff === 0 ? 'dnes' : `za ${h.diff} dní`)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
       {orderedSections.map((id, idx) => (
         <SectionFrame key={id} id={id} idx={idx} total={orderedSections.length} visible
           colors={colors} onMove={onMove} dragState={dragState}>
