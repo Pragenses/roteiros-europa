@@ -7,6 +7,7 @@ import { parseServiceText, parseServiceDocument } from '../lib/ai';
 import { ensureOfferNumber } from '../lib/offerNumber';
 import OfferVersions from '../components/OfferVersions';
 import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, hotelLabel } from '../lib/hotelAlt';
+import { computeAltDiffs } from '../lib/altPricing';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -3095,6 +3096,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     return { pax, groupPerPax, costDbl, marginAmount, sellingBeforeFoc, focShare, finalDbl, finalSngl };
   });
 
+  // Hotelové alternativy: o kolik by se změnila konečná cena pro klienta
+  // (s marží a FOC), kdyby se místo hlavního hotelu vzala alternativa.
+  // Vždy v EUR. Hlavní výpočet výše se tím nemění.
+  const altDiffs = computeAltDiffs(items, { margin, paxCounts, focCountNum, focType, rates });
+
   // Aktuální stav nabídky ve stejném tvaru jako uložená verze — jen pro
   // porovnání verzí. Čísla jsou přesně ta, která ukazuje tabulka výše
   // („Selling price per pax"), s dnešními kurzy. Nic se tím neukládá.
@@ -4121,6 +4127,49 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             ))}
           </div>
         )}
+        {altDiffs.length > 0 && paxCounts.length > 0 && (() => {
+          const fmt = (n) => {
+            const v = Math.round(n * 100) / 100;
+            if (v === 0) return '±0.00';
+            return (v > 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+          };
+          const col = (n) => (Math.round(n * 100) === 0 ? colors.muted : n > 0 ? '#b91c1c' : '#15803d');
+          return (
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: `2px dashed #3b82f6` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#1d4ed8', marginBottom: 4 }}>🔀 Alternativy – rozdíl konečné ceny na osobu (EUR)</div>
+              <div style={{ fontSize: 11, color: colors.muted, marginBottom: 8 }}>
+                Jak by se změnila cena pro klienta, kdyby se místo hlavního hotelu vzala alternativa (včetně marže, FOC a hotelu průvodce/řidiče). + dražší, − levnější.{showSplit ? ' Přepočteno do EUR dnešním kurzem.' : ''}
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${colors.border}` }}>
+                    <th style={{ textAlign: 'left', padding: '5px 6px' }}>Alternativa</th>
+                    {paxCounts.map(p => (
+                      <th key={p} style={{ textAlign: 'right', padding: '5px 6px' }}>{p} pax<br /><span style={{ fontWeight: 400, color: colors.muted }}>DBL / SNGL</span></th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {altDiffs.map(({ alt, main, rows: dRows }) => (
+                    <tr key={alt.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
+                      <td style={{ padding: '5px 6px' }}>
+                        <div style={{ fontWeight: 700 }}>{hotelLabel(alt)}</div>
+                        <div style={{ fontSize: 11, color: colors.muted }}>místo: {hotelLabel(main)}</div>
+                      </td>
+                      {dRows.map(r => (
+                        <td key={r.pax} style={{ padding: '5px 6px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: 700, color: col(r.dDbl) }}>{fmt(r.dDbl)}</span>
+                          <span style={{ color: colors.muted }}> / </span>
+                          <span style={{ color: col(r.dSngl) }}>{fmt(r.dSngl)}</span>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
       </div>
 
       {/* 📁 Verze nabídky — uložené verze pro klienta, jen pro čtení. */}
