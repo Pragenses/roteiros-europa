@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { db } from '../lib/firebase';
+import { strayNeedsAction } from '../lib/hotelAlt';
 import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
 
@@ -55,8 +56,8 @@ const dmy = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
 const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 // Počet potvrzených, ale nezaškrtnutých a nezrušených hotelů (alternativ).
-const strayHotelCount = (o) => (o.items || []).filter(it =>
-  it.type === 'per_pax' && it.subType === 'hotel' && it.enabled === false && !it.cancelled && it.bookingStatus === 'confirmed').length;
+// Vědomě nabídnuté alternativy v otevřené nabídce se nepočítají.
+const strayHotelCount = (o) => (o.items || []).filter(it => strayNeedsAction(it, o.items, o)).length;
 const StrayBadge = ({ o }) => {
   const n = strayHotelCount(o);
   if (n === 0) return null;

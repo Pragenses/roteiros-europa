@@ -6,6 +6,7 @@ import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiv
 import { parseServiceText, parseServiceDocument } from '../lib/ai';
 import { ensureOfferNumber } from '../lib/offerNumber';
 import OfferVersions from '../components/OfferVersions';
+import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, hotelLabel } from '../lib/hotelAlt';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -1409,16 +1410,19 @@ const HotelSummaryRow = ({ it, colors }) => {
   );
 };
 
-const HotelSummary = ({ items, colors }) => {
+const HotelSummary = ({ items, colors, offer }) => {
   // Zaškrtnuté hotelové karty, ve stejném pořadí jako dole v nabídce.
   const all = (items || []).filter(it => it.subType === 'hotel');
   const hotels = all.filter(it => it.enabled !== false);
-  // Alternativy: potvrzené, ale nezaškrtnuté hotely (viz upozornění v horní
-  // liště). Zobrazí se hned pod posledním vybraným hotelem ve stejném městě;
-  // když v tom městě žádný vybraný hotel není, zůstanou na svém místě.
-  const strays = all.filter(it => it.enabled === false && itemStatus(it) === 'confirmed');
+  const closed = offerIsClosed(offer);
+  // Nabídnuté alternativy (zaškrtnuté „Alternativa“ + vybraný hlavní hotel).
+  // Zobrazí se hned pod svým hlavním hotelem.
+  const offeredAlts = all.filter(it => isOfferedAlt(it, items));
+  // Ostatní potvrzené, ale nezaškrtnuté hotely (zapomenuté) – jako dřív:
+  // pod posledním vybraným hotelem ve stejném městě, jinak na svém místě.
+  const strays = all.filter(it => it.enabled === false && itemStatus(it) === 'confirmed' && !offeredAlts.includes(it));
 
-  if (hotels.length === 0 && strays.length === 0) return null;
+  if (hotels.length === 0 && strays.length === 0 && offeredAlts.length === 0) return null;
 
   const cityKey = (it) => String(it.city || '').trim().toLowerCase();
   const lastSelectedOfCity = {};
@@ -1426,14 +1430,20 @@ const HotelSummary = ({ items, colors }) => {
   const rows = [];
   all.forEach(it => {
     if (it.enabled !== false) {
-      rows.push({ it, alt: false });
+      rows.push({ it, kind: 'main' });
+      offeredAlts.filter(x => String(x.altOf) === String(it.id)).forEach(x => rows.push({ it: x, kind: 'offered' }));
       if (lastSelectedOfCity[cityKey(it)] === it.id) {
-        strays.filter(x => cityKey(x) === cityKey(it)).forEach(x => rows.push({ it: x, alt: true }));
+        strays.filter(x => cityKey(x) === cityKey(it)).forEach(x => rows.push({ it: x, kind: 'stray' }));
       }
     } else if (strays.includes(it) && !(cityKey(it) && lastSelectedOfCity[cityKey(it)])) {
-      rows.push({ it, alt: true });
+      rows.push({ it, kind: 'stray' });
     }
   });
+
+  // Nabídnutá alternativa v uzavřené nabídce: klient už vybral → zrušit.
+  const offeredWarn = (it) => closed && itemStatus(it) === 'confirmed';
+  const warnCount = strays.length + offeredAlts.filter(offeredWarn).length;
+  const calmCount = offeredAlts.length - offeredAlts.filter(offeredWarn).length;
 
   return (
     <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
@@ -1442,25 +1452,37 @@ const HotelSummary = ({ items, colors }) => {
         <span style={{ fontSize: 12, fontWeight: 600, background: '#eef2f7', color: colors.primary, padding: '2px 8px', borderRadius: 10 }}>
           {hotels.length}
         </span>
-        {strays.length > 0 && (
+        {calmCount > 0 && (
+          <span style={{ fontSize: 12, fontWeight: 700, background: '#EFF6FF', color: '#1d4ed8', border: '1px solid #3b82f6', padding: '1px 8px', borderRadius: 10 }}>
+            + {calmCount} {calmCount === 1 ? 'alternativa' : 'alternativy'}
+          </span>
+        )}
+        {warnCount > 0 && (
           <span style={{ fontSize: 12, fontWeight: 700, background: '#FFF7ED', color: '#9a3412', border: '1px solid #ea580c', padding: '1px 8px', borderRadius: 10 }}>
-            ⚠ + {strays.length} {strays.length === 1 ? 'alternativa' : 'alternativy'}
+            ⚠ + {warnCount} {warnCount === 1 ? 'alternativa' : 'alternativy'}
           </span>
         )}
         <span style={{ marginLeft: 'auto', fontSize: 11, color: colors.muted }}>
           klikněte na hotel pro rozpis
         </span>
       </div>
-      {rows.map(({ it, alt }) => alt ? (
-        <div key={it.id} style={{ marginLeft: 18, paddingLeft: 10, borderLeft: '3px solid #ea580c', marginBottom: 6 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#9a3412', marginBottom: 3 }}>
-            ⚠ ALTERNATIVA – potvrzeno, není v kalkulaci
+      {rows.map(({ it, kind }) => {
+        if (kind === 'main') return <HotelSummaryRow key={it.id} it={it} colors={colors} />;
+        const warn = kind === 'stray' || offeredWarn(it);
+        const label = kind === 'stray'
+          ? '⚠ ALTERNATIVA – potvrzeno, není v kalkulaci'
+          : warn
+            ? '⚠ ALTERNATIVA – klient vybral, zrušit nebo vyměnit'
+            : 'ALTERNATIVA – nabídnuto klientovi, není v ceně';
+        return (
+          <div key={it.id} style={{ marginLeft: 18, paddingLeft: 10, borderLeft: `3px solid ${warn ? '#ea580c' : '#3b82f6'}`, marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: warn ? '#9a3412' : '#1d4ed8', marginBottom: 3 }}>
+              {label}
+            </div>
+            <HotelSummaryRow it={it} colors={colors} />
           </div>
-          <HotelSummaryRow it={it} colors={colors} />
-        </div>
-      ) : (
-        <HotelSummaryRow key={it.id} it={it} colors={colors} />
-      ))}
+        );
+      })}
     </div>
   );
 };
@@ -3101,10 +3123,10 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // nejsou zrušené, visí v horní liště velké upozornění — jinak by se na ně
   // zapomnělo a hrozil by storno poplatek. Předschválené hotely upozornění
   // nespouští, závazně potvrzené ještě nejsou.
-  const strayConfirmed = (items || []).filter(it =>
-    it.type === 'per_pax' && it.subType === 'hotel'
-    && it.enabled === false
-    && itemStatus(it) === 'confirmed');
+  // Vědomě nabídnuté alternativy (karta „Alternativa“ s hlavním hotelem)
+  // upozornění nespouští, dokud je nabídka otevřená. Po převodu na zakázku
+  // nebo odmítnutí znovu ano – klient vybral a alternativu je třeba zrušit.
+  const strayConfirmed = (items || []).filter(it => strayNeedsAction(it, items, offer));
 
   return (
     <div>
@@ -3475,7 +3497,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         <TaskList todos={offer.todos} onChange={handleTodos} colors={colors} items={items} />
       </div>
 
-      <HotelSummary items={items} colors={colors} />
+      <HotelSummary items={items} colors={colors} offer={offer} />
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         {showItineraryBox && (
@@ -3679,7 +3701,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     opacity: dragFrom === idx ? 0.35 : (isEnabled ? 1 : 0.45),
                     boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-                    <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                    <input type="checkbox" checked={isEnabled} onChange={e => {
+                      // Zaškrtnutím do kalkulace přestává být hotel alternativou.
+                      if (e.target.checked && it.isAlt) updateItemFields(it.id, { enabled: true, isAlt: false, altOf: '' });
+                      else updateItem(it.id, 'enabled', e.target.checked);
+                    }} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
                     <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <button type="button" title="Posunout výš" disabled={!canMoveCards || idx === 0} onClick={() => moveItem(idx, -1)} style={arrowBtn(!canMoveCards || idx === 0)}>▲</button>
                       <span title={canMoveCards ? 'Chyťte a přetáhněte' : 'Nabídku teď nelze upravovat'}
@@ -3710,11 +3736,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                           }
                           // Chain: if THIS hotel's dateFrom is set, auto-fill the PREVIOUS hotel's dateTo if empty
                           // (departure from previous hotel = arrival at this one)
-                          if (isHotel && v && v.length === 10) {
+                          if (isHotel && !it.isAlt && v && v.length === 10) {
                             const allItems = itemsRef.current;
                             const myIdx = allItems.findIndex(x => x.id === it.id);
                             for (let i = myIdx - 1; i >= 0; i--) {
-                              if (allItems[i].subType === 'hotel') {
+                              if (allItems[i].subType === 'hotel' && !allItems[i].isAlt) {
                                 if (!allItems[i].dateTo || allItems[i].dateTo === '') {
                                   updateItem(allItems[i].id, 'dateTo', v);
                                   const prevFrom = allItems[i].dateFrom;
@@ -3737,11 +3763,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                             if (n > 0) updateItem(it.id, 'nights', String(n));
                           }
                           // Chain: if THIS hotel's dateTo is set, auto-fill the NEXT hotel's dateFrom if empty
-                          if (isHotel && v && v.length === 10) {
+                          if (isHotel && !it.isAlt && v && v.length === 10) {
                             const allItems = itemsRef.current;
                             const myIdx = allItems.findIndex(x => x.id === it.id);
                             for (let i = myIdx + 1; i < allItems.length; i++) {
-                              if (allItems[i].subType === 'hotel') {
+                              if (allItems[i].subType === 'hotel' && !allItems[i].isAlt) {
                                 if (!allItems[i].dateFrom || allItems[i].dateFrom === '') {
                                   updateItem(allItems[i].id, 'dateFrom', v);
                                   const nextTo = allItems[i].dateTo;
@@ -3761,6 +3787,45 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                         })()}
                       </div>
                     )}
+                    {isHotel && (() => {
+                      // Alternativa: další možnost pro klienta, do hlavní ceny se nepočítá.
+                      const ck = (x) => String(x.city || '').trim().toLowerCase();
+                      const mains = items.filter(x => isHotelItem(x) && x.enabled !== false && !x.cancelled && x.id !== it.id);
+                      const sameCity = mains.filter(x => ck(x) && ck(x) === ck(it));
+                      const options = [...sameCity, ...mains.filter(x => !sameCity.includes(x))];
+                      const main = altMainOf(it, items);
+                      return (
+                        <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap', fontSize: 11 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: it.isAlt ? '#1d4ed8' : colors.muted, fontWeight: it.isAlt ? 700 : 400 }}>
+                            <input type="checkbox" checked={!!it.isAlt} onChange={e => {
+                              if (e.target.checked) {
+                                const pre = sameCity.length === 1 ? String(sameCity[0].id) : '';
+                                updateItemFields(it.id, { isAlt: true, enabled: false, altOf: pre });
+                              } else {
+                                updateItemFields(it.id, { isAlt: false, altOf: '' });
+                              }
+                            }} style={{ cursor: 'pointer' }} />
+                            Alternativa – další možnost pro klienta
+                          </label>
+                          {it.isAlt && (
+                            <>
+                              <span style={{ color: colors.muted }}>k hotelu:</span>
+                              <select value={it.altOf ? String(it.altOf) : ''} onChange={e => updateItem(it.id, 'altOf', e.target.value)}
+                                style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${main ? '#3b82f6' : '#dc2626'}`, borderRadius: 4, maxWidth: 280 }}>
+                                <option value="">– vyberte –</option>
+                                {options.map(x => (
+                                  <option key={x.id} value={String(x.id)}>
+                                    {hotelLabel(x)}{x.dateFrom ? ` (${fmtDateBR(x.dateFrom)})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                              {!main && <span style={{ color: '#dc2626', fontWeight: 700 }}>⚠ vyberte hlavní hotel</span>}
+                              {main && <span style={{ color: '#1d4ed8' }}>není v hlavní ceně</span>}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {isHotel && (
                       <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
                         <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />

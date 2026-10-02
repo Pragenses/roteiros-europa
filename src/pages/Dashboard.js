@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
+import { strayNeedsAction } from '../lib/hotelAlt';
 
 const STATUS_COLORS = {
   'confirmed': { bg: '#EAF3DE', color: '#27500A' },
@@ -350,6 +351,9 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
             (offer.items || []).forEach(item => {
               if (!(item.type === 'per_pax' && item.subType === 'hotel')) return;
               if (item.enabled !== false || item.cancelled || item.bookingStatus !== 'confirmed') return;
+              // Vědomě nabídnutá alternativa v otevřené nabídce sem nepatří
+              // (její storno lhůtu dál hlídají Hotelové termíny a Kalendář).
+              if (!strayNeedsAction(item, offer.items, offer)) return;
               const diff = item.cancellationDeadline
                 ? Math.round((new Date(item.cancellationDeadline) - today) / 86400000) : null;
               strays.push({
