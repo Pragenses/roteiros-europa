@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
+import { isOfferedAlt, altMainOf } from '../lib/hotelAlt';
 import { usedVersionNumbers, versionFileName, versionNoFromName, cleanTypedFileName, saveOfferVersion } from '../lib/offerVersions';
 import coverBase64 from '../lib/coverBase64';
 import watermarkBase64 from '../lib/watermarkBase64';
@@ -369,6 +370,53 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
     ? [...activeCurrencies.map(c => computeByCurrency(c)), computeEurOnly()]
     : null;
   const rows = computeAllCombinedEUR().rows;
+
+  // --- Hotelové alternativy (jen pro tisk „Imprimir") ------------------------
+  // combinedRowsFor je KOPIE výpočtu computeAllCombinedEUR výše, jen nad
+  // libovolným seznamem položek. Hlavní ceny se tím nemění; slouží jen
+  // k rozdílu „s alternativou místo hlavního hotelu" (vždy v EUR).
+  const combinedRowsFor = (list) => {
+    const act = list.filter(it => it.enabled !== false);
+    const paxI = act.filter(it => it.type === 'per_pax');
+    const grpI = act.filter(it => it.type === 'group');
+    const dblAll = paxI.reduce((sum, it) => sum + toEUR(getEffDbl(it), it.currency), 0);
+    const snglAll = paxI.reduce((sum, it) => sum + toEUR(getEffSngl(it), it.currency), 0);
+    const hotelSngl = paxI.filter(it => it.subType === 'hotel')
+      .reduce((sum, it) => sum + toEUR(getEffSngl(it), it.currency), 0);
+    const ovr = (it) => it.guideOverride !== '' && it.guideOverride !== undefined && it.guideOverride !== null;
+    const regular = grpI.filter(it => it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel')
+      .reduce((sum, it) => sum + toEUR(evalAmount(it.groupCost), it.currency), 0);
+    const guide = grpI.filter(it => it.subType === 'guide_hotel')
+      .reduce((sum, it) => sum + (ovr(it) ? toEUR(evalAmount(it.guideOverride), it.currency || 'EUR') : snglAll), 0);
+    const driver = grpI.filter(it => it.subType === 'driver_hotel')
+      .reduce((sum, it) => sum + (ovr(it) ? toEUR(evalAmount(it.guideOverride), it.currency || 'EUR') : hotelSngl), 0);
+    const groupTotal = regular + guide + driver;
+    const snglSupp = snglAll - dblAll;
+    const focPool = focType === 'sngl' ? snglAll : dblAll;
+    return paxCounts.map(pax => {
+      const costDbl = groupTotal / pax + dblAll;
+      const marginAmount = costDbl * (margin / 100);
+      const focShare = (focPool * focCountNum) / pax;
+      const finalDbl = costDbl + marginAmount + focShare;
+      const finalSngl = finalDbl + snglSupp;
+      return { pax, finalDbl, finalSngl };
+    });
+  };
+  const altPrint = items.filter(it => isOfferedAlt(it, items)).map(alt => {
+    const main = altMainOf(alt, items);
+    const swapped = items.map(x =>
+      x.id === main.id ? { ...x, enabled: false } : x.id === alt.id ? { ...x, enabled: true } : x);
+    const withAlt = combinedRowsFor(swapped);
+    return {
+      alt, main,
+      rows: rows.map((b, i) => ({ pax: b.pax, dDbl: withAlt[i].finalDbl - b.finalDbl, dSngl: withAlt[i].finalSngl - b.finalSngl })),
+    };
+  });
+  const fmtDiff = (n) => {
+    const v = Math.round(n * 100) / 100;
+    if (v === 0) return '€ 0.00';
+    return (v > 0 ? '+ € ' : '− € ') + Math.abs(v).toFixed(2);
+  };
 
   const hotels = activeItems.filter(it => it.type === 'per_pax' && it.subType === 'hotel');
   // programText may contain HTML (rich text editor) or plain text with \n
@@ -830,7 +878,14 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
             <H2>Hotéis</H2>
             <ul style={UL}>
               {hotels.map(h => (
-                <li key={h.id}><b>{h.city ? `${h.city}: ` : ''}{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}</li>
+                <React.Fragment key={h.id}>
+                  <li><b>{h.city ? `${h.city}: ` : ''}{h.name || 'Hotel'}</b>{(h.dateFrom || h.dateTo) ? ` — ${fmtDate(h.dateFrom)} a ${fmtDate(h.dateTo)}` : ''}</li>
+                  {altPrint.filter(a => a.main.id === h.id).map(a => (
+                    <li key={a.alt.id} style={{ listStyle: 'none', fontStyle: 'italic', color: '#555' }}>
+                      ou opção alternativa: <b>{a.alt.name || 'Hotel'}</b> (ver Opções alternativas)
+                    </li>
+                  ))}
+                </React.Fragment>
               ))}
             </ul>
           </div>
@@ -853,6 +908,42 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
           )}
         </div>
       </Page>
+
+      {/* Opções alternativas — vlastní stránka, aby se strana 2 nepřeplnila. */}
+      {altPrint.length > 0 && (
+        <Page>
+          <H2 style={{ marginTop: 8 }}>Opções alternativas</H2>
+          <p style={P}>
+            Diferença no valor por pessoa em relação ao Investimento, caso seja escolhido o hotel alternativo{hasSplit ? ' (valores em EUR)' : ''}.
+          </p>
+          {altPrint.map(({ alt, main, rows: dRows }) => (
+            <div key={alt.id} className="op-avoid-break" style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#1a3a5c', marginBottom: 4, fontFamily: 'Arial, sans-serif' }}>
+                {alt.city ? `${alt.city}: ` : ''}{alt.name || 'Hotel'}
+                <span style={{ fontWeight: 400, color: '#666' }}> (em vez de {main.name || 'Hotel'})</span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    {['Participantes', 'Quarto duplo (por pessoa)', 'Quarto individual (por pessoa)'].map(h => (
+                      <th key={h} style={{ background: '#1a3a5c', color: 'white', padding: '8px 10px', textAlign: h === 'Participantes' ? 'left' : 'right', fontFamily: 'Arial, sans-serif', fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dRows.map((r, i) => (
+                    <tr key={r.pax} style={{ background: i % 2 === 0 ? 'white' : '#f5f5f5' }}>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', fontSize: 12, fontFamily: 'Arial, sans-serif' }}>{r.pax} + {focCountNum} cortesia</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', textAlign: 'right', fontWeight: 700, fontSize: 14, color: '#1a3a5c', fontFamily: 'Arial, sans-serif' }}>{fmtDiff(r.dDbl)}</td>
+                      <td style={{ padding: '8px 10px', borderBottom: '1px solid #eee', textAlign: 'right', fontWeight: 700, fontSize: 14, color: '#1a3a5c', fontFamily: 'Arial, sans-serif' }}>{fmtDiff(r.dSngl)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </Page>
+      )}
 
       {/* PAGE 3 — Incluído + Não incluído */}
       {(includedLines.length > 0 || notIncludedLines.length > 0) && (
