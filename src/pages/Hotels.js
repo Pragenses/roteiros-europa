@@ -1,7 +1,7 @@
-// force-rebuild-optiondate
+// force-rebuild-subject-id
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -18,7 +18,10 @@ const SAME_LINE_SEP_TRIM_RE = /[:–—-]\s*$/;
 const CITY_LOWER_WORDS = ['am','an','aan','auf','im','zu','der','den','des','de','del','della','di','da','do','dos','la','le','les','el','en','sur','sous','sul','upon','op','on','of','in','na','nad','pod','ob','u','va','vor','and','y','e'];
 function formatCity(raw) {
   if (!raw) return raw;
-  return String(raw).trim().split(/(\s+)/).map((part, idx) => {
+  // Do databáze se k městu píše i země ("Paris, France"). Do předmětu patří
+  // jen město, proto se bere část před první čárkou. Uložená hodnota se tím
+  // nemění — podle ní se dál filtrují hotely.
+  return String(raw).split(',')[0].trim().split(/(\s+)/).map((part, idx) => {
     if (/^\s+$/.test(part)) return part;
     return part.split('-').map((chunk, ci) => {
       if (!chunk) return chunk;
@@ -497,8 +500,70 @@ const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14p
 {{signature}}</p>
 </div>`;
 
+const TPL_OPTION_DATE = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">
+<p>Dear Sir or Madam,</p>
+<p>Thank you very much for your offer for the group below.</p>
+
+<p><span style="background-color:#FFD700;font-weight:bold;padding:2px 6px">GROUP DETAILS:</span></p>
+<ul>
+<li><b>Group Name:</b> {{groupName}}</li>
+<li><b>Travel Dates:</b> {{checkIn}} – {{checkOut}}</li>
+</ul>
+
+<p>We are currently presenting your proposal to our client and would kindly ask you to hold the offer until {{optionDate}}.</p>
+<p>Please confirm whether this is possible. We will come back to you with a firm answer as soon as we hear from our client.</p>
+<p>Best regards,<br>
+--<br>
+{{signature}}</p>
+</div>`;
+
+const TPL_DATE_CHANGE = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">
+<p>Dear Sir or Madam,</p>
+<p>We refer to our request for the group below.</p>
+
+<p><span style="background-color:#FFD700;font-weight:bold;padding:2px 6px">GROUP DETAILS:</span></p>
+<ul>
+<li><b>Group Name:</b> {{groupName}}</li>
+<li><b>New Travel Dates:</b> {{checkIn}} – {{checkOut}}</li>
+</ul>
+
+<p>Our client has changed the itinerary and we would kindly ask whether you could move the stay to the new dates above, keeping the same room breakdown and conditions.</p>
+<p>Please confirm availability and whether the agreed rates remain valid. If the new dates are not available, please let us know the closest alternative.</p>
+<p>We would appreciate if you could hold this offer until {{optionDate}}.</p>
+<p>Best regards,<br>
+--<br>
+{{signature}}</p>
+</div>`;
+
+const TPL_CANCELLATION = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:650px">
+<p>Dear Sir or Madam,</p>
+<p>We regret to inform you that we have to cancel the booking for the group below.</p>
+
+<p><span style="background-color:#FFD700;font-weight:bold;padding:2px 6px">GROUP DETAILS:</span></p>
+<ul>
+<li><b>Group Name:</b> {{groupName}}</li>
+<li><b>Travel Dates:</b> {{checkIn}} – {{checkOut}}</li>
+</ul>
+
+<p>Please confirm the cancellation in writing and let us know whether any charges apply under the agreed cancellation policy.</p>
+<p>We are sorry for the inconvenience and hope to work with you again soon.</p>
+<p>Best regards,<br>
+--<br>
+{{signature}}</p>
+</div>`;
+
+// Výchozí šablony. Zapíšou se do databáze jen tehdy, když je kolekce
+// `emailTemplates` prázdná — jakmile si je uživatel upraví, nic je nepřepíše.
+// Pevná `id` zajistí, že se při opakovaném založení nevytvoří duplicity.
+const BUILTIN_TEMPLATES = [
+  { id: 'first-inquiry', name: 'První poptávka',   order: 1, subjectSuffix: '',                body: DEFAULT_TEMPLATE },
+  { id: 'option-date',   name: 'Option date',      order: 2, subjectSuffix: 'OPTION DATE',     body: TPL_OPTION_DATE },
+  { id: 'date-change',   name: 'Změna dat',        order: 3, subjectSuffix: 'CHANGE OF DATES', body: TPL_DATE_CHANGE },
+  { id: 'cancellation',  name: 'Zrušení / storno', order: 4, subjectSuffix: 'CANCELLATION',    body: TPL_CANCELLATION },
+];
+
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v206-optiondate');
+  console.debug('Hotels v208-subject-id');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -527,6 +592,9 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [composeSearch, setComposeSearch] = useState('');
   const [groupName, setGroupName]     = useState(prefill?.groupName || '');
   const [prefillGroupName] = useState(prefill?.groupName || '');
+  // Číslo nabídky z nabídky, ze které se sem přišlo. Dá se dopsat i ručně,
+  // když se poptávka otevře napřímo přes menu.
+  const [offerNumber, setOfferNumber] = useState(prefill?.offerNumber || '');
   const [checkIn, setCheckIn]         = useState('');
   const [checkOut, setCheckOut]       = useState('');
   // Datum, do kdy má hotel nabídku držet. Propisuje se do textu jako
@@ -535,6 +603,13 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [editMode, setEditMode]       = useState('visual');
+  // Šablony emailů uložené v databázi (kolekce `emailTemplates`).
+  // Kdyby se načtení nepovedlo, zůstane zabudovaná výchozí šablona a poptávka
+  // půjde odeslat normálně — jen se nedá přepínat a ukládat.
+  const [templates, setTemplates]         = useState([]);
+  const [templateId, setTemplateId]       = useState('first-inquiry');
+  const [templatesError, setTemplatesError] = useState('');
+  const [templateBusy, setTemplateBusy]   = useState(false);
 
   const htmlToPlain = (html) => {
     // If stored as plain text (during editing), return as-is
@@ -605,12 +680,15 @@ export default function Hotels({ navigate, colors, navParams }) {
     });
     return unsub;
   }, [signatureTouched]);
+  const subjectSuffix = templates.find(t => t.id === templateId)?.subjectSuffix || '';
   React.useEffect(() => {
     let s = 'GRP';
     if (groupName) s += ' / ' + groupName;
+    if (offerNumber) s += ' / ' + offerNumber.trim();
     if (composeCity) s += ' / ' + formatCity(composeCity);
+    if (subjectSuffix) s += ' — ' + subjectSuffix;
     setSubject(s);
-  }, [groupName, composeCity]);
+  }, [groupName, offerNumber, composeCity, subjectSuffix]);
   const [sendResult, setSendResult]   = useState(null);
   const [sending, setSending]           = useState(false);
   const [sendProgress, setSendProgress] = useState('');
@@ -643,6 +721,33 @@ export default function Hotels({ navigate, colors, navParams }) {
     setCardsLoading(false);
   }, []);
 
+  const fetchTemplates = useCallback(async (selectId) => {
+    try {
+      let snap = await getDocs(collection(db, 'emailTemplates'));
+      // Úplně první spuštění (nebo smazání všech šablon) — založí se výchozí sada.
+      if (snap.empty) {
+        for (const t of BUILTIN_TEMPLATES) {
+          await setDoc(doc(db, 'emailTemplates', t.id), {
+            name: t.name, order: t.order, subjectSuffix: t.subjectSuffix, body: t.body,
+            builtin: true, createdAt: serverTimestamp(),
+          });
+        }
+        snap = await getDocs(collection(db, 'emailTemplates'));
+      }
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      items.sort((a, b) => (a.order || 99) - (b.order || 99) || (a.name || '').localeCompare(b.name || ''));
+      setTemplates(items);
+      setTemplatesError('');
+      // Která šablona má po načtení zůstat vybraná: po uložení ta samá,
+      // po smazání první zbylá, při prvním otevření ta výchozí.
+      const pick = items.find(t => t.id === selectId) || items[0];
+      if (pick) { setTemplateId(pick.id); setEmailBody(pick.body || DEFAULT_TEMPLATE); }
+    } catch (e) {
+      // Nevadí — pracuje se dál se zabudovanou šablonou.
+      setTemplatesError(e.message || 'Šablony se nepodařilo načíst');
+    }
+  }, []);
+
   const fetchLogs = useCallback(async () => {
     setLogsLoading(true);
     const snap = await getDocs(collection(db, 'hotelEmailLog'));
@@ -654,6 +759,7 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   useEffect(() => { fetchHotels(); }, [fetchHotels]);
   useEffect(() => { if (tab === 'log') fetchLogs(); }, [tab, fetchLogs]);
+  useEffect(() => { if (tab === 'compose' && templates.length === 0 && !templatesError) fetchTemplates(); }, [tab, templates.length, templatesError, fetchTemplates]);
   useEffect(() => { if (tab === 'cards') fetchCards(); }, [tab, fetchCards]);
 
   // Vytvoří JEDNU kartu ze skupiny řádků a napojí na ni ty řádky.
@@ -839,6 +945,76 @@ export default function Hotels({ navigate, colors, navParams }) {
     .replace(/{{optionDate}}/g, fmtDateEU(optionDate)||'[OPTION DATE]')
     .replace(/{{freeRatio}}/g, freeRatio||'20')
     .replace(/{{signature}}/g, SIGNATURES.find(s => s.id === signatureId)?.html || '');
+  };
+
+  // Aktuální text editoru převedený do HTML — v režimu "Upravit" se bere
+  // z textového pole, v režimu HTML přímo ze stavu.
+  const currentTemplateHtml = () => {
+    const t = editMode === 'visual' && visualEditorRef.current ? visualEditorRef.current.value : null;
+    return t !== null ? plainToHtml(t) : emailBody;
+  };
+
+  // Porovnává se čistý text, ne HTML — převod tam a zpět mění formátování,
+  // takže porovnání HTML by hlásilo změnu i u nedotčené šablony.
+  const isTemplateDirty = () => {
+    const tpl = templates.find(t => t.id === templateId);
+    if (!tpl) return false;
+    if (editMode === 'visual' && visualEditorRef.current) {
+      return visualEditorRef.current.value.trim() !== htmlToPlain(tpl.body || '').trim();
+    }
+    return String(emailBody).trim() !== String(tpl.body || '').trim();
+  };
+
+  const selectTemplate = (id) => {
+    if (id === templateId) return;
+    if (isTemplateDirty() && !window.confirm('Text emailu je upravený a neuložený.\n\nPřepnutím šablony se úpravy ztratí. Přepnout?')) return;
+    const tpl = templates.find(t => t.id === id);
+    if (!tpl) return;
+    setTemplateId(id);
+    setEmailBody(tpl.body || DEFAULT_TEMPLATE);
+  };
+
+  const saveTemplate = async () => {
+    const tpl = templates.find(t => t.id === templateId);
+    if (!tpl) return;
+    if (!window.confirm(`Přepsat šablonu „${tpl.name}" aktuálním textem?`)) return;
+    setTemplateBusy(true);
+    try {
+      const body = currentTemplateHtml();
+      await updateDoc(doc(db, 'emailTemplates', tpl.id), { body, updatedAt: serverTimestamp() });
+      setEmailBody(body);
+      await fetchTemplates(tpl.id);
+    } catch (e) { alert('Šablonu se nepodařilo uložit: ' + e.message); }
+    setTemplateBusy(false);
+  };
+
+  const saveTemplateAsNew = async () => {
+    const name = window.prompt('Název nové šablony:', '');
+    if (!name || !name.trim()) return;
+    setTemplateBusy(true);
+    try {
+      const maxOrder = templates.reduce((m, t) => Math.max(m, t.order || 0), 0);
+      const ref = await addDoc(collection(db, 'emailTemplates'), {
+        name: name.trim(), order: maxOrder + 1, subjectSuffix: '',
+        body: currentTemplateHtml(), builtin: false, createdAt: serverTimestamp(),
+      });
+      await fetchTemplates(ref.id);
+    } catch (e) { alert('Šablonu se nepodařilo založit: ' + e.message); }
+    setTemplateBusy(false);
+  };
+
+  const deleteTemplate = async () => {
+    const tpl = templates.find(t => t.id === templateId);
+    if (!tpl) return;
+    if (templates.length <= 1) { alert('Poslední šablonu smazat nejde.'); return; }
+    if (!window.confirm(`Smazat šablonu „${tpl.name}"?\n\nTohle je nevratné.`)) return;
+    setTemplateBusy(true);
+    try {
+      await deleteDoc(doc(db, 'emailTemplates', tpl.id));
+      const next = templates.find(t => t.id !== tpl.id);
+      await fetchTemplates(next?.id);
+    } catch (e) { alert('Šablonu se nepodařilo smazat: ' + e.message); }
+    setTemplateBusy(false);
   };
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
@@ -1181,6 +1357,7 @@ export default function Hotels({ navigate, colors, navParams }) {
               <h3 style={{ margin: '0 0 12px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Skupina</h3>
               {[
                 ['Název skupiny', groupName, setGroupName, 'text'],
+                ['ID zakázky', offerNumber, setOfferNumber, 'text'],
                 ['Check-in', checkIn, setCheckIn, 'date'],
                 ['Check-out', checkOut, setCheckOut, 'date'],
                 ['Option date (do kdy držet nabídku)', optionDate, setOptionDate, 'date'],
@@ -1245,6 +1422,20 @@ export default function Hotels({ navigate, colors, navParams }) {
           <div style={cardS}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, color: C.primary, fontWeight: 600 }}>Email</h3>
             <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Šablona</label>
+              {templates.length > 0 ? (
+                <select value={templateId} onChange={e => selectTemplate(e.target.value)} style={inp()}>
+                  {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              ) : (
+                <div style={{ fontSize: 12, color: C.muted }}>
+                  {templatesError
+                    ? `⚠ Šablony se nenačetly (${templatesError}) — pracuje se se zabudovaným textem, odesílání funguje normálně.`
+                    : 'Načítám…'}
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 10 }}>
               <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Odesílat z</label>
               <select value={senderFrom} onChange={e => setSenderFrom(e.target.value)} style={inp()}>
                 <option value="grupos">grupos@tour-pragenses.com</option>
@@ -1281,10 +1472,13 @@ export default function Hotels({ navigate, colors, navParams }) {
                   </button>
                 </div>
               </div>
+              {/* Klíč pole obsahuje i název šablony: všechny šablony začínají
+                  stejnou hlavičkou, takže podle prvních 50 znaků by se pole
+                  při přepnutí šablony nepřekreslilo. */}
               {editMode === 'visual' ? (
                 <textarea
                   ref={visualEditorRef}
-                  key={emailBody.slice(0, 50)}
+                  key={`${templateId}|${emailBody.length}|${emailBody.slice(0, 50)}`}
                   defaultValue={htmlToPlain(emailBody)}
                   rows={30}
                   style={{ ...inp(), resize: 'vertical', lineHeight: 1.8, fontFamily: 'Georgia, serif' }}
@@ -1292,6 +1486,25 @@ export default function Hotels({ navigate, colors, navParams }) {
                 />
               ) : (
                 <textarea value={emailBody} onChange={e => setEmailBody(e.target.value)} rows={16} style={{ ...inp(), resize: 'vertical', lineHeight: 1.6, fontFamily: 'monospace', fontSize: 11 }} />
+              )}
+              {templates.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button onClick={saveTemplate} disabled={templateBusy}
+                    style={{ fontSize: 11, color: C.primary, background: 'none', border: `1px solid ${C.border}`, borderRadius: 4, padding: '4px 10px', cursor: 'pointer', opacity: templateBusy ? 0.5 : 1 }}>
+                    💾 Uložit do šablony
+                  </button>
+                  <button onClick={saveTemplateAsNew} disabled={templateBusy}
+                    style={{ fontSize: 11, color: C.primary, background: 'none', border: `1px solid ${C.border}`, borderRadius: 4, padding: '4px 10px', cursor: 'pointer', opacity: templateBusy ? 0.5 : 1 }}>
+                    ＋ Uložit jako novou
+                  </button>
+                  <button onClick={deleteTemplate} disabled={templateBusy || templates.length <= 1}
+                    style={{ fontSize: 11, color: '#b00020', background: 'none', border: `1px solid ${C.border}`, borderRadius: 4, padding: '4px 10px', cursor: (templateBusy || templates.length <= 1) ? 'default' : 'pointer', opacity: (templateBusy || templates.length <= 1) ? 0.4 : 1 }}>
+                    🗑 Smazat šablonu
+                  </button>
+                  <span style={{ fontSize: 11, color: C.muted }}>
+                    Úpravy bez uložení platí jen pro tento email.
+                  </span>
+                </div>
               )}
             </div>
             <details style={{ marginBottom: 12 }}>

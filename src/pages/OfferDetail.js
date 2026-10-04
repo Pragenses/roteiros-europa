@@ -3542,6 +3542,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             navigate('hotels', {
               prefill: {
                 groupName: offer.name || offer.clientName || '',
+                // Číslo nabídky do předmětu poptávky, ať se nemusí psát ručně.
+                offerNumber: offer.offerNumber || '',
                 cityList,
               }
             });
