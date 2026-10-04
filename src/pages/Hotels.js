@@ -1,4 +1,4 @@
-// force-rebuild-signature4
+// force-rebuild-optiondate
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -490,7 +490,7 @@ const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14p
 <li>Deposit requirements and payment schedule</li>
 </ul>
 
-<p>Additionally, we would appreciate if you could hold this offer until ............</p>
+<p>Additionally, we would appreciate if you could hold this offer until {{optionDate}}, so we can communicate the offer with our client.</p>
 <p>Thank you very much for your assistance. I look forward to your proposal and any further details you may require.</p>
 <p>Best regards,<br>
 --<br>
@@ -498,7 +498,7 @@ const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14p
 </div>`;
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v205-signature');
+  console.debug('Hotels v206-optiondate');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -529,6 +529,9 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [prefillGroupName] = useState(prefill?.groupName || '');
   const [checkIn, setCheckIn]         = useState('');
   const [checkOut, setCheckOut]       = useState('');
+  // Datum, do kdy má hotel nabídku držet. Propisuje se do textu jako
+  // {{optionDate}}, aby se nemuselo dopisovat ručně.
+  const [optionDate, setOptionDate]   = useState('');
   const [freeRatio, setFreeRatio]     = useState('20');
   const [emailBody, setEmailBody]     = useState(DEFAULT_TEMPLATE);
   const [editMode, setEditMode]       = useState('visual');
@@ -833,6 +836,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, fmtDateEU(checkIn)||'[CHECK-IN]')
     .replace(/{{checkOut}}/g, fmtDateEU(checkOut)||'[CHECK-OUT]')
+    .replace(/{{optionDate}}/g, fmtDateEU(optionDate)||'[OPTION DATE]')
     .replace(/{{freeRatio}}/g, freeRatio||'20')
     .replace(/{{signature}}/g, SIGNATURES.find(s => s.id === signatureId)?.html || '');
   };
@@ -892,7 +896,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     setSendProgress('');
     if (sent > 0) {
       setSendResult({ sent, failed });
-      setGroupName(''); setCheckIn(''); setCheckOut('');
+      setGroupName(''); setCheckIn(''); setCheckOut(''); setOptionDate('');
       setSelected([]);
       setTab('log'); fetchLogs();
     } else {
@@ -1179,6 +1183,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                 ['Název skupiny', groupName, setGroupName, 'text'],
                 ['Check-in', checkIn, setCheckIn, 'date'],
                 ['Check-out', checkOut, setCheckOut, 'date'],
+                ['Option date (do kdy držet nabídku)', optionDate, setOptionDate, 'date'],
                 ['1 pokoj zdarma za X placených', freeRatio, setFreeRatio, 'number'],
               ].map(([label, val, setter, type]) => (
                 <div key={label} style={{ marginBottom: 10 }}>
