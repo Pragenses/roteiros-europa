@@ -1,4 +1,4 @@
-// force-rebuild-signature2
+// force-rebuild-signature4
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -434,12 +434,18 @@ const SIGNATURES = [
     id: 'filip',
     label: 'Filip Dlask',
     logins: ['filipdlask@gmail.com'],
-    // Telefon je zatím společný s Helenou; až bude vlastní, změň tenhle řádek.
+    // Vlastní rozpis řádků — schválně nepoužívá COMPANY_LINES, aby šel
+    // Filipův podpis měnit bez dopadu na Helenin.
     html:
-      `<b>Filip Dlask, sales</b><br>` +
-      COMPANY_LINES +
-      `Tlf - whatsapp : +420 777 079 997<br>` +
-      `VAT: CZ284 45 961`,
+      `<b>Filip Dlask</b><br>` +
+      `<b>TOUR PRAGENSES | PRAGENSES s.r.o.</b><br>` +
+      `Lipnická 688, Prague 9 – Kyje<br>` +
+      `Czech Republic<br>` +
+      `<br>` +
+      `Tel. / WhatsApp: +420 777 079 997<br>` +
+      `Alt. WhatsApp: +420 776 007 593<br>` +
+      `<br>` +
+      `VAT ID: CZ28445961`,
   },
 ];
 
@@ -492,7 +498,7 @@ const DEFAULT_TEMPLATE = `<div style="font-family:Arial,sans-serif;font-size:14p
 </div>`;
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v203-signature');
+  console.debug('Hotels v205-signature');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
