@@ -1227,6 +1227,8 @@ const fmtMoney = (n) => (Number.isFinite(n) ? n : 0).toFixed(2);
 // Jen posouvá stránku a na chvíli kartu orámuje — nic nemění, proto funguje
 // i v režimu jen ke čtení. Karta se hledá podle data-item-id.
 const jumpToItem = (itemId) => {
+  // Sbalená karta se před skokem rozbalí (poslouchá na to OfferDetail).
+  window.dispatchEvent(new CustomEvent('offer-expand-item', { detail: String(itemId) }));
   const el = document.querySelector(`[data-item-id="${String(itemId)}"]`);
   if (!el) return false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
@@ -2085,6 +2087,18 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // drží jen ruční výjimky: co uživatel otevřel navíc a co naopak schoval.
   const [noteOpenIds, setNoteOpenIds] = React.useState(() => new Set());
   const [noteHiddenIds, setNoteHiddenIds] = React.useState(() => new Set());
+  // Hotel, který není ve výpočtu ani alternativa (a není Potvrzený), se ukáže
+  // sbalený do jednoho řádku. Tady jsou karty, které někdo ručně rozbalil.
+  // Jen zobrazení — nic se neukládá do databáze.
+  const [expandedIds, setExpandedIds] = React.useState(() => new Set());
+  const setExpanded = (id, open) => setExpandedIds(prev => {
+    const s = new Set(prev); const k = String(id); open ? s.add(k) : s.delete(k); return s;
+  });
+  React.useEffect(() => {
+    const onExpand = (e) => setExpanded(e.detail, true);
+    window.addEventListener('offer-expand-item', onExpand);
+    return () => window.removeEventListener('offer-expand-item', onExpand);
+  }, []);
   const toggleItemNote = (id, visible) => {
     setNoteOpenIds(prev => { const s = new Set(prev); visible ? s.delete(id) : s.add(id); return s; });
     setNoteHiddenIds(prev => { const s = new Set(prev); visible ? s.add(id) : s.delete(id); return s; });
@@ -3695,6 +3709,69 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               const minWidth = isHotel ? 1100 : undefined;
               const isEnabled = it.enabled !== false;
               const rowBg = it.cancelled ? '#FEE2E2' : isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
+              // Sbalit jde jen hotel, který není alternativa a buď je zrušený,
+              // nebo není zaškrtnutý do výpočtu. Potvrzený nezaškrtnutý zůstává
+              // rozbalený, aby nezapadlo varování o potvrzeném hotelu mimo výběr.
+              const collapsible = isHotel && !it.isAlt && (it.cancelled || (!isEnabled && itemStatus(it) !== 'confirmed'));
+              const collapsed = collapsible && !expandedIds.has(String(it.id));
+              if (collapsed) {
+                const st = BOOKING_STATUS.find(b => b.value === itemStatus(it)) || BOOKING_STATUS[0];
+                const dShort = (d) => {
+                  if (!d || d.length < 10) return '';
+                  const [y, m, dd] = d.split('-');
+                  const wd = new Date(`${d}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short' });
+                  return `${dd}.${m}.${y} ${wd}`;
+                };
+                const n = (it.dateFrom && it.dateTo) ? Math.round((new Date(it.dateTo) - new Date(it.dateFrom)) / 86400000) : 0;
+                const price = (v) => (v === undefined || v === null || String(v).trim() === '') ? '–' : evalAmount(v).toFixed(2);
+                const mailCount = (it.contactEmails || (it.contactEmail ? [it.contactEmail] : [])).length;
+                const open = () => setExpanded(it.id, true);
+                return (
+                  <React.Fragment key={it.id}>
+                  <div ref={it.id === newItemId ? newItemRef : null}
+                    data-item-id={String(it.id)}
+                    draggable={canMoveCards && dragArmedId === it.id}
+                    onDragStart={e => { if (!canMoveCards || dragArmedId !== it.id) { e.preventDefault(); return; } handleDragStart(e, idx); }}
+                    onDragEnter={() => handleDragEnter(idx)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => e.preventDefault()}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, fontSize: 12,
+                      opacity: dragFrom === idx ? 0.35 : (isEnabled && !it.cancelled ? 1 : 0.6),
+                      boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto' }}>
+                      <input type="checkbox" checked={isEnabled} onChange={e => {
+                        if (e.target.checked && it.isAlt) updateItemFields(it.id, { enabled: true, isAlt: false, altOf: '' });
+                        else updateItem(it.id, 'enabled', e.target.checked);
+                      }} title="Zaškrtnout do výpočtu" style={{ width: 16, height: 16, cursor: 'pointer', marginRight: 4 }} />
+                      <button type="button" title="Posunout výš" disabled={!canMoveCards || idx === 0} onClick={() => moveItem(idx, -1)} style={arrowBtn(!canMoveCards || idx === 0)}>▲</button>
+                      <span title={canMoveCards ? 'Chyťte a přetáhněte' : 'Nabídku teď nelze upravovat'}
+                        onMouseDown={() => { if (canMoveCards) setDragArmedId(it.id); }}
+                        onMouseUp={() => setDragArmedId(null)}
+                        style={{ fontSize: 14, color: canMoveCards ? colors.muted : '#ccc', cursor: canMoveCards ? 'grab' : 'default', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}>⠿</span>
+                      <button type="button" title="Posunout níž" disabled={!canMoveCards || idx === items.length - 1} onClick={() => moveItem(idx, 1)} style={arrowBtn(!canMoveCards || idx === items.length - 1)}>▼</button>
+                    </div>
+                    <div onClick={open} title="Kliknutím rozbalit kartu"
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, cursor: 'pointer', flexWrap: 'wrap' }}>
+                      <span style={{ color: colors.primary, fontWeight: 700 }}>▸</span>
+                      <span style={{ fontWeight: 700, minWidth: 90 }}>{it.city || '–'}</span>
+                      <span title={it.name || ''} style={{ flex: '0 1 260px', minWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name || 'bez názvu'}</span>
+                      <span style={{ whiteSpace: 'nowrap', color: colors.muted }}>
+                        {dShort(it.dateFrom) || '–'} → {dShort(it.dateTo) || '–'}{n > 0 ? ` · ${n} ${n === 1 ? 'noc' : n < 5 ? 'noci' : 'nocí'}` : ''}
+                      </span>
+                      <span style={{ whiteSpace: 'nowrap' }}>
+                        DBL {price(it.pricePerNightDbl)} / SNGL {price(it.pricePerNightSngl)} {it.currency || 'EUR'}
+                      </span>
+                      {st.value && (
+                        <span style={{ whiteSpace: 'nowrap', fontSize: 11, padding: '1px 6px', borderRadius: 4, border: `1px solid ${st.border}`, background: st.bg, color: st.color, fontWeight: 600 }}>{st.label}</span>
+                      )}
+                      {mailCount > 0 && <span title="Kontaktní e-maily" style={{ color: colors.muted, whiteSpace: 'nowrap' }}>✉ {mailCount}</span>}
+                      {hasNotes && <span title="Zápisy u karty" style={{ color: '#854f0b', whiteSpace: 'nowrap' }}>📝 {itemNotes.length}</span>}
+                    </div>
+                  </div>
+                  </React.Fragment>
+                );
+              }
               return (
                 <React.Fragment key={it.id}>
                 <div ref={it.id === newItemId ? newItemRef : null}
@@ -3713,6 +3790,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                       // Zaškrtnutím do kalkulace přestává být hotel alternativou.
                       if (e.target.checked && it.isAlt) updateItemFields(it.id, { enabled: true, isAlt: false, altOf: '' });
                       else updateItem(it.id, 'enabled', e.target.checked);
+                      // Odškrtnutím se karta znovu sbalí (pokud ji pravidlo sbaluje).
+                      if (!e.target.checked) setExpanded(it.id, false);
                     }} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
                     <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <button type="button" title="Posunout výš" disabled={!canMoveCards || idx === 0} onClick={() => moveItem(idx, -1)} style={arrowBtn(!canMoveCards || idx === 0)}>▲</button>
@@ -3722,6 +3801,10 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                         style={{ fontSize: 14, color: canMoveCards ? colors.muted : '#ccc', cursor: canMoveCards ? 'grab' : 'default', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}>⠿</span>
                       <button type="button" title="Posunout níž" disabled={!canMoveCards || idx === items.length - 1} onClick={() => moveItem(idx, 1)} style={arrowBtn(!canMoveCards || idx === items.length - 1)}>▼</button>
                     </div>
+                    {collapsible && (
+                      <button type="button" onClick={() => setExpanded(it.id, false)} title="Sbalit kartu do jednoho řádku"
+                        style={{ marginTop: 2, padding: '1px 6px', fontSize: 10, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 4, cursor: 'pointer', color: colors.primary }}>▴ sbalit</button>
+                    )}
                   </div>
                   <div>
                     {isHotel ? (
