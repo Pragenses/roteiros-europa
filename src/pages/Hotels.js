@@ -1,4 +1,4 @@
-// force-rebuild-subject-id
+// force-rebuild-group-id
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -563,7 +563,7 @@ const BUILTIN_TEMPLATES = [
 ];
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v208-subject-id');
+  console.debug('Hotels v210-group-id');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -939,9 +939,14 @@ export default function Hotels({ navigate, colors, navParams }) {
       : null;
     const base = currentText ? plainToHtml(currentText) : (emailBody.startsWith('<PLAIN>') ? plainToHtml(emailBody.slice(7, -8)) : emailBody);
     return base
-    .replace(/{{groupName}}/g, groupName||'[GROUP NAME]')
+    // Název skupiny se v textu vypisuje i s číslem zakázky ("Grupo X / BV-27004").
+    // Dřív se to řešilo ručním dopsáním čísla do názvu skupiny; teď to dělá
+    // aplikace, takže to funguje ve všech šablonách bez jejich úpravy.
+    // Samotné číslo je k dispozici i zvlášť jako {{offerNumber}}.
+    .replace(/{{groupName}}/g, [groupName, offerNumber.trim()].filter(Boolean).join(' / ')||'[GROUP NAME]')
     .replace(/{{checkIn}}/g, fmtDateEU(checkIn)||'[CHECK-IN]')
     .replace(/{{checkOut}}/g, fmtDateEU(checkOut)||'[CHECK-OUT]')
+    .replace(/{{offerNumber}}/g, offerNumber.trim()||'[REFERENCE]')
     .replace(/{{optionDate}}/g, fmtDateEU(optionDate)||'[OPTION DATE]')
     .replace(/{{freeRatio}}/g, freeRatio||'20')
     .replace(/{{signature}}/g, SIGNATURES.find(s => s.id === signatureId)?.html || '');
@@ -1048,7 +1053,7 @@ export default function Hotels({ navigate, colors, navParams }) {
             try {
               await addDoc(collection(db, 'hotelEmailLog'), {
                 hotelId: h.id, hotelName: h.name||h.email, hotelCity: h.city,
-                email: h.email, subject, groupName, checkIn, checkOut,
+                email: h.email, subject, groupName, offerNumber, checkIn, checkOut,
                 sentAt: serverTimestamp(), status: 'sent',
               });
             } catch (logErr) {
@@ -1556,12 +1561,14 @@ export default function Hotels({ navigate, colors, navParams }) {
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead><tr style={{ background: C.bg }}>
-                  {['Datum','Hotel','Město','Email','Skupina','Check-in','Check-out'].map(h=><th key={h} style={thS}>{h}</th>)}
+                  {['Datum','ID zakázky','Hotel','Město','Email','Skupina','Check-in','Check-out'].map(h=><th key={h} style={thS}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {logs.map(l => (
                     <tr key={l.id} style={{ borderBottom: `1px solid ${C.border}` }}>
                       <td style={tdS}>{fmt(l.sentAt)}</td>
+                      {/* U záznamů odeslaných před touhle úpravou číslo chybí — proto pomlčka. */}
+                      <td style={tdS}>{l.offerNumber || '—'}</td>
                       <td style={tdS}><strong>{l.hotelName}</strong></td>
                       <td style={tdS}>{l.hotelCity||'—'}</td>
                       <td style={tdS}><a href={`mailto:${l.email}`} style={{ color: C.primary }}>{l.email}</a></td>
