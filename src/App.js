@@ -32,6 +32,7 @@ import Bus from './pages/Bus';
 import Declined from './pages/Declined';
 import History from './pages/History';
 import Settings from './pages/Settings';
+import Import from './pages/Import';
 
 const COLORS = {
   primary: '#1a3a5c',
@@ -69,6 +70,7 @@ const NAV = [
   { id: 'bus',       label: 'Bus',       icon: '🚌' },
   { id: 'declined',  label: 'Declined',  icon: '✕' },
   { id: 'history',   label: 'History',   icon: '🕐' },
+  { id: 'import',    label: 'Import starých akcí', icon: '📥', ownerOnly: true },
   { id: 'settings',  label: 'Settings',  icon: '⚙' },
 ];
 
@@ -348,6 +350,7 @@ export default function App() {
     if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
     if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
     if (page === 'settings')  return <Settings colors={COLORS} />;
+    if (page === 'import')    return <Import colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
   };
 
