@@ -1,4 +1,4 @@
-// force-rebuild-group-id
+// force-rebuild-poslat-sem-log
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -563,7 +563,7 @@ const BUILTIN_TEMPLATES = [
 ];
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v210-group-id');
+  console.debug('Hotels v212-poslat-sem-log');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1024,8 +1024,29 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const toggleSelect = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 
+  // Ručně zadané adresy z pole „Poslat sem". Oddělovat jde čárkou, středníkem
+  // i mezerou, takže se dá vložit víc adres najednou.
+  const extraParsed  = extraEmail.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+  const extraValid   = extraParsed.filter(e => EMAIL_RE.test(e));
+  const extraInvalid = extraParsed.filter(e => !EMAIL_RE.test(e));
+  // Odeslat jde i bez vybraného hotelu — stačí vyplněná adresa v „Poslat sem".
+  const canSend = (selected.length > 0 || extraValid.length > 0) && extraInvalid.length === 0;
+  const sendLabel = (() => {
+    const parts = [];
+    if (selected.length) parts.push(`${selected.length} hotel${selected.length===1?'':selected.length<5?'y':'ů'}`);
+    if (extraValid.length) parts.push(`${extraValid.length} adres${extraValid.length===1?'u':extraValid.length<5?'y':''}`);
+    return parts.length ? '✉ Odeslat na ' + parts.join(' + ') : '✉ Odeslat';
+  })();
+
   const handleSend = async () => {
-    if (!selected.length) { alert('Vyber alespoň jeden hotel.'); return; }
+    if (!selected.length && extraValid.length === 0) {
+      alert('Vyber alespoň jeden hotel ze seznamu, nebo vyplň adresu v poli „Poslat sem".');
+      return;
+    }
+    if (extraInvalid.length) {
+      alert('Tohle nevypadá jako platná emailová adresa:\n\n' + extraInvalid.join('\n') + '\n\nOprav ji, nebo smaž.');
+      return;
+    }
     // Poslední pojistka: kdyby se značka {{signature}} z textu ztratila, email
     // by odešel bez podpisu. Radši se zeptáme, než se rozešle na desítky hotelů.
     const sigHtml = SIGNATURES.find(s => s.id === signatureId)?.html || '';
@@ -1036,13 +1057,13 @@ export default function Hotels({ navigate, colors, navParams }) {
     const body = buildBody();
     const sel = hotels.filter(h => selected.includes(h.id));
     setSendResult(null);
-    setSendProgress(`Odesílám ${sel.length} emailů...`);
+    setSendProgress(`Odesílám ${sel.length + extraValid.length} emailů...`);
     let sent = 0, failed = 0;
     try {
       const res = await fetch('https://tour-pragenses.com/mailer.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipients: [...sel.map(h => ({ email: h.email, name: h.name||h.email })), ...(extraEmail.trim() ? [{ email: extraEmail.trim(), name: 'Extra' }] : [])], subject, body, from: senderFrom }),
+        body: JSON.stringify({ recipients: [...sel.map(h => ({ email: h.email, name: h.name||h.email })), ...extraValid.map(e => ({ email: e, name: e }))], subject, body, from: senderFrom }),
       });
       const data = await res.json();
       if (data.results) {
@@ -1065,13 +1086,28 @@ export default function Hotels({ navigate, colors, navParams }) {
             sent++;
           } else { failed++; }
         }
-        // Count extra email result (no logging needed)
-        if (extraEmail.trim() && data.results[sel.length]) {
-          if (data.results[sel.length].ok) sent++; else failed++;
+        // Ručně zadané adresy se zapisují do logu taky — musí být dohledatelné,
+        // že se email odeslal. Nemají hotelId, protože v databázi hotelů nejsou;
+        // příznak `manual` je v logu odliší od poptávek na hotely ze seznamu.
+        for (let j = 0; j < extraValid.length; j++) {
+          const e = extraValid[j];
+          const r = data.results[sel.length + j];
+          if (r && r.ok) {
+            try {
+              await addDoc(collection(db, 'hotelEmailLog'), {
+                hotelId: '', hotelName: e, hotelCity: '', manual: true,
+                email: e, subject, groupName, offerNumber, checkIn, checkOut,
+                sentAt: serverTimestamp(), status: 'sent',
+              });
+            } catch (logErr) {
+              console.error('Failed to write hotelEmailLog entry (email was still sent):', logErr);
+            }
+            sent++;
+          } else { failed++; }
         }
-      } else { alert('Chyba: ' + JSON.stringify(data)); failed = sel.length; }
+      } else { alert('Chyba: ' + JSON.stringify(data)); failed = sel.length + extraValid.length; }
     } catch (e) {
-      alert('Chyba: ' + e.message); failed = sel.length;
+      alert('Chyba: ' + e.message); failed = sel.length + extraValid.length;
     }
     setSending(false);
     setSendProgress('');
@@ -1527,18 +1563,25 @@ export default function Hotels({ navigate, colors, navParams }) {
               </div>
             )}
             <div style={{ marginBottom: 10 }}>
-              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>Odeslat také na (volitelné — např. testovací adresa)</label>
-              <input type="email" value={extraEmail} onChange={e => setExtraEmail(e.target.value)}
-                placeholder="test@mail-tester.com" style={{ ...inp() }} />
+              <label style={{ fontSize: 11, color: C.muted, display: 'block', marginBottom: 3 }}>
+                Poslat sem (adresa mimo seznam, kopie sobě, test — víc adres oddělte čárkou)
+              </label>
+              <input type="text" value={extraEmail} onChange={e => setExtraEmail(e.target.value)}
+                placeholder="hotel@example.com, grupos@tour-pragenses.com" style={{ ...inp() }} />
+              {extraInvalid.length > 0 && (
+                <div style={{ fontSize: 11, color: '#b00020', marginTop: 4 }}>
+                  ⚠ Tohle nevypadá jako adresa: {extraInvalid.join(', ')}
+                </div>
+              )}
+              {extraValid.length > 0 && extraInvalid.length === 0 && (
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
+                  Odejde také na: {extraValid.join(', ')}
+                </div>
+              )}
             </div>
-            <button onClick={handleSend} disabled={!selected.length || sending} style={{ ...btn(selected.length && !sending ? C.primary : C.border, selected.length && !sending ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
-              {sending ? sendProgress || 'Připravuji...' : `✉ Odeslat na ${selected.length} hotel${selected.length===1?'':selected.length<5?'y':'ů'}`}
+            <button onClick={handleSend} disabled={canSend ? sending : true} style={{ ...btn(canSend && !sending ? C.primary : C.border, canSend && !sending ? '#fff' : C.muted), fontSize: 15, padding: '10px 24px' }}>
+              {sending ? sendProgress || 'Připravuji...' : sendLabel}
             </button>
-            <button onClick={async () => {
-              const r = await fetch('https://tour-pragenses.com/mailer.php', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:'info@tour-pragenses.com',subject:'Test z aplikace',body:'Test'})});
-              const d = await r.json();
-              alert(JSON.stringify(d));
-            }} style={{ ...btn('#888'), fontSize: 12, padding: '6px 12px' }}>🔧 Test</button>
             {sendResult && (
               <div style={{ marginTop: 12, padding: '10px 14px', background: sendResult.failed ? '#fff3e0' : '#e8f5e9', borderRadius: 6, fontSize: 13 }}>
                 {sendResult.sent > 0 && <div style={{ color: C.success }}>✓ Odesláno: <strong>{sendResult.sent}</strong> emailů</div>}
@@ -1569,7 +1612,10 @@ export default function Hotels({ navigate, colors, navParams }) {
                       <td style={tdS}>{fmt(l.sentAt)}</td>
                       {/* U záznamů odeslaných před touhle úpravou číslo chybí — proto pomlčka. */}
                       <td style={tdS}>{l.offerNumber || '—'}</td>
-                      <td style={tdS}><strong>{l.hotelName}</strong></td>
+                      <td style={tdS}>
+                        <strong>{l.hotelName}</strong>
+                        {l.manual && <span style={{ fontSize: 10, color: C.muted, marginLeft: 6, border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 4px' }}>ručně</span>}
+                      </td>
                       <td style={tdS}>{l.hotelCity||'—'}</td>
                       <td style={tdS}><a href={`mailto:${l.email}`} style={{ color: C.primary }}>{l.email}</a></td>
                       <td style={tdS}>{l.groupName||'—'}</td>
