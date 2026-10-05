@@ -2397,7 +2397,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // Volba stavu v menu. "Zrušeno" jen nastaví příznak cancelled (bez e-mailu);
   // volba jiného stavu u zrušené karty zrušení zároveň vrátí.
   const pickBookingStatus = (it, v) => {
-    if (v === 'cancelled') updateItem(it.id, 'cancelled', true);
+    if (v === 'cancelled') {
+      // Zrušení se vždy potvrzuje. Dodavateli se nic neposílá (na to je 🚫).
+      if (!window.confirm(`Označit kartu „${itemTypeIcon(it)} ${itemSourceLabel(it)}“ jako ZRUŠENOU?\n\nDodavateli se nic neodešle. Vrátit jde tlačítkem „ZRUŠENO ✕“.`)) return;
+      updateItem(it.id, 'cancelled', true);
+    }
     else if (it.cancelled) updateItemFields(it.id, { cancelled: false, bookingStatus: v });
     else updateItem(it.id, 'bookingStatus', v);
   };
@@ -2586,6 +2590,10 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   };
 
   const removeItem = (id) => {
+    // Smazání karty je nevratné — vždy se nejdřív zeptat.
+    const it = itemsRef.current.find(x => x.id === id);
+    const label = it ? `${itemTypeIcon(it)} ${itemSourceLabel(it)}` : 'tuto kartu';
+    if (!window.confirm(`Opravdu SMAZAT kartu „${label}“?\n\nSmaže se celá karta včetně cen, e-mailů, záloh, příloh a zápisů. Tuto akci nelze vrátit zpět.`)) return;
     setItems(prev => {
       const newItems = prev.filter(it => it.id !== id);
       itemsRef.current = newItems;
@@ -3833,7 +3841,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     onDragEnd={handleDragEnd}
                     onDragOver={e => e.preventDefault()}
                     onDrop={e => e.preventDefault()}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, fontSize: 12,
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 8px', border: `1px solid ${it.cancelled ? '#dc2626' : '#b8a24a'}`, borderRadius: 6, background: rowBg, fontSize: 12,
                       opacity: dragFrom === idx ? 0.35 : (isEnabled && !it.cancelled ? 1 : 0.6),
                       boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto' }}>
@@ -3948,7 +3956,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     onDragEnd={handleDragEnd}
                     onDragOver={e => e.preventDefault()}
                     onDrop={e => e.preventDefault()}
-                    style={{ display: 'grid', gridTemplateColumns: '54px 1fr', gap: 6, padding: '6px 8px', border: `1px solid ${it.cancelled ? '#fca5a5' : '#e8dfb0'}`, borderRadius: 8, background: rowBg,
+                    style={{ display: 'grid', gridTemplateColumns: '54px 1fr', gap: 6, padding: '6px 8px', border: `1px solid ${it.cancelled ? '#dc2626' : '#b8a24a'}`, borderRadius: 8, background: rowBg,
                       opacity: dragFrom === idx ? 0.35 : (isEnabled ? 1 : 0.45),
                       boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
                     {/* levý sloupec: výběr, posun, sbalení */}
@@ -4119,7 +4127,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
                       {/* ŘÁDEK 5 – zápisy k hotelu, uvnitř karty */}
                       {notesVisible && (
-                        <div style={{ borderTop: `1px solid ${it.cancelled ? '#fca5a5' : '#e8dfb0'}`, paddingTop: 5 }}>
+                        <div style={{ borderTop: `1px solid ${it.cancelled ? '#dc2626' : '#b8a24a'}`, paddingTop: 5 }}>
                           <NoteLog
                             entries={itemNotes}
                             onChange={list => updateItemFields(it.id, { noteEntries: list, note: '' })}
@@ -4146,7 +4154,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               const sLbl = { fontSize: 10, color: colors.muted, whiteSpace: 'nowrap' };
               const grp = { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' };
               const btn = (extra) => ({ padding: '3px 8px', borderRadius: 5, fontSize: 12, cursor: 'pointer', ...extra });
-              const frame = it.cancelled ? '#fca5a5' : (isTicket ? '#bcd7f0' : '#efc3d3');
+              const frame = it.cancelled ? '#dc2626' : (isTicket ? '#5b8fc4' : '#c76a8f');
               const curSelect = (
                 <select value={it.currency || 'EUR'} onChange={e => updateItem(it.id, 'currency', e.target.value)}
                   style={{ ...iStyle, width: 70, padding: '4px 4px' }}>
