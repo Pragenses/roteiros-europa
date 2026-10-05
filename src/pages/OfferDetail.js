@@ -718,7 +718,25 @@ const noteTime = (e) => {
 
 // linkedEntries = zápisy ze servisních kart [{ entry, itemId, label }].
 // Zobrazují se tu JEN KE ČTENÍ — uložené jsou u karty a upravují se tam.
-const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId, linkedEntries, visibleCount }) => {
+const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId, linkedEntries, visibleCount, cards, onMoveNote }) => {
+  // Přesun zápisu mezi obecnými poznámkami a kartou (jen v Poznámkách k nabídce).
+  const canMove = typeof onMoveNote === 'function' && Array.isArray(cards) && cards.length > 0;
+  const stop = (e) => e.stopPropagation();
+  const assignSelect = (entry) => !canMove ? null : (
+    <select value="" onClick={stop} onChange={e => { if (e.target.value) onMoveNote({ entry, fromItemId: null, toItemId: e.target.value }); }}
+      title="Přesunout tento zápis do servisní karty"
+      style={{ fontSize: 11, padding: '1px 4px', border: `1px solid ${colors.border}`, borderRadius: 4, maxWidth: 170, color: colors.muted, background: '#fff', flexShrink: 0 }}>
+      <option value="">přiřadit ke kartě…</option>
+      {cards.map(it => (
+        <option key={it.id} value={String(it.id)}>{itemTypeIcon(it)} {itemSourceLabel(it)}</option>
+      ))}
+    </select>
+  );
+  const unassignBtn = (row) => !canMove ? null : (
+    <button type="button" onClick={e => { e.stopPropagation(); if (window.confirm('Odebrat zápis z karty a vrátit ho mezi obecné poznámky?')) onMoveNote({ entry: row.entry, fromItemId: row.itemId, toItemId: null }); }}
+      title="Odebrat z karty — zápis se vrátí mezi obecné poznámky"
+      style={{ fontSize: 11, padding: '1px 6px', border: `1px solid ${colors.border}`, borderRadius: 4, background: '#fff', cursor: 'pointer', color: colors.muted, flexShrink: 0, whiteSpace: 'nowrap' }}>× z karty</button>
+  );
   const [openIds, setOpenIds] = React.useState(() => new Set());
   const linked = Array.isArray(linkedEntries) ? linkedEntries : [];
   const [showLinked, setShowLinked] = React.useState(() => {
@@ -868,7 +886,9 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
                   <span style={{ color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>
                     {firstLine || <em style={{ color: colors.muted }}>(prázdný zápis)</em>}
                   </span>
+                  {row.own && assignSelect(entry)}
                   {!row.own && <JumpToCard itemId={row.itemId} colors={colors} />}
+                  {!row.own && unassignBtn(row)}
                 </div>
               );
             }
@@ -886,6 +906,7 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
                     <div style={{ flex: 1 }} />
                     <span style={{ fontSize: 10, color: colors.muted }}>jen ke čtení — upravuje se u karty</span>
                     <JumpToCard itemId={row.itemId} colors={colors} />
+                    {unassignBtn(row)}
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.5, padding: '6px 8px',
                                 color: colors.text, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6 }}>
@@ -907,6 +928,7 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
                     {label || 'Starší poznámka'}
                   </span>
                   <div style={{ flex: 1 }} />
+                  {assignSelect(entry)}
                   {entry.hasTask && (
                     <span title="Z tohoto zápisu už vznikl úkol"
                       style={{ fontSize: 10, color: colors.success, fontWeight: 700 }}>✓ úkol</span>
@@ -2845,6 +2867,31 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     await trackedUpdate({ noteEntries: list, notes: '', updatedAt: new Date().toISOString() });
   };
 
+  // Přesun jednoho zápisu: obecné poznámky → karta, nebo karta → obecné.
+  // Zápis se nekopíruje — z jednoho místa zmizí a na druhém se objeví beze
+  // změny (text, datum, autor). Obojí se uloží JEDNÍM zápisem do databáze,
+  // aby se zápis nemohl ztratit ani zdvojit.
+  const moveNote = async ({ entry, fromItemId, toItemId }) => {
+    if (!entry) return;
+    const sameId = (a, b) => String(a) === String(b);
+    const moved = entry.id === 'legacy' ? { ...entry, id: Date.now() + Math.random() } : entry;
+    let general = asNoteEntries(offer.noteEntries, offer.notes);
+    if (fromItemId === null || fromItemId === undefined) general = general.filter(e => e.id !== entry.id);
+    if (toItemId === null || toItemId === undefined) general = [moved, ...general];
+    const newItems = itemsRef.current.map(it => {
+      let list = asNoteEntries(it.noteEntries, it.note);
+      let changed = false;
+      if (fromItemId !== null && fromItemId !== undefined && sameId(it.id, fromItemId)) { list = list.filter(e => e.id !== entry.id); changed = true; }
+      if (toItemId !== null && toItemId !== undefined && sameId(it.id, toItemId)) { list = [moved, ...list]; changed = true; }
+      return changed ? { ...it, noteEntries: list, note: '' } : it;
+    });
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    itemsRef.current = newItems;
+    setItems(newItems);
+    setOffer(prev => ({ ...prev, noteEntries: general, notes: '' }));
+    await trackedUpdate({ items: newItems, noteEntries: general, notes: '', updatedAt: new Date().toISOString() });
+  };
+
   // Úkoly patří vždy k nabídce, i když vznikly ze zápisu u servisní karty —
   // jinak by se v seznamu ztratily.
   const [todoDraft, setTodoDraft] = useState(null);
@@ -3548,6 +3595,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           onChange={handleOfferNotes}
           colors={colors}
           onMakeTask={startTodoFromNote}
+          cards={items}
+          onMoveNote={moveNote}
           linkedEntries={items.flatMap(it => asNoteEntries(it.noteEntries, it.note)
             .filter(e => (e.text || '').trim())
             .map(e => ({ entry: e, itemId: it.id, label: `${itemTypeIcon(it)} ${itemSourceLabel(it)}` })))}
