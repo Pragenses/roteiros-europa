@@ -279,7 +279,7 @@ const readAmount = (v) => {
   return parseFloat(cleaned) || 0;
 };
 
-const DepositRows = ({ item, onChange, colors }) => {
+const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
   // Deposits are paid in INSTALMENTS — hotels and buses alike — so this is a
   // list, not a single amount. Stored on the item as `deposits`; the currency
   // is not repeated per row because it always follows the item's own currency.
@@ -294,6 +294,9 @@ const DepositRows = ({ item, onChange, colors }) => {
   const small = { fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 };
   const lbl = { fontSize: 9, color: colors.muted };
   const cur = item.currency || 'EUR';
+  // Na hotelové kartě: bez záloh se neukazuje nic (tlačítko „+ záloha“ je
+  // jinde na kartě) a podmínky mají vlastní řádek.
+  if (rowsOnly && rows.length === 0) return null;
 
   return (
     <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
@@ -334,7 +337,7 @@ const DepositRows = ({ item, onChange, colors }) => {
       {/* Co dodavatel požaduje — vlastními slovy, jedno pole na celou kartu.
           Je to poznámka, ne číslo: nic se z ní nepočítá a do klientského PDF
           se nedostane. Vyplněná se podbarví, aby ji bylo vidět. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4,
+      {!rowsOnly && <div style={{ display: 'flex', alignItems: 'center', gap: 4,
                     padding: '1px 5px', borderRadius: 4,
                     background: termsFilled ? '#fff8e1' : 'transparent' }}>
         <span style={{ ...lbl, width: 46 }}>Podmínky:</span>
@@ -343,7 +346,36 @@ const DepositRows = ({ item, onChange, colors }) => {
           value={item.depositTerms || ''}
           onChange={e => onChange('depositTerms', e.target.value)}
           style={{ ...small, flex: 1, minWidth: 160 }} />
-      </div>
+      </div>}
+    </div>
+  );
+};
+
+// Podmínky záloh na hotelové kartě: jeden dlouhý řádek. Když je textu víc,
+// než se vejde, ukáže se „▾ celé“ a pole se rozbalí na víc řádků.
+const TermsField = ({ value, onChange, colors }) => {
+  const [open, setOpen] = React.useState(false);
+  const text = value || '';
+  const long = text.length > 110 || text.includes('\n');
+  const filled = text.trim() !== '';
+  const lines = Math.min(Math.max(text.split('\n').length, Math.ceil(text.length / 110)), 8);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: 260 }}>
+      <span style={{ fontSize: 10, color: colors.muted, paddingTop: 5, whiteSpace: 'nowrap' }}>Podmínky:</span>
+      <textarea rows={open ? Math.max(lines, 2) : 1} value={text}
+        placeholder="např. 30 % při konfirmaci, zbytek 30 dní před příjezdem"
+        title="Podmínky záloh u tohoto dodavatele — jen pro vás, do nabídky pro klienta se netiskne"
+        onChange={e => onChange(e.target.value)}
+        style={{ flex: 1, fontSize: 11, padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 4,
+                 fontFamily: 'inherit', resize: open ? 'vertical' : 'none', overflow: open ? 'auto' : 'hidden',
+                 whiteSpace: open ? 'pre-wrap' : 'nowrap', lineHeight: 1.4, boxSizing: 'border-box',
+                 background: filled ? '#fff8e1' : '#fff' }} />
+      {long && (
+        <button type="button" onClick={() => setOpen(o => !o)}
+          style={{ fontSize: 10, padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 4, background: '#fff', cursor: 'pointer', color: colors.primary, whiteSpace: 'nowrap' }}>
+          {open ? '▴ méně' : '▾ celé'}
+        </button>
+      )}
     </div>
   );
 };
@@ -370,10 +402,12 @@ const decimalInput = (e) => {
 // the formula to its computed result on blur, so the field shows the computed number directly.
 // Defined at module level (not inside OfferDetail) so it keeps a stable identity across
 // re-renders and inputs don't lose focus on every keystroke.
-const FormulaField = ({ value, onChange, placeholder, colors }) => {
-  const style = { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
+const FormulaField = ({ value, onChange, placeholder, colors, width, title }) => {
+  const style = width
+    ? { width, padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', textAlign: 'right' }
+    : { width: '100%', padding: '6px 8px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box' };
   return (
-    <input type="text" placeholder={placeholder} value={value} onChange={onChange} onInput={decimalInput}
+    <input type="text" placeholder={placeholder} title={title} value={value} onChange={onChange} onInput={decimalInput}
       onBlur={e => {
         const v = e.target.value;
         if (String(v).trim().startsWith('=')) {
@@ -684,7 +718,7 @@ const noteTime = (e) => {
 
 // linkedEntries = zápisy ze servisních kart [{ entry, itemId, label }].
 // Zobrazují se tu JEN KE ČTENÍ — uložené jsou u karty a upravují se tam.
-const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId, linkedEntries }) => {
+const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, sourceItemId, linkedEntries, visibleCount }) => {
   const [openIds, setOpenIds] = React.useState(() => new Set());
   const linked = Array.isArray(linkedEntries) ? linkedEntries : [];
   const [showLinked, setShowLinked] = React.useState(() => {
@@ -724,7 +758,7 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
       ].sort((a, b) => (b.t - a.t) || (a.i - b.i))
     : list.map(entry => ({ key: entry.id, entry, own: true }));
 
-  const VISIBLE = 5;
+  const VISIBLE = visibleCount || 5;
   const visible = showOlder ? display : display.slice(0, VISIBLE);
   const hidden = display.length - visible.length;
 
@@ -3767,6 +3801,274 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                       )}
                       {mailCount > 0 && <span title="Kontaktní e-maily" style={{ color: colors.muted, whiteSpace: 'nowrap' }}>✉ {mailCount}</span>}
                       {hasNotes && <span title="Zápisy u karty" style={{ color: '#854f0b', whiteSpace: 'nowrap' }}>📝 {itemNotes.length}</span>}
+                    </div>
+                  </div>
+                  </React.Fragment>
+                );
+              }
+              if (isHotel) {
+                // ── Hotelová karta: vše k hotelu v jednom rámečku ──────────────
+                // Řádek 1: město, hotel, data a ceny (na úzké obrazovce se ceny
+                // zalomí pod data). Řádek 2: stav, alternativa, option, free
+                // cancel, FOC, přílohy. Pak podmínky, e-maily a zápisy.
+                // Výpočty, pole i jejich ukládání jsou stejné jako dřív.
+                const onDateFrom = (v) => {
+                  updateItem(it.id, 'dateFrom', v);
+                  const current = itemsRef.current.find(x => x.id === it.id);
+                  const dTo = current ? current.dateTo : it.dateTo;
+                  if (v && dTo && v.length === 10 && dTo.length === 10) {
+                    const n = Math.round((new Date(dTo) - new Date(v)) / 86400000);
+                    if (n > 0) updateItem(it.id, 'nights', String(n));
+                  }
+                  if (!it.isAlt && v && v.length === 10) {
+                    const allItems = itemsRef.current;
+                    const myIdx = allItems.findIndex(x => x.id === it.id);
+                    for (let i = myIdx - 1; i >= 0; i--) {
+                      if (allItems[i].subType === 'hotel' && !allItems[i].isAlt) {
+                        if (!allItems[i].dateTo || allItems[i].dateTo === '') {
+                          updateItem(allItems[i].id, 'dateTo', v);
+                          const prevFrom = allItems[i].dateFrom;
+                          if (prevFrom && prevFrom.length === 10) {
+                            const n2 = Math.round((new Date(v) - new Date(prevFrom)) / 86400000);
+                            if (n2 > 0) updateItem(allItems[i].id, 'nights', String(n2));
+                          }
+                        }
+                        break;
+                      }
+                    }
+                  }
+                };
+                const onDateTo = (v) => {
+                  updateItem(it.id, 'dateTo', v);
+                  const current = itemsRef.current.find(x => x.id === it.id);
+                  const dFrom = current ? current.dateFrom : it.dateFrom;
+                  if (v && dFrom && v.length === 10 && dFrom.length === 10) {
+                    const n = Math.round((new Date(v) - new Date(dFrom)) / 86400000);
+                    if (n > 0) updateItem(it.id, 'nights', String(n));
+                  }
+                  if (!it.isAlt && v && v.length === 10) {
+                    const allItems = itemsRef.current;
+                    const myIdx = allItems.findIndex(x => x.id === it.id);
+                    for (let i = myIdx + 1; i < allItems.length; i++) {
+                      if (allItems[i].subType === 'hotel' && !allItems[i].isAlt) {
+                        if (!allItems[i].dateFrom || allItems[i].dateFrom === '') {
+                          updateItem(allItems[i].id, 'dateFrom', v);
+                          const nextTo = allItems[i].dateTo;
+                          if (nextTo && nextTo.length === 10) {
+                            const n2 = Math.round((new Date(nextTo) - new Date(v)) / 86400000);
+                            if (n2 > 0) updateItem(allItems[i].id, 'nights', String(n2));
+                          }
+                        }
+                        break;
+                      }
+                    }
+                  }
+                };
+                const nightsN = (it.dateFrom && it.dateTo) ? Math.round((new Date(it.dateTo) - new Date(it.dateFrom)) / 86400000) : 0;
+                const ck = (x) => String(x.city || '').trim().toLowerCase();
+                const altMains = items.filter(x => isHotelItem(x) && x.enabled !== false && !x.cancelled && x.id !== it.id);
+                const altSameCity = altMains.filter(x => ck(x) && ck(x) === ck(it));
+                const altOptions = [...altSameCity, ...altMains.filter(x => !altSameCity.includes(x))];
+                const altMain = altMainOf(it, items);
+                const emails = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
+                const deposits = Array.isArray(it.deposits) ? it.deposits : [];
+                const sLbl = { fontSize: 10, color: colors.muted, whiteSpace: 'nowrap' };
+                const grp = { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' };
+                const btn = (extra) => ({ padding: '3px 8px', borderRadius: 5, fontSize: 12, cursor: 'pointer', ...extra });
+                return (
+                  <React.Fragment key={it.id}>
+                  <div ref={it.id === newItemId ? newItemRef : null}
+                    data-item-id={String(it.id)}
+                    draggable={canMoveCards && dragArmedId === it.id}
+                    onDragStart={e => { if (!canMoveCards || dragArmedId !== it.id) { e.preventDefault(); return; } handleDragStart(e, idx); }}
+                    onDragEnter={() => handleDragEnter(idx)}
+                    onDragEnd={handleDragEnd}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => e.preventDefault()}
+                    style={{ display: 'grid', gridTemplateColumns: '54px 1fr', gap: 6, padding: '6px 8px', border: `1px solid ${it.cancelled ? '#fca5a5' : '#e8dfb0'}`, borderRadius: 8, background: rowBg,
+                      opacity: dragFrom === idx ? 0.35 : (isEnabled ? 1 : 0.45),
+                      boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
+                    {/* levý sloupec: výběr, posun, sbalení */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center', paddingTop: 4 }}>
+                      <input type="checkbox" checked={isEnabled} onChange={e => {
+                        if (e.target.checked && it.isAlt) updateItemFields(it.id, { enabled: true, isAlt: false, altOf: '' });
+                        else updateItem(it.id, 'enabled', e.target.checked);
+                        if (!e.target.checked) setExpanded(it.id, false);
+                      }} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <button type="button" title="Posunout výš" disabled={!canMoveCards || idx === 0} onClick={() => moveItem(idx, -1)} style={arrowBtn(!canMoveCards || idx === 0)}>▲</button>
+                        <span title={canMoveCards ? 'Chyťte a přetáhněte' : 'Nabídku teď nelze upravovat'}
+                          onMouseDown={() => { if (canMoveCards) setDragArmedId(it.id); }}
+                          onMouseUp={() => setDragArmedId(null)}
+                          style={{ fontSize: 14, color: canMoveCards ? colors.muted : '#ccc', cursor: canMoveCards ? 'grab' : 'default', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}>⠿</span>
+                        <button type="button" title="Posunout níž" disabled={!canMoveCards || idx === items.length - 1} onClick={() => moveItem(idx, 1)} style={arrowBtn(!canMoveCards || idx === items.length - 1)}>▼</button>
+                      </div>
+                      {collapsible && (
+                        <button type="button" onClick={() => setExpanded(it.id, false)} title="Sbalit kartu do jednoho řádku"
+                          style={{ padding: '1px 6px', fontSize: 10, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 4, cursor: 'pointer', color: colors.primary }}>▴ sbalit</button>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+                      {/* ŘÁDEK 1 – město, hotel, data, ceny */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px 14px', flexWrap: 'wrap' }}>
+                        <div style={grp}>
+                          <input key={`city-${it.id}`} type="text" placeholder="Město" value={it.city || ''} onChange={e => updateItem(it.id, 'city', e.target.value)}
+                            style={{ ...iStyle, width: 120, padding: '4px 6px', fontWeight: 600 }} />
+                          <input key={`name-${it.id}`} type="text" placeholder="Název hotelu" title={it.name || ''} value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)}
+                            style={{ ...iStyle, width: 260, padding: '4px 6px' }} />
+                        </div>
+                        <div style={grp}>
+                          <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={onDateFrom} />
+                          <span style={{ color: colors.muted }}>–</span>
+                          <DateDMY dateKey={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={onDateTo} />
+                          {nightsN > 0 && <span style={{ fontSize: 11, color: colors.primary, fontWeight: 600, whiteSpace: 'nowrap' }}>{nightsN} {nightsN === 1 ? 'noc' : nightsN < 5 ? 'noci' : 'nocí'}</span>}
+                        </div>
+                        <div style={{ ...grp, gap: 4 }}>
+                          <span style={sLbl}>DBL</span>
+                          <FormulaField width={78} title="Cena pokoje DBL za noc (lze i =vzorec)" placeholder="=199" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} colors={colors} />
+                          <span style={sLbl}>SNGL</span>
+                          <FormulaField width={78} title="Cena pokoje SNGL za noc (lze i =vzorec)" placeholder="=189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} colors={colors} />
+                          <span style={sLbl}>nocí</span>
+                          <input type="number" title="Počet nocí" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)}
+                            style={{ ...iStyle, width: 46, padding: '4px 4px', textAlign: 'right' }} />
+                          <span style={{ ...sLbl, marginLeft: 4 }}>City tax DBL</span>
+                          <FormulaField width={62} title="City tax DBL za osobu a noc (lze i =199*0.05)" placeholder="0" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} colors={colors} />
+                          <span style={sLbl}>SNGL</span>
+                          <FormulaField width={62} title="City tax SNGL za osobu a noc (jen když se liší)" placeholder="–" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} colors={colors} />
+                          <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)}
+                            style={{ ...iStyle, width: 70, padding: '4px 4px' }}>
+                            {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <span title="Náklad na osobu za celý pobyt" style={{ fontSize: 11, color: colors.muted, whiteSpace: 'nowrap', marginLeft: 4 }}>
+                            = <b style={{ color: colors.text }}>{getEffectiveCostDbl(it).toFixed(2)}</b> / <b style={{ color: colors.text }}>{getEffectiveCostSngl(it).toFixed(2)}</b> per pax
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* ŘÁDEK 2 – stav, alternativa, termíny, FOC, přílohy */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px 14px', flexWrap: 'wrap' }}>
+                        <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
+                        <div style={{ ...grp, fontSize: 11 }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: it.isAlt ? '#1d4ed8' : colors.muted, fontWeight: it.isAlt ? 700 : 400, whiteSpace: 'nowrap' }}>
+                            <input type="checkbox" checked={!!it.isAlt} onChange={e => {
+                              if (e.target.checked) {
+                                const pre = altSameCity.length === 1 ? String(altSameCity[0].id) : '';
+                                updateItemFields(it.id, { isAlt: true, enabled: false, altOf: pre });
+                              } else {
+                                updateItemFields(it.id, { isAlt: false, altOf: '' });
+                              }
+                            }} style={{ cursor: 'pointer' }} />
+                            Alternativa
+                          </label>
+                          {it.isAlt && (
+                            <>
+                              <span style={{ color: colors.muted }}>k hotelu:</span>
+                              <select value={it.altOf ? String(it.altOf) : ''} onChange={e => updateItem(it.id, 'altOf', e.target.value)}
+                                style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${altMain ? '#3b82f6' : '#dc2626'}`, borderRadius: 4, maxWidth: 280 }}>
+                                <option value="">– vyberte –</option>
+                                {altOptions.map(x => (
+                                  <option key={x.id} value={String(x.id)}>
+                                    {hotelLabel(x)}{x.dateFrom ? ` (${fmtDateBR(x.dateFrom)})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                              {!altMain && <span style={{ color: '#dc2626', fontWeight: 700 }}>⚠ vyberte hlavní hotel</span>}
+                              {altMain && <span style={{ color: '#1d4ed8' }}>není v hlavní ceně</span>}
+                            </>
+                          )}
+                        </div>
+                        <div style={grp}>
+                          <span style={sLbl}>Option:</span>
+                          <DateDMY dateKey={`opt-${it.id}`} value={it.optionDate || ''} colors={colors} onChange={v => updateItem(it.id, 'optionDate', v)} />
+                        </div>
+                        <div style={grp}>
+                          <span style={sLbl}>Free cancel:</span>
+                          <DateDMY dateKey={`cxl-${it.id}`} value={it.cancellationDeadline || ''} colors={colors} onChange={v => updateItem(it.id, 'cancellationDeadline', v)} />
+                        </div>
+                        <div style={grp}>
+                          <span style={sLbl}>FOC:</span>
+                          <input type="text" placeholder="20+1" value={it.focRatio || ''} onChange={e => updateItem(it.id, 'focRatio', e.target.value)}
+                            style={{ width: 52, fontSize: 11, padding: '3px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }} />
+                          <select value={it.focRoomType || ''} onChange={e => updateItem(it.id, 'focRoomType', e.target.value)}
+                            style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }}>
+                            <option value="">pokoj?</option>
+                            <option value="sngl">SNGL</option>
+                            <option value="dbl">DBL</option>
+                          </select>
+                        </div>
+                        {deposits.length === 0 && (
+                          <button type="button" title="Přidat zaplacenou zálohu dodavateli"
+                            onClick={() => updateItem(it.id, 'deposits', [{ id: Date.now() + Math.random(), amount: '', date: '', method: '' }])}
+                            style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${colors.border}`, borderRadius: 4, background: '#fff', cursor: 'pointer', color: colors.primary }}>+ záloha</button>
+                        )}
+                        <HotelAttachment
+                          item={it}
+                          colors={colors}
+                          onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
+                          onRemove={(f) => handleRemoveConfirmation(it, f)}
+                        />
+                        <div style={{ ...grp, marginLeft: 'auto' }}>
+                          <button onClick={() => toggleItemNote(it.id, notesVisible)}
+                            title={hasNotes ? `${itemNotes.length} zápis(ů) — kliknutím schovat/ukázat` : 'Přidat poznámku'}
+                            style={btn({ background: hasNotes ? '#fff8e1' : 'transparent', border: `1px solid ${hasNotes ? '#854f0b' : colors.border}`, color: hasNotes ? '#854f0b' : colors.muted })}>📝{hasNotes ? ` ${itemNotes.length}` : ''}</button>
+                          <button onClick={() => removeItem(it.id)} title="Smazat kartu"
+                            style={btn({ background: 'transparent', border: `1px solid ${colors.border}`, color: colors.danger })}>✕</button>
+                        </div>
+                      </div>
+
+                      {/* ŘÁDEK 3 – podmínky (dlouhý řádek, rozbalovací) a zaplacené zálohy */}
+                      <TermsField value={it.depositTerms} onChange={v => updateItem(it.id, 'depositTerms', v)} colors={colors} />
+                      <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly />
+
+                      {/* ŘÁDEK 4 – e-maily a akce */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={sLbl}>✉</span>
+                        {emails.map((email, ei) => (
+                          <span key={ei} style={{ display: 'flex', alignItems: 'center', gap: 3, background: '#eef2f7', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '1px 4px 1px 8px', fontSize: 11 }}>
+                            {email}
+                            <button onClick={() => updateItem(it.id, 'contactEmails', emails.filter((_, i) => i !== ei))}
+                              style={{ background: 'none', border: 'none', color: colors.danger, cursor: 'pointer', fontSize: 11, padding: '0 2px' }}>✕</button>
+                          </span>
+                        ))}
+                        <input type="email" placeholder="+ přidat email" title="Napiš email a stiskni Enter"
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && e.target.value.trim()) {
+                              e.preventDefault();
+                              updateItem(it.id, 'contactEmails', [...emails, e.target.value.trim()]);
+                              e.target.value = '';
+                            }
+                          }}
+                          style={{ ...iStyle, width: 150, fontSize: 11, padding: '3px 6px' }} />
+                        <button onClick={() => openFillModal(it)} title="Vyplnit kartu z e-mailu od hotelu nebo z PDF"
+                          style={btn({ background: '#f0ede8', border: `1px solid ${colors.primary}`, color: colors.primary })}>📋 Vyplnit</button>
+                        <button onClick={() => openResendModal(it, 'forward')} title="Přeposlat rezervaci (datum, cena, příloha)"
+                          style={btn({ background: '#e8f0fe', border: '1px solid #1a3a5c', color: '#1a3a5c' })}>📧</button>
+                        {!it.cancelled && (
+                          <button onClick={() => openResendModal(it, 'cancel')} title="Zrušit tuto službu (odešle storno email dodavateli)"
+                            style={btn({ background: '#fee2e2', border: '1px solid #dc2626', color: '#dc2626' })}>🚫</button>
+                        )}
+                        {it.cancelled && (
+                          <button onClick={() => updateItem(it.id, 'cancelled', false)} title="Vrátit zpět (zrušit označení 'zrušeno')"
+                            style={btn({ background: '#dc2626', border: '1px solid #dc2626', color: '#fff', fontSize: 11, fontWeight: 600 })}>ZRUŠENO ✕</button>
+                        )}
+                      </div>
+
+                      {/* ŘÁDEK 5 – zápisy k hotelu, uvnitř karty */}
+                      {notesVisible && (
+                        <div style={{ borderTop: `1px solid ${it.cancelled ? '#fca5a5' : '#e8dfb0'}`, paddingTop: 5 }}>
+                          <NoteLog
+                            entries={itemNotes}
+                            onChange={list => updateItemFields(it.id, { noteEntries: list, note: '' })}
+                            colors={colors}
+                            compact
+                            visibleCount={2}
+                            onMakeTask={startTodoFromNote}
+                            sourceLabel={itemSourceLabel(it)}
+                            sourceItemId={it.id}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                   </React.Fragment>
