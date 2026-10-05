@@ -490,6 +490,13 @@ const SECTIONS = [
   ['itinerary', 'Program'], ['hotels', 'Hotely'], ['transport', 'Doprava'], ['guides', 'Průvodci'],
   ['services', 'Vstupenky a další služby'], ['clientPrice', 'Cena pro klienta'], ['payments', 'Platby a zálohy'],
 ];
+// Pevné pořadí sloupců v tabulkách výsledku (co tu chybí, jde na konec).
+const COL_ORDER = [
+  'date', 'city', 'name', 'type', 'supplier', 'description', 'route', 'dates', 'checkIn', 'checkOut', 'nights', 'rooms', 'pax',
+  'paxVariant', 'priceDbl', 'priceSgl', 'price', 'pricePerPerson', 'priceBasis', 'currency', 'cityTax', 'cityTaxBasis', 'meals',
+  'foc', 'optionDate', 'cancellationTerms', 'paymentTerms', 'status', 'direction', 'party', 'amount', 'dueDate', 'method',
+  'contact', 'notes',
+];
 const filled = (v) => v !== undefined && v !== null && String(v).trim() !== '';
 
 function ReadResult({ r, colors }) {
@@ -522,6 +529,10 @@ function ReadResult({ r, colors }) {
         if (!rows.length) return null;
         const cols = [];
         rows.forEach(row => Object.keys(row).forEach(c => { if (filled(row[c]) && !cols.includes(c)) cols.push(c); }));
+        cols.sort((x, y) => {
+          const ix = COL_ORDER.indexOf(x), iy = COL_ORDER.indexOf(y);
+          return (ix < 0 ? 999 : ix) - (iy < 0 ? 999 : iy);
+        });
         return (
           <div key={key} style={{ marginBottom: 8 }}>
             <b style={{ fontSize: 12, color: colors.primary }}>{title} ({rows.length})</b>
