@@ -122,24 +122,46 @@ async function imageToJpegBase64(blob, fileName) {
   return blobToBase64(out);
 }
 
+// Excel → text s adresami buněk a vzorci, aby Claude viděl, jak se čísla počítají.
+// Řádek vypadá např.:  12: A=Praga | C=130 | D=260 {=C12*2}
+export function sheetsToText(XLSX, wb) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const show = (c) => {
+    if (c.t === 'n' && c.z && XLSX.SSF.is_date(c.z)) {
+      // Datumy vždy jako RRRR-MM-DD — jinak by Excel mohl dát americké 5/3/27 (květen? březen?).
+      const p = XLSX.SSF.parse_date_code(c.v);
+      if (p && p.y) return `${p.y}-${pad(p.m)}-${pad(p.d)}` + (p.H || p.M ? ` ${pad(p.H)}:${pad(p.M)}` : '');
+    }
+    if (c.w !== undefined && c.w !== null && String(c.w).trim() !== '') return String(c.w).trim();
+    if (c.v !== undefined && c.v !== null) return String(c.v).trim();
+    return '';
+  };
+  return wb.SheetNames.map(name => {
+    const ws = wb.Sheets[name];
+    if (!ws || !ws['!ref']) return `=== List: ${name} === (prázdný)`;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const lines = [];
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const cells = [];
+      for (let col = range.s.c; col <= range.e.c; col++) {
+        const addr = XLSX.utils.encode_cell({ r, c: col });
+        const c = ws[addr];
+        if (!c) continue;
+        const val = show(c).replace(/\s+/g, ' ');
+        const f = c.f ? ` {=${c.f}}` : '';
+        if (!val && !f) continue;
+        cells.push(`${XLSX.utils.encode_col(col)}=${val}${f}`);
+      }
+      if (cells.length) lines.push(`${r + 1}: ${cells.join(' | ')}`);
+    }
+    return `=== List: ${name} ===\n${lines.join('\n')}`;
+  }).join('\n\n');
+}
+
 async function excelToText(blob) {
   const XLSX = await loadLib('XLSX');
-  const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array', cellNF: true });
-  const pad = (n) => String(n).padStart(2, '0');
-  const parts = wb.SheetNames.map(name => {
-    const ws = wb.Sheets[name];
-    // Datumy vždy jako RRRR-MM-DD — jinak by Excel mohl dát americké 5/3/27 (květen? březen?).
-    Object.keys(ws).forEach(addr => {
-      const c = ws[addr];
-      if (addr[0] === '!' || !c || c.t !== 'n' || !c.z || !XLSX.SSF.is_date(c.z)) return;
-      const p = XLSX.SSF.parse_date_code(c.v);
-      if (p && p.y) c.w = `${p.y}-${pad(p.m)}-${pad(p.d)}` + (p.H || p.M ? ` ${pad(p.H)}:${pad(p.M)}` : '');
-    });
-    const csv = XLSX.utils.sheet_to_csv(ws, { FS: ' | ', blankrows: false });
-    const clean = csv.split('\n').filter(l => l.replace(/[|\s]/g, '')).join('\n');
-    return `=== List: ${name} ===\n${clean}`;
-  });
-  return parts.join('\n\n');
+  const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array', cellNF: true, cellFormula: true });
+  return sheetsToText(XLSX, wb);
 }
 
 async function wordToText(blob) {
@@ -155,6 +177,7 @@ DŮLEŽITÁ PRAVIDLA:
 - Když tabulka nebo text zjevně pokračuje jinde, nastav "continuesElsewhere": true.
 - Nejistý údaj (rozmazané číslo, nejasná měna, nejasné, zda je cena za osobu nebo za pokoj) ZAPIŠ, ale vysvětli ho v "uncertain".
 - Ceny piš jako čísla bez mezer a měny (desetinná tečka), měnu zvlášť (EUR, CZK, USD, BRL, CHF, GBP, HUF, PLN, SEK…). U každé ceny uveď, k čemu se vztahuje (za osobu / za pokoj a noc / celkem…).
+- U Excelu dostaneš buňky s adresou (např. "12: A=Praga | D=260 {=C12*2}"); ve složených závorkách je vzorec, kterým se číslo počítá. Vzorce použij k pochopení, co číslo znamená (cena za noc × noci, za pokoj ÷ 2 na osobu, součet, marže, kurz…) a k určení, zda jde o cenu za osobu, za pokoj a noc, nebo celkem. Co je ze vzorce jasné, už nepiš mezi nejisté. Do výsledku piš hodnoty (čísla), ne vzorce.
 - Data piš YYYY-MM-DD. Když rok v podkladu chybí, napiš datum tak, jak je, a zmiň to v "uncertain".
 - Údaj, který v podkladu není, vynech nebo dej "". Prázdné seznamy nech prázdné [].
 - Texty "summary", "uncertain" a "notes" piš česky. Názvy hotelů, firem a míst nech tak, jak jsou v podkladu.
