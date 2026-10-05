@@ -353,17 +353,17 @@ const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
 
 // Podmínky záloh na hotelové kartě: jeden dlouhý řádek. Když je textu víc,
 // než se vejde, ukáže se „▾ celé“ a pole se rozbalí na víc řádků.
-const TermsField = ({ value, onChange, colors }) => {
+const TermsField = ({ value, onChange, colors, compact }) => {
   const [open, setOpen] = React.useState(false);
   const text = value || '';
   const long = text.length > 110 || text.includes('\n');
   const filled = text.trim() !== '';
   const lines = Math.min(Math.max(text.split('\n').length, Math.ceil(text.length / 110)), 8);
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: 260 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: compact ? 180 : 260 }}>
       <span style={{ fontSize: 10, color: colors.muted, paddingTop: 5, whiteSpace: 'nowrap' }}>Podmínky:</span>
       <textarea rows={open ? Math.max(lines, 2) : 1} value={text}
-        placeholder="např. 30 % při konfirmaci, zbytek 30 dní před příjezdem"
+        placeholder={compact ? 'podmínky záloh…' : 'např. 30 % při konfirmaci, zbytek 30 dní před příjezdem'}
         title="Podmínky záloh u tohoto dodavatele — jen pro vás, do nabídky pro klienta se netiskne"
         onChange={e => onChange(e.target.value)}
         style={{ flex: 1, fontSize: 11, padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 4,
@@ -4258,6 +4258,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                           onRemove={(f) => handleRemoveConfirmation(it, f)}
                         />
                       )}
+                      {/* Podmínky se u těchto karet používají málo — jsou ve stejném řádku */}
+                      <TermsField value={it.depositTerms} onChange={v => updateItem(it.id, 'depositTerms', v)} colors={colors} compact />
                       <div style={{ ...grp, marginLeft: 'auto' }}>
                         <button onClick={() => toggleItemNote(it.id, notesVisible)}
                           title={hasNotes ? `${itemNotes.length} zápis(ů) — kliknutím schovat/ukázat` : 'Přidat poznámku'}
@@ -4267,8 +4269,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                       </div>
                     </div>
 
-                    {/* ŘÁDEK 3 – podmínky a zaplacené zálohy */}
-                    <TermsField value={it.depositTerms} onChange={v => updateItem(it.id, 'depositTerms', v)} colors={colors} />
+                    {/* ŘÁDEK 3 – zaplacené zálohy (jen když nějaká je) */}
                     <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly />
 
                     {/* ŘÁDEK 4 – e-maily a akce */}
