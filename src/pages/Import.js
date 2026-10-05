@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, auth, storage } from '../lib/firebase';
-import { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { codeForEmail } from '../lib/people';
+import { readImportFile } from '../lib/importRead';
 
 // Import starých akcí — KROK 1: importní složky.
 // Ke každé staré akci (dělané mimo systém) se založí složka a do ní se
 // postupně nahrávají podklady: Excel, PDF, text, fotky a scany.
 // V tomto kroku se NIC nečte ani nezapisuje do nabídek a zakázek —
 // složka jen sbírá soubory. Čtení (krok 2) a zápis (krok 3) přijdou později.
+//
+// KROK 2: tlačítko „Přečíst podklady" — Claude přečte každý soubor zvlášť,
+// výsledek se uloží do importFolders/<id>/reads/<fileId> a zobrazí u souboru.
 //
 // Firestore: kolekce importFolders
 //   { name, note, status: 'collecting', files: [ {id, name, path, url, kind, size, uploadedAt, uploadedBy} ],
@@ -171,6 +175,56 @@ function FolderDetail({ folder, colors, box, onBack }) {
   const cameraInput = useRef(null);
   const files = folder.files || [];
 
+  // ── Krok 2: čtení ──
+  const [reads, setReads] = useState({});          // fileId → výsledek čtení
+  const [reading, setReading] = useState(null);    // { done, total, name } během čtení
+  const [readingId, setReadingId] = useState(null);
+  const [blocked, setBlocked] = useState(false);   // prohlížeč nedovolil stáhnout soubor
+  const [openRead, setOpenRead] = useState({});    // které výsledky jsou rozbalené
+  const stopRef = useRef(false);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, COLLECTION, folder.id, 'reads'), (snap) => {
+      const m = {};
+      snap.docs.forEach(d => { m[d.id] = d.data(); });
+      setReads(m);
+    }, (err) => console.error('reads listener', err));
+    return () => unsub();
+  }, [folder.id]);
+
+  const readFiles = async (list) => {
+    if (!list.length || reading) return;
+    stopRef.current = false;
+    setBlocked(false);
+    for (let i = 0; i < list.length; i++) {
+      if (stopRef.current) break;
+      const f = list[i];
+      setReading({ done: i, total: list.length, name: f.name });
+      setReadingId(f.id);
+      const base = { fileId: f.id, fileName: f.name, readAt: new Date().toISOString(), readBy: auth.currentUser?.email || '' };
+      try {
+        const { result, usage } = await readImportFile(f);
+        await setDoc(doc(db, COLLECTION, folder.id, 'reads', f.id), {
+          ...base, status: 'ok', result, error: '',
+          inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0,
+        });
+      } catch (err) {
+        if (err.code === 'download-blocked') {
+          setBlocked(true);
+          break; // u dalších souborů by to dopadlo stejně
+        }
+        try {
+          await setDoc(doc(db, COLLECTION, folder.id, 'reads', f.id), { ...base, status: 'error', result: null, error: err.message || String(err) });
+        } catch (e) { console.error(e); }
+      }
+    }
+    setReading(null);
+    setReadingId(null);
+  };
+
+  const readable = (f) => f.kind !== 'other';
+  const unread = files.filter(f => readable(f) && (!reads[f.id] || reads[f.id].status !== 'ok'));
+
   // Když složku upraví někdo jiný, převezmi nový název/poznámku (pokud zrovna nepíšu).
   const editing = useRef({ name: false, note: false });
   useEffect(() => { if (!editing.current.name) setName(folder.name || ''); }, [folder.name]);
@@ -240,6 +294,7 @@ function FolderDetail({ folder, colors, box, onBack }) {
     try {
       await updateDoc(ref, { files: arrayRemove(entry), updatedAt: new Date().toISOString() });
       try { await deleteObject(storageRef(storage, entry.path)); } catch (e) { console.error('Storage delete failed:', e); }
+      try { await deleteDoc(doc(db, COLLECTION, folder.id, 'reads', entry.id)); } catch (e) { console.error('Read delete failed:', e); }
     } catch (err) {
       alert('Odebrání selhalo: ' + (err.code || err.message));
     }
@@ -251,6 +306,10 @@ function FolderDetail({ folder, colors, box, onBack }) {
     for (const f of files) {
       try { await deleteObject(storageRef(storage, f.path)); } catch (e) { console.error('Storage delete failed:', e); }
     }
+    try {
+      const rs = await getDocs(collection(db, COLLECTION, folder.id, 'reads'));
+      for (const d of rs.docs) { try { await deleteDoc(d.ref); } catch (e) { console.error(e); } }
+    } catch (e) { console.error('Reads cleanup failed:', e); }
     try { await deleteDoc(ref); onBack(); }
     catch (err) { alert('Smazání selhalo: ' + (err.code || err.message)); }
   };
@@ -322,6 +381,43 @@ function FolderDetail({ folder, colors, box, onBack }) {
         </div>
       )}
 
+      {/* Čtení podkladů */}
+      {files.length > 0 && (
+        <div style={{ ...box, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {reading ? (
+            <>
+              <span style={{ fontSize: 14, color: colors.text, flex: 1, minWidth: 200 }}>
+                ⏳ Čtu {reading.done + 1} z {reading.total}: <b>{reading.name}</b>
+              </span>
+              <button type="button" style={btn(false)} onClick={() => { stopRef.current = true; }}>Zastavit po tomto souboru</button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: 14, color: colors.text, flex: 1, minWidth: 200 }}>
+                {unread.length === 0
+                  ? '✓ Všechny podklady jsou přečtené.'
+                  : `Nepřečteno: ${unread.length} z ${files.filter(readable).length}`}
+                <span style={{ display: 'block', fontSize: 12, color: colors.muted, marginTop: 2 }}>
+                  Každý soubor se čte zvlášť. Zatím se nic nezapisuje do nabídek a zakázek.
+                </span>
+              </span>
+              {unread.length > 0 && (
+                <button type="button" style={btn(true)} onClick={() => readFiles(unread)}>📖 Přečíst podklady ({unread.length})</button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {blocked && (
+        <div style={{ ...box, marginBottom: '1rem', borderColor: '#e5b4b4', background: '#fdf3f3', fontSize: 14, color: colors.text }}>
+          <b style={{ color: colors.danger }}>⚠ Prohlížeč nedovolil stáhnout soubor zpět z úložiště.</b>
+          <div style={{ marginTop: 6 }}>
+            To je jednorázové nastavení úložiště, ne chyba v souborech. Nic se nepoškodilo. Napište to Claudovi — připraví přesný postup.
+          </div>
+        </div>
+      )}
+
       {/* Seznam souborů */}
       <div style={{ ...box, padding: 0, marginBottom: '1.5rem' }}>
         <div style={{ padding: '10px 1.25rem', fontSize: 13, fontWeight: 600, color: colors.primary, borderBottom: `1px solid ${colors.border}` }}>
@@ -332,7 +428,7 @@ function FolderDetail({ folder, colors, box, onBack }) {
         ) : sorted.map((f, i) => {
           const k = KINDS[f.kind] || KINDS.other;
           return (
-            <div key={f.id || f.path} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 1.25rem', borderTop: i ? `1px solid ${colors.border}` : 'none' }}>
+            <div key={f.id || f.path} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 1.25rem', borderTop: i ? `1px solid ${colors.border}` : 'none' }}>
               <span style={{ fontSize: 18 }} title={k.label}>{k.icon}</span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <a href={f.url} target="_blank" rel="noopener noreferrer"
@@ -341,6 +437,10 @@ function FolderDetail({ folder, colors, box, onBack }) {
                   {k.label} · {fmtSize(f.size)} · {who(f.uploadedBy)} {fmtWhen(f.uploadedAt)}
                   {f.kind === 'other' && ' · ⚠ tento typ zatím neumím přečíst'}
                 </span>
+                <ReadStatus f={f} r={reads[f.id]} busy={readingId === f.id} colors={colors}
+                  open={!!openRead[f.id]} onToggle={() => setOpenRead(o => ({ ...o, [f.id]: !o[f.id] }))}
+                  onReread={reading ? null : () => readFiles([f])} />
+                {openRead[f.id] && reads[f.id]?.status === 'ok' && <ReadResult r={reads[f.id].result} colors={colors} />}
               </span>
               <button type="button" onClick={() => removeFile(f)} title="Odebrat"
                 style={{ background: 'none', border: `1px solid ${colors.border}`, borderRadius: 6, color: colors.muted, cursor: 'pointer', fontSize: 13, padding: '3px 8px' }}>✕</button>
@@ -355,6 +455,86 @@ function FolderDetail({ folder, colors, box, onBack }) {
           🗑 Smazat celou složku
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Krok 2: stav čtení u souboru ──
+function ReadStatus({ f, r, busy, colors, open, onToggle, onReread }) {
+  if (f.kind === 'other') return null;
+  const link = { background: 'none', border: 'none', padding: 0, marginLeft: 10, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit', color: colors.info };
+  let badge;
+  if (busy) badge = <span style={{ color: colors.muted }}>⏳ čtu…</span>;
+  else if (!r) badge = <span style={{ color: colors.muted }}>○ nepřečteno</span>;
+  else if (r.status === 'ok') badge = <span style={{ color: '#3B6D11' }}>✓ přečteno — {r.result?.documentType || 'dokument'}</span>;
+  else badge = <span style={{ color: colors.danger }}>⚠ nepřečteno: {r.error}</span>;
+  return (
+    <span style={{ display: 'block', fontSize: 12, marginTop: 3 }}>
+      {badge}
+      {!busy && r?.status === 'ok' && <button type="button" style={link} onClick={onToggle}>{open ? '▾ skrýt' : '▸ co jsem vyčetl'}</button>}
+      {!busy && r && onReread && <button type="button" style={link} onClick={onReread}>↻ přečíst znovu</button>}
+    </span>
+  );
+}
+
+const LABELS = {
+  name: 'Název', client: 'Klient', startDate: 'Od', endDate: 'Do', pax: 'Osob', paxNote: 'Pozn. k osobám',
+  date: 'Datum', city: 'Město', description: 'Program',
+  checkIn: 'Příjezd', checkOut: 'Odjezd', nights: 'Nocí', rooms: 'Pokoje', priceDbl: 'Cena DBL', priceSgl: 'Cena SGL',
+  priceBasis: 'Cena za', currency: 'Měna', cityTax: 'City tax', cityTaxBasis: 'City tax za', meals: 'Strava',
+  optionDate: 'Opce', cancellationTerms: 'Storno', paymentTerms: 'Platby', foc: 'FOC', status: 'Stav', contact: 'Kontakt',
+  type: 'Typ', supplier: 'Dodavatel', dates: 'Termín', route: 'Trasa', price: 'Cena', notes: 'Poznámka',
+  paxVariant: 'Varianta', pricePerPerson: 'Cena / os.', direction: 'Směr', party: 'Kdo', amount: 'Částka', dueDate: 'Splatnost', method: 'Způsob',
+};
+const SECTIONS = [
+  ['itinerary', 'Program'], ['hotels', 'Hotely'], ['transport', 'Doprava'], ['guides', 'Průvodci'],
+  ['services', 'Vstupenky a další služby'], ['clientPrice', 'Cena pro klienta'], ['payments', 'Platby a zálohy'],
+];
+const filled = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+
+function ReadResult({ r, colors }) {
+  if (!r) return null;
+  const g = r.group || {};
+  const gKeys = Object.keys(LABELS).filter(k => ['name', 'client', 'startDate', 'endDate', 'pax', 'paxNote'].includes(k) && filled(g[k]));
+  const uncertain = (r.uncertain || []).filter(filled);
+  const cell = { padding: '4px 8px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, verticalAlign: 'top', textAlign: 'left' };
+  return (
+    <div style={{ marginTop: 8, padding: '10px 12px', background: '#faf8f4', border: `1px solid ${colors.border}`, borderRadius: 8, fontSize: 13, color: colors.text }}>
+      {filled(r.summary) && <div style={{ marginBottom: 6 }}>{r.summary}</div>}
+      {(r.partialPage || r.continuesElsewhere) && (
+        <div style={{ fontSize: 12, color: '#854F0B', marginBottom: 6 }}>
+          📄 {r.partialPage ? 'Jen část delšího dokumentu.' : ''} {r.continuesElsewhere ? 'Pokračuje na jiné stránce / v jiném souboru.' : ''}
+        </div>
+      )}
+      {uncertain.length > 0 && (
+        <div style={{ fontSize: 12, color: '#854F0B', marginBottom: 8 }}>
+          ⚠ Nejisté: {uncertain.join(' · ')}
+        </div>
+      )}
+      {gKeys.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <b style={{ fontSize: 12, color: colors.primary }}>Skupina</b>
+          <div style={{ fontSize: 12 }}>{gKeys.map(k => <span key={k} style={{ marginRight: 14 }}>{LABELS[k]}: <b>{g[k]}</b></span>)}</div>
+        </div>
+      )}
+      {SECTIONS.map(([key, title]) => {
+        const rows = (r[key] || []).filter(row => row && Object.values(row).some(filled));
+        if (!rows.length) return null;
+        const cols = [];
+        rows.forEach(row => Object.keys(row).forEach(c => { if (filled(row[c]) && !cols.includes(c)) cols.push(c); }));
+        return (
+          <div key={key} style={{ marginBottom: 8 }}>
+            <b style={{ fontSize: 12, color: colors.primary }}>{title} ({rows.length})</b>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', minWidth: '100%', background: '#fff' }}>
+                <thead><tr>{cols.map(c => <th key={c} style={{ ...cell, color: colors.muted, fontWeight: 500, whiteSpace: 'nowrap' }}>{LABELS[c] || c}</th>)}</tr></thead>
+                <tbody>{rows.map((row, i) => <tr key={i}>{cols.map(c => <td key={c} style={cell}>{filled(row[c]) ? String(row[c]) : ''}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+      {filled(r.notes) && <div style={{ fontSize: 12, color: colors.muted }}>Poznámka: {r.notes}</div>}
     </div>
   );
 }
