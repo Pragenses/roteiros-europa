@@ -177,6 +177,7 @@ DŮLEŽITÁ PRAVIDLA:
 - Když tabulka nebo text zjevně pokračuje jinde, nastav "continuesElsewhere": true.
 - Nejistý údaj (rozmazané číslo, nejasná měna, nejasné, zda je cena za osobu nebo za pokoj) ZAPIŠ, ale vysvětli ho v "uncertain".
 - Ceny piš jako čísla bez mezer a měny (desetinná tečka), měnu zvlášť (EUR, CZK, USD, BRL, CHF, GBP, HUF, PLN, SEK…). U každé ceny uveď, k čemu se vztahuje (za osobu / za pokoj a noc / celkem…).
+- U Excelu jsou prázdné řádky a buňky vynechané schválně — chybějící čísla řádků neznamenají, že dokument pokračuje jinde.
 - U Excelu dostaneš buňky s adresou (např. "12: A=Praga | D=260 {=C12*2}"); ve složených závorkách je vzorec, kterým se číslo počítá. Vzorce použij k pochopení, co číslo znamená (cena za noc × noci, za pokoj ÷ 2 na osobu, součet, marže, kurz…) a k určení, zda jde o cenu za osobu, za pokoj a noc, nebo celkem. Co je ze vzorce jasné, už nepiš mezi nejisté. Do výsledku piš hodnoty (čísla), ne vzorce.
 - Data piš YYYY-MM-DD. Když rok v podkladu chybí, napiš datum tak, jak je, a zmiň to v "uncertain".
 - Údaj, který v podkladu není, vynech nebo dej "". Prázdné seznamy nech prázdné [].
@@ -200,7 +201,7 @@ Vrať POUZE JSON (žádný jiný text, žádné \`\`\`) v tomto tvaru:
   "notes": ""
 }`;
 
-async function callClaude(content) {
+async function callClaude(content, maxTokens = 8000) {
   const apiKey = await getApiKey();
   if (!apiKey) throw new Error('Chybí klíč k Claude API (Settings).');
   let response;
@@ -213,7 +214,7 @@ async function callClaude(content) {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model: MODEL, max_tokens: 8000, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
     });
   } catch (e) {
     throw new Error('Spojení s Claude selhalo (internet?).');
@@ -263,4 +264,70 @@ export async function readImportFile(entry) {
   }
 
   return callClaude(content);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KROK 3a: sestavení návrhu nabídky ze všech přečtených podkladů složky.
+// Výsledek je v TVARU APLIKACE (karty nabídky), aby ho krok 3b mohl spočítat
+// stejným výpočtem jako nabídka a porovnat s prodanými cenami.
+
+const ASSEMBLY_PROMPT = `Jsi asistent české DMC. Ze všech přečtených podkladů jedné staré akce (už prodané, cestuje se v budoucnu) sestav NÁVRH NABÍDKY v přesném tvaru jejich aplikace. Ceny jsou PRODANÉ a nesmí se změnit — tvým úkolem je je PŘEVÉST tak, aby výpočet aplikace dal na cent stejné konečné ceny jako kalkulace v podkladech.
+
+JAK APLIKACE POČÍTÁ (musíš to přesně respektovat):
+- Karta "hotel": pricePerNightDbl = cena DBL POKOJE za noc, pricePerNightSngl = cena SGL pokoje za noc, cityTax = city tax za DBL POKOJ a noc, cityTaxSngl = city tax za SGL pokoj a noc, nights = počet nocí.
+  Na osobu v DBL aplikace počítá: (pricePerNightDbl + cityTax) × nights ÷ 2.  Na osobu v SGL: (pricePerNightSngl + cityTaxSngl) × nights.
+  PŘEPOČET CITY TAX: když kalkulace v podkladech počítá city tax ZA OSOBU v DBL (nedělí ho dvěma), zapiš cityTax jako DVOJNÁSOBEK té částky za noc, aby po vydělení dvěma vyšla přesně stejná částka. Když je city tax procentem z ceny pokoje, spočítej číslo. Vždy tak, aby částka na osobu za celý pobyt seděla s kalkulací (DBL i SGL zvlášť). Postup přepočtu stručně popiš v "conversionNote".
+- Karta "ticket" (vstupenky, večeře, jídla, lodě, vlaky — cokoliv za osobu): costDbl = částka na osobu v DBL za celou akci, costSngl = částka na osobu v SGL (obvykle stejná).
+- Karta "group" (autobus, průvodce, cokoliv placené za celou skupinu): groupCost = celková částka za skupinu. Každý průvodce / každá služba je samostatná karta.
+- Karta "guide_hotel" (ubytování průvodce/tour leadera): aplikace automaticky počítá součet SGL na osobu ze VŠECH hotelů i ticket karet.
+- Karta "driver_hotel" (ubytování řidiče): aplikace automaticky počítá součet SGL ZA HOTELY (bez ticket karet — tedy bez večeří, vstupenek).
+  Když kalkulace počítá ubytování řidiče/průvodce jinak než aplikace automaticky (např. včetně večeří), vyplň guideOverride přesnou částkou z kalkulace a vysvětli v conversionNote.
+- enabled = true pro karty započítané v kalkulaci, false pro alternativy/hotely mimo výpočet (zůstanou jako karty, ale nepočítají se).
+- Konečná cena na osobu v DBL pro každou variantu počtu osob (pax): (součet group karet ÷ pax + součet na osobu v DBL ze všech hotel a ticket karet) × (1 + margin/100) + FOC podíl.
+  FOC podíl = (součet na osobu v DBL ze všech hotel a ticket karet × focCount) ÷ pax, přičtený AŽ PO marži. focType "dbl" (nebo "sngl", když kalkulace bere FOC ze SGL). Když kalkulace FOC nemá, focCount = 0.
+- Měny: currency u každé karty (EUR, CZK, CHF, GBP…).
+
+PRAVIDLA:
+- Údaje z podkladů, které patří k JINÉ akci (jiná skupina, jiný termín, jiný klient), do návrhu NEZAPOČÍTÁVEJ a uveď je v "otherEventFiles".
+- Když si podklady odporují (jiná cena, jiné datum, jiný počet nocí), použij hodnotu z kalkulace (podle ní se prodávalo), ale rozpor uveď v "conflicts" se všemi hodnotami a soubory.
+- Do "soldPrices" opiš PRODANÉ konečné ceny na osobu přesně z podkladů (nepočítej je).
+- Do "observations" uveď věci, které vypadají jako chyba nebo nejasnost v původní kalkulaci (např. city tax započítaný dvakrát, nekonzistentní dělení), s návrhem opravy. NIC z toho do karet nepromítej — karty musí odpovídat prodané kalkulaci.
+- Čísla piš jako čísla (desetinná tečka), přesně, bez zaokrouhlování (klidně 4 desetinná místa). Data YYYY-MM-DD.
+- clientName: vyber PŘESNĚ jeden název ze seznamu existujících klientů, pokud odpovídá; jinak napiš název z podkladů a clientMatched = false.
+- Texty (conversionNote, notes, observations, conflicts, summary) piš česky.
+
+Vrať POUZE JSON (žádný jiný text):
+{
+  "summary": "1–2 věty",
+  "header": { "name": "", "clientName": "", "clientMatched": true, "startDate": "", "endDate": "", "paxList": "20,25,30,35", "margin": 15, "focCount": 1, "focType": "dbl", "destinations": "" },
+  "items": [
+    { "kind": "hotel | ticket | group | guide_hotel | driver_hotel", "enabled": true, "city": "", "name": "", "dateFrom": "", "dateTo": "", "nights": "",
+      "pricePerNightDbl": "", "pricePerNightSngl": "", "cityTax": "", "cityTaxSngl": "", "costDbl": "", "costSngl": "", "groupCost": "", "guideOverride": "",
+      "currency": "EUR", "conversionNote": "", "notes": "", "sourceFiles": [""] }
+  ],
+  "soldPrices": [ { "pax": 20, "finalDbl": 0, "finalSngl": "", "currency": "EUR", "sourceFile": "" } ],
+  "otherEventFiles": [ { "fileName": "", "reason": "" } ],
+  "conflicts": [ { "topic": "", "values": [ { "value": "", "fileName": "" } ], "used": "" } ],
+  "observations": [ { "topic": "", "issue": "", "proposal": "" } ]
+}`;
+
+// reads: [{ fileName, kind, result }], excelTexts: [{ fileName, text }], clientNames: [string]
+export async function assembleOffer({ reads, excelTexts, clientNames }) {
+  const parts = [];
+  parts.push(`EXISTUJÍCÍ KLIENTI:\n${clientNames.join('\n') || '(žádní)'}`);
+  for (const x of excelTexts) {
+    parts.push(`=== KALKULACE (Excel) — ${x.fileName} — buňky se vzorci; prázdné řádky a buňky jsou vynechané schválně ===\n${x.text.slice(0, MAX_TEXT_CHARS)}`);
+  }
+  for (const r of reads) {
+    parts.push(`=== PŘEČTENÝ PODKLAD — ${r.fileName} (${r.kind}) ===\n${JSON.stringify(r.result)}`);
+  }
+  const content = [{ type: 'text', text: `${parts.join('\n\n')}\n\n---\n\n${ASSEMBLY_PROMPT}` }];
+  return callClaude(content, 16000);
+}
+
+// Excel ze složky znovu stáhne a převede (pro sestavení potřebujeme vzorce).
+export async function excelTextFor(entry) {
+  const blob = await downloadBlob(entry.url);
+  if (/\.csv$/i.test(entry.name || '')) return blob.text();
+  return excelToText(blob);
 }
