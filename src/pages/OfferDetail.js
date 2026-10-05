@@ -3739,8 +3739,6 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               const itemNotes = asNoteEntries(it.noteEntries, it.note);
               const hasNotes = itemNotes.length > 0;
               const notesVisible = (hasNotes && !noteHiddenIds.has(it.id)) || noteOpenIds.has(it.id);
-              const cols = isHotel ? '60px 2fr 1fr 1fr 60px 1fr 1fr 1fr 90px 32px' : (isGuideHotel || isDriverHotel) ? '60px 2fr 1fr 1fr 90px 32px' : it.type === 'per_pax' ? '60px 2fr 1fr 90px 32px' : '60px 2fr 1fr 90px 32px';
-              const minWidth = isHotel ? 1100 : undefined;
               const isEnabled = it.enabled !== false;
               const rowBg = it.cancelled ? '#FEE2E2' : isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               // Sbalit jde jen hotel, který není alternativa a buď je zrušený,
@@ -4074,6 +4072,23 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                   </React.Fragment>
                 );
               }
+              // ── Ostatní karty (vstupenky, jídla, autobus, let, hotel průvodce
+              // a řidiče): stejné rozložení jako hotel, vše v jednom rámečku.
+              // Pole, výpočty i ukládání jsou stejné jako dřív.
+              const hasDates = it.type === 'group' || isTicket;
+              const emails = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
+              const deposits = Array.isArray(it.deposits) ? it.deposits : [];
+              const sLbl = { fontSize: 10, color: colors.muted, whiteSpace: 'nowrap' };
+              const grp = { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' };
+              const btn = (extra) => ({ padding: '3px 8px', borderRadius: 5, fontSize: 12, cursor: 'pointer', ...extra });
+              const frame = it.cancelled ? '#fca5a5' : (isTicket ? '#bcd7f0' : '#efc3d3');
+              const curSelect = (
+                <select value={it.currency || 'EUR'} onChange={e => updateItem(it.id, 'currency', e.target.value)}
+                  style={{ ...iStyle, width: 70, padding: '4px 4px' }}>
+                  {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              );
+              const nightsOf = (from, to) => (from && to && from.length === 10 && to.length === 10) ? Math.round((new Date(to) - new Date(from)) / 86400000) : 0;
               return (
                 <React.Fragment key={it.id}>
                 <div ref={it.id === newItemId ? newItemRef : null}
@@ -4084,17 +4099,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                   onDragEnd={handleDragEnd}
                   onDragOver={e => e.preventDefault()}
                   onDrop={e => e.preventDefault()}
-                  style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', padding: '6px 8px', borderBottom: `1px solid ${colors.border}`, borderRadius: 6, background: rowBg, minWidth,
+                  style={{ display: 'grid', gridTemplateColumns: '54px 1fr', gap: 6, padding: '6px 8px', border: `1px solid ${frame}`, borderRadius: 8, background: rowBg,
                     opacity: dragFrom === idx ? 0.35 : (isEnabled ? 1 : 0.45),
                     boxShadow: (dragFrom !== null && dragOver === idx && dragFrom !== idx) ? `0 ${dragFrom < idx ? '' : '-'}3px 0 0 ${colors.primary}` : 'none' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-                    <input type="checkbox" checked={isEnabled} onChange={e => {
-                      // Zaškrtnutím do kalkulace přestává být hotel alternativou.
-                      if (e.target.checked && it.isAlt) updateItemFields(it.id, { enabled: true, isAlt: false, altOf: '' });
-                      else updateItem(it.id, 'enabled', e.target.checked);
-                      // Odškrtnutím se karta znovu sbalí (pokud ji pravidlo sbaluje).
-                      if (!e.target.checked) setExpanded(it.id, false);
-                    }} title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center', paddingTop: 4 }}>
+                    <input type="checkbox" checked={isEnabled} onChange={e => updateItem(it.id, 'enabled', e.target.checked)}
+                      title={isEnabled ? 'Kliknutím vypnout' : 'Kliknutím zapnout'} style={{ width: 16, height: 16, cursor: 'pointer' }} />
                     <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <button type="button" title="Posunout výš" disabled={!canMoveCards || idx === 0} onClick={() => moveItem(idx, -1)} style={arrowBtn(!canMoveCards || idx === 0)}>▲</button>
                       <span title={canMoveCards ? 'Chyťte a přetáhněte' : 'Nabídku teď nelze upravovat'}
@@ -4103,281 +4113,139 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                         style={{ fontSize: 14, color: canMoveCards ? colors.muted : '#ccc', cursor: canMoveCards ? 'grab' : 'default', lineHeight: 1, userSelect: 'none', padding: '0 2px' }}>⠿</span>
                       <button type="button" title="Posunout níž" disabled={!canMoveCards || idx === items.length - 1} onClick={() => moveItem(idx, 1)} style={arrowBtn(!canMoveCards || idx === items.length - 1)}>▼</button>
                     </div>
-                    {collapsible && (
-                      <button type="button" onClick={() => setExpanded(it.id, false)} title="Sbalit kartu do jednoho řádku"
-                        style={{ marginTop: 2, padding: '1px 6px', fontSize: 10, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 4, cursor: 'pointer', color: colors.primary }}>▴ sbalit</button>
-                    )}
                   </div>
-                  <div>
-                    {isHotel ? (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <input key={`city-${it.id}`} type="text" placeholder="Město" value={it.city || ''} onChange={e => updateItem(it.id, 'city', e.target.value)} style={{ ...iStyle, flex: '0 0 35%', fontWeight: 600 }} />
-                        <input key={`name-${it.id}`} type="text" placeholder="Název hotelu" value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={{ ...iStyle, flex: 1 }} />
-                      </div>
-                    ) : (
-                      <input key={`name-${it.id}`} type="text" placeholder={isGuideHotel ? 'e.g. Guide hotel (auto)' : isDriverHotel ? 'e.g. Driver hotel (auto)' : 'e.g. Big Ben ticket'} value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)} style={iStyle} />
-                    )}
-                    {(isHotel || it.type === 'group' || (it.type === 'per_pax' && it.subType === 'ticket')) && (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                        <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={v => {
-                          updateItem(it.id, 'dateFrom', v);
-                          const current = itemsRef.current.find(x => x.id === it.id);
-                          const dTo = current ? current.dateTo : it.dateTo;
-                          if (v && dTo && v.length === 10 && dTo.length === 10) {
-                            const n = Math.round((new Date(dTo) - new Date(v)) / 86400000);
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+                    {/* ŘÁDEK 1 – název, data, cena */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px 14px', flexWrap: 'wrap' }}>
+                      <input key={`name-${it.id}`} type="text" title={it.name || ''}
+                        placeholder={isGuideHotel ? 'e.g. Guide hotel (auto)' : isDriverHotel ? 'e.g. Driver hotel (auto)' : isTicket ? 'e.g. Big Ben ticket' : 'e.g. Bus, flight'}
+                        value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)}
+                        style={{ ...iStyle, width: 386, maxWidth: '100%', padding: '4px 6px', fontWeight: 600 }} />
+                      {hasDates && (
+                        <div style={grp}>
+                          <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={v => {
+                            updateItem(it.id, 'dateFrom', v);
+                            const current = itemsRef.current.find(x => x.id === it.id);
+                            const n = nightsOf(v, current ? current.dateTo : it.dateTo);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
-                          }
-                          // Chain: if THIS hotel's dateFrom is set, auto-fill the PREVIOUS hotel's dateTo if empty
-                          // (departure from previous hotel = arrival at this one)
-                          if (isHotel && !it.isAlt && v && v.length === 10) {
-                            const allItems = itemsRef.current;
-                            const myIdx = allItems.findIndex(x => x.id === it.id);
-                            for (let i = myIdx - 1; i >= 0; i--) {
-                              if (allItems[i].subType === 'hotel' && !allItems[i].isAlt) {
-                                if (!allItems[i].dateTo || allItems[i].dateTo === '') {
-                                  updateItem(allItems[i].id, 'dateTo', v);
-                                  const prevFrom = allItems[i].dateFrom;
-                                  if (prevFrom && prevFrom.length === 10) {
-                                    const n2 = Math.round((new Date(v) - new Date(prevFrom)) / 86400000);
-                                    if (n2 > 0) updateItem(allItems[i].id, 'nights', String(n2));
-                                  }
-                                }
-                                break;
-                              }
-                            }
-                          }
-                        }} />
-                        <DateDMY dateKey={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={v => {
-                          updateItem(it.id, 'dateTo', v);
-                          const current = itemsRef.current.find(x => x.id === it.id);
-                          const dFrom = current ? current.dateFrom : it.dateFrom;
-                          if (v && dFrom && v.length === 10 && dFrom.length === 10) {
-                            const n = Math.round((new Date(v) - new Date(dFrom)) / 86400000);
+                          }} />
+                          <span style={{ color: colors.muted }}>–</span>
+                          <DateDMY dateKey={`dt-${it.id}`} value={it.dateTo || ''} colors={colors} onChange={v => {
+                            updateItem(it.id, 'dateTo', v);
+                            const current = itemsRef.current.find(x => x.id === it.id);
+                            const n = nightsOf(current ? current.dateFrom : it.dateFrom, v);
                             if (n > 0) updateItem(it.id, 'nights', String(n));
-                          }
-                          // Chain: if THIS hotel's dateTo is set, auto-fill the NEXT hotel's dateFrom if empty
-                          if (isHotel && !it.isAlt && v && v.length === 10) {
-                            const allItems = itemsRef.current;
-                            const myIdx = allItems.findIndex(x => x.id === it.id);
-                            for (let i = myIdx + 1; i < allItems.length; i++) {
-                              if (allItems[i].subType === 'hotel' && !allItems[i].isAlt) {
-                                if (!allItems[i].dateFrom || allItems[i].dateFrom === '') {
-                                  updateItem(allItems[i].id, 'dateFrom', v);
-                                  const nextTo = allItems[i].dateTo;
-                                  if (nextTo && nextTo.length === 10) {
-                                    const n2 = Math.round((new Date(nextTo) - new Date(v)) / 86400000);
-                                    if (n2 > 0) updateItem(allItems[i].id, 'nights', String(n2));
-                                  }
-                                }
-                                break;
-                              }
-                            }
-                          }
-                        }} />
-                        {it.dateFrom && it.dateTo && (() => {
-                          const n = Math.round((new Date(it.dateTo) - new Date(it.dateFrom)) / 86400000);
-                          return n > 0 ? <span style={{ fontSize: 11, color: colors.primary, fontWeight: 600, whiteSpace: 'nowrap', alignSelf: 'center' }}>{n} {n === 1 ? 'noc' : n < 5 ? 'noci' : 'nocí'}</span> : null;
-                        })()}
+                          }} />
+                          {(() => { const n = nightsOf(it.dateFrom, it.dateTo); return n > 0 ? <span style={{ fontSize: 11, color: colors.primary, fontWeight: 600, whiteSpace: 'nowrap' }}>{n} {n === 1 ? 'noc' : n < 5 ? 'noci' : 'nocí'}</span> : null; })()}
+                        </div>
+                      )}
+                      <div style={grp}>
+                        {(isGuideHotel || isDriverHotel) ? (
+                          <>
+                            <span title={isGuideHotel ? 'hotéis + ingressos/refeições, SNGL' : 'somente hotéis, SNGL'} style={{ fontSize: 11, color: colors.muted, whiteSpace: 'nowrap' }}>
+                              Auto: <b style={{ color: colors.text }}>{(isGuideHotel ? perPaxSnglEUR : hotelOnlySnglEUR).toFixed(2)} EUR</b>
+                              {isGuideHotel ? ' (hotéis + ingressos, SNGL)' : ' (somente hotéis, SNGL)'}
+                            </span>
+                            <span style={{ ...sLbl, marginLeft: 6 }}>vlastní</span>
+                            <FormulaField width={90} title="Přepsat automatickou částku (prázdné = automaticky)"
+                              placeholder={(isGuideHotel ? perPaxSnglEUR : hotelOnlySnglEUR).toFixed(2)}
+                              value={it.guideOverride} onChange={e => updateItem(it.id, 'guideOverride', e.target.value)} colors={colors} />
+                          </>
+                        ) : it.type === 'per_pax' ? (
+                          <>
+                            <span style={sLbl}>Cena / osoba</span>
+                            <FormulaField width={100} title="Cena za osobu (lze i =212/2)" placeholder="=212/2"
+                              value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
+                          </>
+                        ) : (
+                          <>
+                            <span style={sLbl}>Cena za skupinu</span>
+                            <FormulaField width={110} title="Celková cena za skupinu (lze i =4524+2299.14)" placeholder="=4524+2299"
+                              value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
+                          </>
+                        )}
+                        {curSelect}
                       </div>
-                    )}
-                    {isHotel && (() => {
-                      // Alternativa: další možnost pro klienta, do hlavní ceny se nepočítá.
-                      const ck = (x) => String(x.city || '').trim().toLowerCase();
-                      const mains = items.filter(x => isHotelItem(x) && x.enabled !== false && !x.cancelled && x.id !== it.id);
-                      const sameCity = mains.filter(x => ck(x) && ck(x) === ck(it));
-                      const options = [...sameCity, ...mains.filter(x => !sameCity.includes(x))];
-                      const main = altMainOf(it, items);
-                      return (
-                        <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap', fontSize: 11 }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: it.isAlt ? '#1d4ed8' : colors.muted, fontWeight: it.isAlt ? 700 : 400 }}>
-                            <input type="checkbox" checked={!!it.isAlt} onChange={e => {
-                              if (e.target.checked) {
-                                const pre = sameCity.length === 1 ? String(sameCity[0].id) : '';
-                                updateItemFields(it.id, { isAlt: true, enabled: false, altOf: pre });
-                              } else {
-                                updateItemFields(it.id, { isAlt: false, altOf: '' });
-                              }
-                            }} style={{ cursor: 'pointer' }} />
-                            Alternativa – další možnost pro klienta
-                          </label>
-                          {it.isAlt && (
-                            <>
-                              <span style={{ color: colors.muted }}>k hotelu:</span>
-                              <select value={it.altOf ? String(it.altOf) : ''} onChange={e => updateItem(it.id, 'altOf', e.target.value)}
-                                style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${main ? '#3b82f6' : '#dc2626'}`, borderRadius: 4, maxWidth: 280 }}>
-                                <option value="">– vyberte –</option>
-                                {options.map(x => (
-                                  <option key={x.id} value={String(x.id)}>
-                                    {hotelLabel(x)}{x.dateFrom ? ` (${fmtDateBR(x.dateFrom)})` : ''}
-                                  </option>
-                                ))}
-                              </select>
-                              {!main && <span style={{ color: '#dc2626', fontWeight: 700 }}>⚠ vyberte hlavní hotel</span>}
-                              {main && <span style={{ color: '#1d4ed8' }}>není v hlavní ceně</span>}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })()}
-                    {isHotel && (
-                      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
-                        <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} />
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <span style={{ fontSize: 9, color: colors.muted }}>Option:</span>
-                          <DateDMY dateKey={`opt-${it.id}`} value={it.optionDate || ''} colors={colors}
-                            onChange={v => updateItem(it.id, 'optionDate', v)} />
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <span style={{ fontSize: 9, color: colors.muted }}>Free cancel:</span>
-                          <DateDMY dateKey={`cxl-${it.id}`} value={it.cancellationDeadline || ''} colors={colors}
-                            onChange={v => updateItem(it.id, 'cancellationDeadline', v)} />
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <span style={{ fontSize: 9, color: colors.muted }}>FOC:</span>
-                          <input type="text" placeholder="např. 20+1" value={it.focRatio || ''} onChange={e => updateItem(it.id, 'focRatio', e.target.value)}
-                            style={{ width: 60, fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }} />
-                          <select value={it.focRoomType || ''} onChange={e => updateItem(it.id, 'focRoomType', e.target.value)}
-                            style={{ fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }}>
-                            <option value="">pokoj?</option>
-                            <option value="sngl">SNGL</option>
-                            <option value="dbl">DBL</option>
-                          </select>
-                        </div>
+                    </div>
+
+                    {/* ŘÁDEK 2 – stav, záloha, přílohy, poznámky, smazat */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px 14px', flexWrap: 'wrap' }}>
+                      <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
+                      {deposits.length === 0 && (
+                        <button type="button" title="Přidat zaplacenou zálohu dodavateli"
+                          onClick={() => updateItem(it.id, 'deposits', [{ id: Date.now() + Math.random(), amount: '', date: '', method: '' }])}
+                          style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${colors.border}`, borderRadius: 4, background: '#fff', cursor: 'pointer', color: colors.primary }}>+ záloha</button>
+                      )}
+                      {(isTicket || isTransportGroup) && (
                         <HotelAttachment
                           item={it}
                           colors={colors}
                           onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
                           onRemove={(f) => handleRemoveConfirmation(it, f)}
                         />
+                      )}
+                      <div style={{ ...grp, marginLeft: 'auto' }}>
+                        <button onClick={() => toggleItemNote(it.id, notesVisible)}
+                          title={hasNotes ? `${itemNotes.length} zápis(ů) — kliknutím schovat/ukázat` : 'Přidat poznámku'}
+                          style={btn({ background: hasNotes ? '#fff8e1' : 'transparent', border: `1px solid ${hasNotes ? '#854f0b' : colors.border}`, color: hasNotes ? '#854f0b' : colors.muted })}>📝{hasNotes ? ` ${itemNotes.length}` : ''}</button>
+                        <button onClick={() => removeItem(it.id)} title="Smazat kartu"
+                          style={btn({ background: 'transparent', border: `1px solid ${colors.border}`, color: colors.danger })}>✕</button>
                       </div>
-                    )}
-                    {/* Every non-hotel line gets the same status control the hotel row
-                        has above. Kept as ONE row so buses and tickets do not grow a
-                        second line just for the attachment they already had. */}
-                    {!isHotel && (
-                      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
-                        <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} />
-                        {(isTicket || isTransportGroup) && (
-                          <HotelAttachment
-                            item={it}
-                            colors={colors}
-                            onUpload={(file, onProgress) => handleUploadConfirmation(it, file, onProgress)}
-                            onRemove={(f) => handleRemoveConfirmation(it, f)}
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {isHotel ? (
-                    <>
-                      <FormulaField placeholder="Price/night DBL, or =199" value={it.pricePerNightDbl} onChange={e => updateItem(it.id, 'pricePerNightDbl', e.target.value)} colors={colors} />
-                      <FormulaField placeholder="Price/night SNGL, or =189" value={it.pricePerNightSngl} onChange={e => updateItem(it.id, 'pricePerNightSngl', e.target.value)} colors={colors} />
-                      <input type="number" placeholder="Nights" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)} style={iStyle} />
-                      <FormulaField placeholder="City tax DBL/p/night, or =199*0.05" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} colors={colors} />
-                      <FormulaField placeholder="City tax SNGL/p/night (if different)" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} colors={colors} />
-                      <div style={{ fontSize: 11, color: colors.muted, textAlign: 'right' }}>
-                        {it.city ? <span style={{ fontWeight: 600 }}>{it.city}</span> : null}{it.city && it.name ? ' · ' : ''}{it.name}<br/>
-                        DBL: {getEffectiveCostDbl(it).toFixed(2)} / SNGL: {getEffectiveCostSngl(it).toFixed(2)} per pax
-                      </div>
-                    </>
-                  ) : it.type === 'per_pax' ? (
-                    <FormulaField placeholder="Cost/pax (per person), or =212/2" value={it.costDbl} onChange={e => updateItem(it.id, 'costDbl', e.target.value)} colors={colors} />
-                  ) : isGuideHotel ? (
-                    <>
-                      <div style={{ fontSize: 11, color: colors.muted }}>
-                        Auto: {perPaxSnglEUR.toFixed(2)} EUR<br />(hotéis + ingressos/refeições, SNGL)
-                      </div>
-                      <FormulaField placeholder={`Override, default ${perPaxSnglEUR.toFixed(2)}`} value={it.guideOverride} onChange={e => updateItem(it.id, 'guideOverride', e.target.value)} colors={colors} />
-                      <select value={it.currency || 'EUR'} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
-                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </>
-                  ) : isDriverHotel ? (
-                    <>
-                      <div style={{ fontSize: 11, color: colors.muted }}>
-                        Auto: {hotelOnlySnglEUR.toFixed(2)} EUR<br />(somente hotéis, SNGL)
-                      </div>
-                      <FormulaField placeholder={`Override, default ${hotelOnlySnglEUR.toFixed(2)}`} value={it.guideOverride} onChange={e => updateItem(it.id, 'guideOverride', e.target.value)} colors={colors} />
-                      <select value={it.currency || 'EUR'} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
-                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </>
-                  ) : (
-                    <>
-                      <FormulaField placeholder="Total group cost, or =4524+2299.14" value={it.groupCost} onChange={e => updateItem(it.id, 'groupCost', e.target.value)} colors={colors} />
-                      <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
-                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </>
-                  )}
-                  {!isGuideHotel && !isDriverHotel && (isHotel || it.type === 'per_pax') && (
-                    <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)} style={iStyle}>
-                      {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  )}
+                    </div>
 
-                  <button onClick={() => toggleItemNote(it.id, notesVisible)}
-                    title={hasNotes ? `${itemNotes.length} zápis(ů) — kliknutím schovat/ukázat` : 'Přidat poznámku'}
-                    style={{ padding: '5px 8px', background: hasNotes ? '#fff8e1' : 'transparent', border: `1px solid ${hasNotes ? '#854f0b' : colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: hasNotes ? '#854f0b' : colors.muted }}>📝</button>
-                  <button onClick={() => removeItem(it.id)} style={{ padding: '5px 8px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.danger }}>✕</button>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px 6px 34px', flexWrap: 'wrap' }}>
-                  {(it.contactEmails || (it.contactEmail ? [it.contactEmail] : [])).map((email, ei) => (
-                    <span key={ei} style={{ display: 'flex', alignItems: 'center', gap: 3, background: '#eef2f7', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '2px 4px 2px 8px', fontSize: 11 }}>
-                      {email}
-                      <button onClick={() => {
-                        const current = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
-                        updateItem(it.id, 'contactEmails', current.filter((_, i) => i !== ei));
-                      }} style={{ background: 'none', border: 'none', color: colors.danger, cursor: 'pointer', fontSize: 11, padding: '0 2px' }}>✕</button>
-                    </span>
-                  ))}
-                  <input type="email" placeholder="+ přidat email" title="Napiš email a stiskni Enter"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && e.target.value.trim()) {
-                        e.preventDefault();
-                        const current = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
-                        updateItem(it.id, 'contactEmails', [...current, e.target.value.trim()]);
-                        e.target.value = '';
-                      }
-                    }}
-                    style={{ ...iStyle, width: 140, fontSize: 11 }} />
-                  {isHotel && (
-                    <button onClick={() => openFillModal(it)}
-                      title="Vyplnit kartu z e-mailu od hotelu nebo z PDF"
-                      style={{ padding: '5px 8px', background: '#f0ede8', border: `1px solid ${colors.primary}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', color: colors.primary }}>📋 Vyplnit</button>
-                  )}
-                  <button onClick={() => openResendModal(it, 'forward')}
-                    title="Přeposlat rezervaci (datum, cena, příloha)"
-                    style={{ padding: '5px 8px', background: '#e8f0fe', border: '1px solid #1a3a5c', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#1a3a5c' }}>📧</button>
-                  {!it.cancelled && (
-                    <button onClick={() => openResendModal(it, 'cancel')}
-                      title="Zrušit tuto službu (odešle storno email dodavateli)"
-                      style={{ padding: '5px 8px', background: '#fee2e2', border: '1px solid #dc2626', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: '#dc2626' }}>🚫</button>
-                  )}
-                  {it.cancelled && (
-                    <button onClick={() => updateItem(it.id, 'cancelled', false)}
-                      title="Vrátit zpět (zrušit označení 'zrušeno')"
-                      style={{ padding: '5px 8px', background: '#dc2626', border: '1px solid #dc2626', borderRadius: 5, fontSize: 11, cursor: 'pointer', color: '#fff', fontWeight: 600 }}>ZRUŠENO ✕</button>
-                  )}
-                </div>
-                {/* Zápisy jsou vidět vždy, když u položky nějaké jsou — jinak by se
-                    na ně zapomnělo. Tlačítkem 📝 se dají schovat, nebo otevřít u
-                    položky, která zatím žádný zápis nemá. */}
-                {notesVisible && (
-                  <div style={{ padding: '4px 8px 8px', background: rowBg === 'transparent' ? '#fafafa' : rowBg }}>
-                    <NoteLog
-                      entries={itemNotes}
-                      onChange={list => updateItemFields(it.id, { noteEntries: list, note: '' })}
-                      colors={colors}
-                      compact
-                      onMakeTask={startTodoFromNote}
-                      sourceLabel={itemSourceLabel(it)}
-                      sourceItemId={it.id}
-                    />
+                    {/* ŘÁDEK 3 – podmínky a zaplacené zálohy */}
+                    <TermsField value={it.depositTerms} onChange={v => updateItem(it.id, 'depositTerms', v)} colors={colors} />
+                    <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly />
+
+                    {/* ŘÁDEK 4 – e-maily a akce */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={sLbl}>✉</span>
+                      {emails.map((email, ei) => (
+                        <span key={ei} style={{ display: 'flex', alignItems: 'center', gap: 3, background: '#eef2f7', border: `1px solid ${colors.border}`, borderRadius: 4, padding: '1px 4px 1px 8px', fontSize: 11 }}>
+                          {email}
+                          <button onClick={() => updateItem(it.id, 'contactEmails', emails.filter((_, i) => i !== ei))}
+                            style={{ background: 'none', border: 'none', color: colors.danger, cursor: 'pointer', fontSize: 11, padding: '0 2px' }}>✕</button>
+                        </span>
+                      ))}
+                      <input type="email" placeholder="+ přidat email" title="Napiš email a stiskni Enter"
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && e.target.value.trim()) {
+                            e.preventDefault();
+                            updateItem(it.id, 'contactEmails', [...emails, e.target.value.trim()]);
+                            e.target.value = '';
+                          }
+                        }}
+                        style={{ ...iStyle, width: 150, fontSize: 11, padding: '3px 6px' }} />
+                      <button onClick={() => openResendModal(it, 'forward')} title="Přeposlat rezervaci (datum, cena, příloha)"
+                        style={btn({ background: '#e8f0fe', border: '1px solid #1a3a5c', color: '#1a3a5c' })}>📧</button>
+                      {!it.cancelled && (
+                        <button onClick={() => openResendModal(it, 'cancel')} title="Zrušit tuto službu (odešle storno email dodavateli)"
+                          style={btn({ background: '#fee2e2', border: '1px solid #dc2626', color: '#dc2626' })}>🚫</button>
+                      )}
+                      {it.cancelled && (
+                        <button onClick={() => updateItem(it.id, 'cancelled', false)} title="Vrátit zpět (zrušit označení 'zrušeno')"
+                          style={btn({ background: '#dc2626', border: '1px solid #dc2626', color: '#fff', fontSize: 11, fontWeight: 600 })}>ZRUŠENO ✕</button>
+                      )}
+                    </div>
+
+                    {/* ŘÁDEK 5 – zápisy, uvnitř karty */}
+                    {notesVisible && (
+                      <div style={{ borderTop: `1px solid ${frame}`, paddingTop: 5 }}>
+                        <NoteLog
+                          entries={itemNotes}
+                          onChange={list => updateItemFields(it.id, { noteEntries: list, note: '' })}
+                          colors={colors}
+                          compact
+                          visibleCount={2}
+                          onMakeTask={startTodoFromNote}
+                          sourceLabel={itemSourceLabel(it)}
+                          sourceItemId={it.id}
+                        />
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
                 </React.Fragment>
               );
             })}
