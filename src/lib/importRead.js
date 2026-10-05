@@ -287,12 +287,20 @@ JAK APLIKACE POČÍTÁ (musíš to přesně respektovat):
   FOC podíl = (součet na osobu v DBL ze všech hotel a ticket karet × focCount) ÷ pax, přičtený AŽ PO marži. focType "dbl" (nebo "sngl", když kalkulace bere FOC ze SGL). Když kalkulace FOC nemá, focCount = 0.
 - Měny: currency u každé karty (EUR, CZK, CHF, GBP…).
 
+KONTROLNÍ ČÁSTKY (velmi důležité — aplikace podle nich sama ověří každou kartu):
+- U každé karty "hotel" a "ticket" vyplň expectedDbl = kolik ta položka v kalkulaci stojí NA OSOBU V DBL za celý pobyt / celou akci (u hotelu VČETNĚ city tax), a expectedSngl = totéž na osobu v SGL. Opiš/sečti přesně čísla z kalkulace (např. buňky F a G), NE z tvého přepočtu.
+- U karet "group", "guide_hotel", "driver_hotel" vyplň expectedGroup = celková částka té položky v kalkulaci.
+- Do "sourceRef" napiš, odkud kontrolní částka je (např. "F8+F9, G8+G9").
+- U karet, které nejsou v kalkulaci (alternativy, enabled=false), kontrolní částky nevyplňuj.
+
 PRAVIDLA:
+- JEDNA KARTA = JEDNA SKUTEČNÁ SLUŽBA. Nikdy nevytvářej druhou „opravnou" kopii karty. Když si nejsi jistý přepočtem, vyplň kartu nejlépe, jak umíš — aplikace ji porovná s kontrolními částkami.
 - Údaje z podkladů, které patří k JINÉ akci (jiná skupina, jiný termín, jiný klient), do návrhu NEZAPOČÍTÁVEJ a uveď je v "otherEventFiles".
 - Když si podklady odporují (jiná cena, jiné datum, jiný počet nocí), použij hodnotu z kalkulace (podle ní se prodávalo), ale rozpor uveď v "conflicts" se všemi hodnotami a soubory.
 - Do "soldPrices" opiš PRODANÉ konečné ceny na osobu přesně z podkladů (nepočítej je).
 - Do "observations" uveď věci, které vypadají jako chyba nebo nejasnost v původní kalkulaci (např. city tax započítaný dvakrát, nekonzistentní dělení), s návrhem opravy. NIC z toho do karet nepromítej — karty musí odpovídat prodané kalkulaci.
 - Čísla piš jako čísla (desetinná tečka), přesně, bez zaokrouhlování (klidně 4 desetinná místa). Data YYYY-MM-DD.
+- header.name: název skupiny/akce bez čísel verzí a interních označení (např. bez "NR4").
 - clientName: vyber PŘESNĚ jeden název ze seznamu existujících klientů, pokud odpovídá; jinak napiš název z podkladů a clientMatched = false.
 - Texty (conversionNote, notes, observations, conflicts, summary) piš česky.
 
@@ -303,6 +311,7 @@ Vrať POUZE JSON (žádný jiný text):
   "items": [
     { "kind": "hotel | ticket | group | guide_hotel | driver_hotel", "enabled": true, "city": "", "name": "", "dateFrom": "", "dateTo": "", "nights": "",
       "pricePerNightDbl": "", "pricePerNightSngl": "", "cityTax": "", "cityTaxSngl": "", "costDbl": "", "costSngl": "", "groupCost": "", "guideOverride": "",
+      "expectedDbl": "", "expectedSngl": "", "expectedGroup": "", "sourceRef": "",
       "currency": "EUR", "conversionNote": "", "notes": "", "sourceFiles": [""] }
   ],
   "soldPrices": [ { "pax": 20, "finalDbl": 0, "finalSngl": "", "currency": "EUR", "sourceFile": "" } ],
