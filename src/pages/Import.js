@@ -3,7 +3,7 @@ import { db, auth, storage } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { codeForEmail } from '../lib/people';
-import { readImportFile } from '../lib/importRead';
+import { readImportFile, assembleOffer, excelTextFor } from '../lib/importRead';
 
 // Import starých akcí — KROK 1: importní složky.
 // Ke každé staré akci (dělané mimo systém) se založí složka a do ní se
@@ -307,8 +307,10 @@ function FolderDetail({ folder, colors, box, onBack }) {
       try { await deleteObject(storageRef(storage, f.path)); } catch (e) { console.error('Storage delete failed:', e); }
     }
     try {
-      const rs = await getDocs(collection(db, COLLECTION, folder.id, 'reads'));
-      for (const d of rs.docs) { try { await deleteDoc(d.ref); } catch (e) { console.error(e); } }
+      for (const sub of ['reads', 'assembly']) {
+        const rs = await getDocs(collection(db, COLLECTION, folder.id, sub));
+        for (const d of rs.docs) { try { await deleteDoc(d.ref); } catch (e) { console.error(e); } }
+      }
     } catch (e) { console.error('Reads cleanup failed:', e); }
     try { await deleteDoc(ref); onBack(); }
     catch (err) { alert('Smazání selhalo: ' + (err.code || err.message)); }
@@ -449,6 +451,9 @@ function FolderDetail({ folder, colors, box, onBack }) {
         })}
       </div>
 
+      <AssemblyPanel folder={folder} files={files} reads={reads} unreadCount={unread.length}
+        readingBusy={!!reading} colors={colors} box={box} btn={btn} />
+
       <div style={{ textAlign: 'right' }}>
         <button type="button" onClick={deleteFolder}
           style={{ background: 'none', border: `1px solid #e5b4b4`, borderRadius: 7, color: colors.danger, cursor: 'pointer', fontSize: 12, padding: '6px 12px', fontFamily: 'inherit' }}>
@@ -546,6 +551,189 @@ function ReadResult({ r, colors }) {
         );
       })}
       {filled(r.notes) && <div style={{ fontSize: 12, color: colors.muted }}>Poznámka: {r.notes}</div>}
+    </div>
+  );
+}
+
+// ── Krok 3a: sestavení návrhu nabídky ──
+const KIND_LABEL = {
+  hotel: '🏨 Hotel', ticket: '🎟 Na osobu', group: '🚌 Skupinová', guide_hotel: '🧭 Hotel průvodce', driver_hotel: '🚐 Hotel řidiče',
+};
+const ITEM_COLS = [
+  ['city', 'Město'], ['name', 'Název'], ['dateFrom', 'Od'], ['dateTo', 'Do'], ['nights', 'Nocí'],
+  ['pricePerNightDbl', 'DBL pokoj/noc'], ['pricePerNightSngl', 'SGL pokoj/noc'], ['cityTax', 'City tax DBL pokoj/noc'], ['cityTaxSngl', 'City tax SGL/noc'],
+  ['costDbl', 'Na os. DBL'], ['costSngl', 'Na os. SGL'], ['groupCost', 'Za skupinu'], ['guideOverride', 'Pevná částka'],
+  ['currency', 'Měna'], ['conversionNote', 'Jak převedeno'], ['notes', 'Poznámka'],
+];
+
+function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors, box, btn }) {
+  const [asm, setAsm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState('');
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, COLLECTION, folder.id, 'assembly', 'current'),
+      (snap) => setAsm(snap.exists() ? snap.data() : null),
+      (err) => console.error('assembly listener', err));
+    return () => unsub();
+  }, [folder.id]);
+
+  const okFiles = files.filter(f => reads[f.id]?.status === 'ok');
+  if (okFiles.length === 0) return null;
+
+  const run = async () => {
+    if (unreadCount > 0 && !window.confirm(`${unreadCount} podklad(ů) není přečteno a do návrhu se nezapočítá. Pokračovat?`)) return;
+    setBusy(true);
+    try {
+      setStep('Načítám kalkulace z Excelu…');
+      const excelTexts = [];
+      for (const f of okFiles.filter(x => x.kind === 'excel')) {
+        excelTexts.push({ fileName: f.name, text: await excelTextFor(f) });
+      }
+      setStep('Načítám seznam klientů…');
+      const cs = await getDocs(collection(db, 'clients'));
+      const clientNames = cs.docs.map(d => d.data().name).filter(Boolean).sort();
+      setStep(`Claude sestavuje nabídku z ${okFiles.length} podkladů… (může trvat 1–3 minuty)`);
+      const { result, usage } = await assembleOffer({
+        reads: okFiles.map(f => ({ fileName: f.name, kind: f.kind, result: reads[f.id].result })),
+        excelTexts, clientNames,
+      });
+      await setDoc(doc(db, COLLECTION, folder.id, 'assembly', 'current'), {
+        status: 'ok', result, error: '', fileIds: okFiles.map(f => f.id),
+        createdAt: new Date().toISOString(), createdBy: auth.currentUser?.email || '',
+        inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0,
+      });
+    } catch (err) {
+      const msg = err.code === 'download-blocked' ? 'Prohlížeč nedovolil stáhnout Excel z úložiště.' : (err.message || String(err));
+      try {
+        await setDoc(doc(db, COLLECTION, folder.id, 'assembly', 'current'), {
+          status: 'error', result: asm?.result || null, error: msg,
+          createdAt: new Date().toISOString(), createdBy: auth.currentUser?.email || '',
+        });
+      } catch (e) { alert('Sestavení selhalo: ' + msg); }
+    }
+    setBusy(false);
+    setStep('');
+  };
+
+  const r = asm?.result;
+  const usedIds = asm?.fileIds || [];
+  const newSince = okFiles.filter(f => !usedIds.includes(f.id)).length;
+  const cell = { padding: '5px 8px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, verticalAlign: 'top', textAlign: 'left' };
+  const head = { ...cell, color: colors.muted, fontWeight: 500, whiteSpace: 'nowrap', background: '#faf8f4' };
+  const warnBox = { padding: '10px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 };
+
+  return (
+    <div style={{ ...box, marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: r ? 12 : 0 }}>
+        <span style={{ flex: 1, minWidth: 220 }}>
+          <b style={{ fontSize: 15, color: colors.primary }}>🧩 Návrh nabídky</b>
+          <span style={{ display: 'block', fontSize: 12, color: colors.muted, marginTop: 2 }}>
+            {busy ? step
+              : asm ? `Sestaveno ${fmtWhen(asm.createdAt)} (${who(asm.createdBy)})${newSince ? ` · od té doby přibylo ${newSince} přečtených podkladů` : ''}`
+              : 'Claude spojí všechny přečtené podklady do jednoho návrhu nabídky. Zatím se nic neukládá do nabídek.'}
+          </span>
+        </span>
+        <button type="button" style={btn(true)} disabled={busy || readingBusy} onClick={run}>
+          {busy ? '⏳ Sestavuji…' : asm ? '↻ Sestavit znovu' : '🧩 Sestavit nabídku'}
+        </button>
+      </div>
+
+      {asm?.status === 'error' && (
+        <div style={{ ...warnBox, background: '#fdf3f3', color: colors.danger }}>⚠ Sestavení selhalo: {asm.error}</div>
+      )}
+
+      {r && (
+        <div>
+          {filled(r.summary) && <div style={{ fontSize: 13, marginBottom: 10 }}>{r.summary}</div>}
+
+          {(r.otherEventFiles || []).filter(x => filled(x.fileName)).length > 0 && (
+            <div style={{ ...warnBox, background: '#FAEEDA', color: '#633806' }}>
+              <b>⚠ Podklady z jiné akce — do návrhu nezapočítány:</b>
+              {(r.otherEventFiles || []).filter(x => filled(x.fileName)).map((x, i) => (
+                <div key={i} style={{ marginTop: 4 }}>• <b>{x.fileName}</b> — {x.reason}</div>
+              ))}
+              <div style={{ marginTop: 6, fontSize: 12 }}>Pokud tam nepatří, odeberte je ze složky ✕ a sestavte znovu.</div>
+            </div>
+          )}
+
+          {(r.conflicts || []).filter(c => filled(c.topic)).length > 0 && (
+            <div style={{ ...warnBox, background: '#FCEBEB', color: '#791F1F' }}>
+              <b>⚠ Podklady si odporují:</b>
+              {(r.conflicts || []).filter(c => filled(c.topic)).map((c, i) => (
+                <div key={i} style={{ marginTop: 6 }}>
+                  <b>{c.topic}</b>
+                  {(c.values || []).map((v, j) => <div key={j} style={{ marginLeft: 12 }}>• {String(v.value)} <span style={{ color: colors.muted }}>({v.fileName})</span></div>)}
+                  {filled(c.used) && <div style={{ marginLeft: 12, fontSize: 12 }}>→ použito: {c.used}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <AsmHeader h={r.header || {}} colors={colors} />
+
+          <b style={{ fontSize: 13, color: colors.primary }}>Karty ({(r.items || []).length})</b>
+          <div style={{ overflowX: 'auto', margin: '4px 0 14px' }}>
+            <table style={{ borderCollapse: 'collapse', minWidth: '100%', background: '#fff' }}>
+              <thead><tr>
+                <th style={head}>V kalk.</th><th style={head}>Typ</th>
+                {ITEM_COLS.map(([k, l]) => <th key={k} style={head}>{l}</th>)}
+              </tr></thead>
+              <tbody>{(r.items || []).map((it, i) => (
+                <tr key={i} style={{ opacity: it.enabled === false ? 0.55 : 1 }}>
+                  <td style={cell}>{it.enabled === false ? '—' : '✓'}</td>
+                  <td style={{ ...cell, whiteSpace: 'nowrap' }}>{KIND_LABEL[it.kind] || it.kind}</td>
+                  {ITEM_COLS.map(([k]) => <td key={k} style={{ ...cell, ...(k === 'conversionNote' || k === 'notes' ? { minWidth: 220 } : {}) }}>{filled(it[k]) ? String(it[k]) : ''}</td>)}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+
+          {(r.soldPrices || []).length > 0 && (
+            <>
+              <b style={{ fontSize: 13, color: colors.primary }}>Prodané ceny na osobu (z podkladů)</b>
+              <div style={{ overflowX: 'auto', margin: '4px 0 14px' }}>
+                <table style={{ borderCollapse: 'collapse', background: '#fff' }}>
+                  <thead><tr><th style={head}>Osob</th><th style={head}>DBL</th><th style={head}>SGL</th><th style={head}>Měna</th><th style={head}>Zdroj</th></tr></thead>
+                  <tbody>{r.soldPrices.map((p, i) => (
+                    <tr key={i}><td style={cell}>{p.pax}</td><td style={cell}><b>{p.finalDbl}</b></td><td style={cell}>{filled(p.finalSngl) ? p.finalSngl : ''}</td><td style={cell}>{p.currency}</td><td style={cell}>{p.sourceFile}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {(r.observations || []).filter(o => filled(o.topic) || filled(o.issue)).length > 0 && (
+            <div style={{ ...warnBox, background: '#EEF3FA', color: '#1F3A5F' }}>
+              <b>💡 K zamyšlení — v původní kalkulaci (nic se nemění samo, karty odpovídají prodané kalkulaci):</b>
+              {(r.observations || []).filter(o => filled(o.topic) || filled(o.issue)).map((o, i) => (
+                <div key={i} style={{ marginTop: 6 }}>
+                  <b>{o.topic}</b> — {o.issue}
+                  {filled(o.proposal) && <div style={{ marginLeft: 12, fontSize: 12 }}>→ návrh: {o.proposal}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ fontSize: 12, color: colors.muted }}>
+            Kontrola, že aplikace z těchto karet spočítá stejné prodané ceny, přijde v dalším kroku (3b).
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AsmHeader({ h, colors }) {
+  const rows = [
+    ['Název', h.name], ['Klient', filled(h.clientName) ? `${h.clientName}${h.clientMatched === false ? ' ⚠ není v seznamu klientů' : ''}` : ''],
+    ['Termín', [h.startDate, h.endDate].filter(filled).join(' – ')], ['Destinace', h.destinations],
+    ['Varianty osob', h.paxList], ['Marže', filled(h.margin) ? `${h.margin} %` : ''],
+    ['FOC', filled(h.focCount) ? `${h.focCount} × ${String(h.focType || 'dbl').toUpperCase()}` : ''],
+  ].filter(([, v]) => filled(v));
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 13, marginBottom: 12, padding: '8px 10px', background: '#faf8f4', borderRadius: 8 }}>
+      {rows.map(([l, v]) => <span key={l}><span style={{ color: colors.muted }}>{l}:</span> <b>{v}</b></span>)}
     </div>
   );
 }
