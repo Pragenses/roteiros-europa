@@ -1642,6 +1642,22 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // "Vytvořit hotely z textu". Používá se jen na začátku nabídky, a když je
   // pořád otevřené, poskakuje pod ním celý zbytek stránky.
   const [showItineraryBox, setShowItineraryBox] = useState(false);
+  // Programa da viagem: ukazuje se prvních ~20 řádků, zbytek po rozbalení.
+  // Jen zobrazení — text se ukládá celý a do PDF jde celý.
+  const PROGRAM_LINES = 20;
+  const PROGRAM_MAX_PX = Math.round(PROGRAM_LINES * 13 * 1.6) + 24; // 20 řádků + vnitřní okraj
+  const programRef = React.useRef(null);
+  const [programOpen, setProgramOpen] = useState(false);
+  const [programLong, setProgramLong] = useState(false);
+  const measureProgram = React.useCallback(() => {
+    const el = programRef.current;
+    if (el) setProgramLong(el.scrollHeight > PROGRAM_MAX_PX + 2);
+  }, [PROGRAM_MAX_PX]);
+  useEffect(() => {
+    measureProgram();
+    window.addEventListener('resize', measureProgram);
+    return () => window.removeEventListener('resize', measureProgram);
+  });
   const [parseError, setParseError] = useState('');
 
   // Okno "Vyplnit z textu" u hotelové karty. fillItem = karta, do které se
@@ -4484,12 +4500,21 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           </button>
         </div>
         <div
+          ref={programRef}
           contentEditable
           suppressContentEditableWarning
-          onBlur={e => handleHeaderChange('programText', e.currentTarget.innerHTML)}
+          onInput={measureProgram}
+          onBlur={e => { handleHeaderChange('programText', e.currentTarget.innerHTML); measureProgram(); }}
           dangerouslySetInnerHTML={{ __html: offer.programText || '' }}
-          style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '12px', minHeight: 220, fontFamily: 'Georgia, serif', fontSize: 13, lineHeight: 1.6, color: colors.text, outline: 'none', whiteSpace: 'pre-wrap', marginBottom: 8 }}
+          style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '12px', minHeight: 220, fontFamily: 'Georgia, serif', fontSize: 13, lineHeight: 1.6, color: colors.text, outline: 'none', whiteSpace: 'pre-wrap', marginBottom: 8,
+                   maxHeight: programOpen ? 'none' : PROGRAM_MAX_PX, overflowY: programOpen ? 'visible' : 'auto' }}
         />
+        {(programLong || programOpen) && (
+          <button type="button" onClick={() => setProgramOpen(o => !o)}
+            style={{ padding: '5px 12px', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12, color: colors.primary, fontFamily: 'inherit' }}>
+            {programOpen ? '▴ Sbalit program' : '▾ Zobrazit celý program'}
+          </button>
+        )}
         <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => navigate('offer-print', { offerId })} style={{ padding: '9px 20px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             📄 Gerar oferta (PDF)
