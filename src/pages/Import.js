@@ -4,6 +4,7 @@ import { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getD
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { codeForEmail } from '../lib/people';
 import { readImportFile, assembleOffer, excelTextFor } from '../lib/importRead';
+import { computeDraft, checkItem, checkFinal } from '../lib/importCheck';
 
 // Import starých akcí — KROK 1: importní složky.
 // Ke každé staré akci (dělané mimo systém) se založí složka a do ní se
@@ -555,21 +556,61 @@ function ReadResult({ r, colors }) {
   );
 }
 
-// ── Krok 3a: sestavení návrhu nabídky ──
+// ── Krok 3a + 3b: sestavení návrhu nabídky, úpravy a kontrola cen ──
 const KIND_LABEL = {
   hotel: '🏨 Hotel', ticket: '🎟 Na osobu', group: '🚌 Skupinová', guide_hotel: '🧭 Hotel průvodce', driver_hotel: '🚐 Hotel řidiče',
 };
-const ITEM_COLS = [
-  ['city', 'Město'], ['name', 'Název'], ['dateFrom', 'Od'], ['dateTo', 'Do'], ['nights', 'Nocí'],
-  ['pricePerNightDbl', 'DBL pokoj/noc'], ['pricePerNightSngl', 'SGL pokoj/noc'], ['cityTax', 'City tax DBL pokoj/noc'], ['cityTaxSngl', 'City tax SGL/noc'],
-  ['costDbl', 'Na os. DBL'], ['costSngl', 'Na os. SGL'], ['groupCost', 'Za skupinu'], ['guideOverride', 'Pevná částka'],
-  ['currency', 'Měna'], ['conversionNote', 'Jak převedeno'], ['notes', 'Poznámka'],
+// Která pole se u kterého druhu karty upravují
+const FIELDS_BY_KIND = {
+  hotel: ['nights', 'pricePerNightDbl', 'pricePerNightSngl', 'cityTax', 'cityTaxSngl'],
+  ticket: ['costDbl', 'costSngl'],
+  group: ['groupCost'],
+  guide_hotel: ['guideOverride'],
+  driver_hotel: ['guideOverride'],
+};
+const NUM_COLS = [
+  ['nights', 'Nocí', 44], ['pricePerNightDbl', 'DBL pokoj/noc', 70], ['pricePerNightSngl', 'SGL pokoj/noc', 70],
+  ['cityTax', 'City tax DBL pokoj/noc', 70], ['cityTaxSngl', 'City tax SGL/noc', 70],
+  ['costDbl', 'Na os. DBL', 70], ['costSngl', 'Na os. SGL', 70], ['groupCost', 'Za skupinu', 80], ['guideOverride', 'Pevná částka', 80],
 ];
+const FIELD_LABEL = Object.fromEntries(NUM_COLS.map(([k, l]) => [k, l]));
+const fmt2 = (x) => (typeof x === 'number' && isFinite(x)) ? x.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+const str = (v) => (v === undefined || v === null ? '' : String(v));
+const newKey = () => `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+// Z výsledku Claude udělá upravitelný návrh
+function draftFromResult(r, clients) {
+  const h = r.header || {};
+  const cn = str(h.clientName).trim().toLowerCase();
+  const client = clients.find(c => str(c.name).trim().toLowerCase() === cn);
+  return {
+    header: {
+      name: str(h.name), clientId: client ? client.id : '', clientNameRaw: str(h.clientName),
+      startDate: str(h.startDate), endDate: str(h.endDate), destinations: str(h.destinations),
+      paxList: str(h.paxList), margin: str(h.margin), focCount: h.focCount === undefined ? '1' : str(h.focCount),
+      focType: h.focType === 'sngl' ? 'sngl' : 'dbl',
+    },
+    items: (r.items || []).map(it => ({ ...it, _key: newKey(), enabled: it.enabled !== false })),
+    soldPrices: (r.soldPrices || []).map(p => ({ pax: str(p.pax), finalDbl: str(p.finalDbl), finalSngl: str(p.finalSngl), currency: str(p.currency) || 'EUR', sourceFile: str(p.sourceFile) })),
+  };
+}
 
 function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors, box, btn }) {
   const [asm, setAsm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState('');
+  const [clients, setClients] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [openInfo, setOpenInfo] = useState({});
+  const [saveState, setSaveState] = useState('');
+  const asmRef = doc(db, COLLECTION, folder.id, 'assembly', 'current');
+  const loadedAt = useRef('');
+
+  useEffect(() => {
+    getDocs(collection(db, 'clients'))
+      .then(cs => setClients(cs.docs.map(d => ({ id: d.id, name: d.data().name || '' })).filter(c => c.name).sort((a, b) => a.name.localeCompare(b.name))))
+      .catch(err => console.error('clients', err));
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(doc(db, COLLECTION, folder.id, 'assembly', 'current'),
@@ -578,11 +619,41 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
     return () => unsub();
   }, [folder.id]);
 
+  // Návrh převezmi jen při novém sestavení (nebo poprvé), ať se nepřepisuje rozepsaná úprava.
+  useEffect(() => {
+    if (!asm || !asm.result) return;
+    const stamp = asm.createdAt || '';
+    if (loadedAt.current === stamp && draft) return;
+    loadedAt.current = stamp;
+    setDraft(asm.draft || draftFromResult(asm.result, clients));
+  }, [asm, clients]);
+
+  // Když se klienti načtou až po návrhu bez klienta, zkus ho spárovat.
+  useEffect(() => {
+    if (!draft || draft.header.clientId || !clients.length || !draft.header.clientNameRaw) return;
+    const cn = draft.header.clientNameRaw.trim().toLowerCase();
+    const c = clients.find(x => x.name.trim().toLowerCase() === cn);
+    if (c) setDraft(d => ({ ...d, header: { ...d.header, clientId: c.id } }));
+  }, [clients, draft]);
+
   const okFiles = files.filter(f => reads[f.id]?.status === 'ok');
   if (okFiles.length === 0) return null;
 
+  const save = async (next) => {
+    setSaveState('Ukládám…');
+    try {
+      await updateDoc(asmRef, { draft: next, editedAt: new Date().toISOString(), editedBy: auth.currentUser?.email || '' });
+      setSaveState('Uloženo');
+    } catch (err) {
+      setSaveState('⚠ Neuloženo: ' + (err.code || err.message));
+    }
+  };
+  // Změna + okamžité uložení (pro přepínače, opravy, mazání)
+  const commit = (next) => { setDraft(next); save(next); };
+
   const run = async () => {
     if (unreadCount > 0 && !window.confirm(`${unreadCount} podklad(ů) není přečteno a do návrhu se nezapočítá. Pokračovat?`)) return;
+    if (asm?.editedAt && !window.confirm('Nové sestavení přepíše vaše úpravy v návrhu. Pokračovat?')) return;
     setBusy(true);
     try {
       setStep('Načítám kalkulace z Excelu…');
@@ -590,26 +661,21 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
       for (const f of okFiles.filter(x => x.kind === 'excel')) {
         excelTexts.push({ fileName: f.name, text: await excelTextFor(f) });
       }
-      setStep('Načítám seznam klientů…');
-      const cs = await getDocs(collection(db, 'clients'));
-      const clientNames = cs.docs.map(d => d.data().name).filter(Boolean).sort();
       setStep(`Claude sestavuje nabídku z ${okFiles.length} podkladů… (může trvat 1–3 minuty)`);
       const { result, usage } = await assembleOffer({
         reads: okFiles.map(f => ({ fileName: f.name, kind: f.kind, result: reads[f.id].result })),
-        excelTexts, clientNames,
+        excelTexts, clientNames: clients.map(c => c.name),
       });
-      await setDoc(doc(db, COLLECTION, folder.id, 'assembly', 'current'), {
+      await setDoc(asmRef, {
         status: 'ok', result, error: '', fileIds: okFiles.map(f => f.id),
+        draft: draftFromResult(result, clients), editedAt: '', editedBy: '',
         createdAt: new Date().toISOString(), createdBy: auth.currentUser?.email || '',
         inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0,
       });
     } catch (err) {
       const msg = err.code === 'download-blocked' ? 'Prohlížeč nedovolil stáhnout Excel z úložiště.' : (err.message || String(err));
       try {
-        await setDoc(doc(db, COLLECTION, folder.id, 'assembly', 'current'), {
-          status: 'error', result: asm?.result || null, error: msg,
-          createdAt: new Date().toISOString(), createdBy: auth.currentUser?.email || '',
-        });
+        await setDoc(asmRef, { ...(asm || {}), status: 'error', error: msg });
       } catch (e) { alert('Sestavení selhalo: ' + msg); }
     }
     setBusy(false);
@@ -619,9 +685,32 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
   const r = asm?.result;
   const usedIds = asm?.fileIds || [];
   const newSince = okFiles.filter(f => !usedIds.includes(f.id)).length;
-  const cell = { padding: '5px 8px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, verticalAlign: 'top', textAlign: 'left' };
-  const head = { ...cell, color: colors.muted, fontWeight: 500, whiteSpace: 'nowrap', background: '#faf8f4' };
+  const cell = { padding: '4px 6px', borderBottom: `1px solid ${colors.border}`, fontSize: 12, verticalAlign: 'top', textAlign: 'left' };
+  const head = { ...cell, color: colors.muted, fontWeight: 500, background: '#faf8f4', verticalAlign: 'bottom' };
   const warnBox = { padding: '10px 12px', borderRadius: 8, fontSize: 13, marginBottom: 10 };
+  const inp = (w) => ({ width: w, boxSizing: 'border-box', padding: '3px 5px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, fontFamily: 'inherit', background: '#fff' });
+
+  // ── výpočet a kontrola ──
+  const calc = draft ? computeDraft(draft.items, draft.header) : null;
+  const checks = draft ? draft.items.map(it => checkItem(it, calc)) : [];
+  const finals = draft ? checkFinal(calc, draft.soldPrices) : [];
+  const diffCount = checks.filter(c => c.status === 'diff').length;
+  const finalBad = finals.filter(f => f.missing || !f.okDbl || f.okSngl === false).length;
+  const allGood = draft && diffCount === 0 && finals.length > 0 && finalBad === 0;
+
+  const setHeader = (k, v) => setDraft(d => ({ ...d, header: { ...d.header, [k]: v } }));
+  const setItem = (key, patch) => setDraft(d => ({ ...d, items: d.items.map(it => it._key === key ? { ...it, ...patch } : it) }));
+  const setSold = (i, patch) => setDraft(d => ({ ...d, soldPrices: d.soldPrices.map((p, j) => j === i ? { ...p, ...patch } : p) }));
+  const blurSave = () => { if (draft) save(draft); };
+  const applyFix = (key, fix) => commit({ ...draft, items: draft.items.map(it => it._key === key ? { ...it, ...fix } : it) });
+  const removeItem = (key, name) => {
+    if (!window.confirm(`Smazat kartu „${name || 'bez názvu'}" z návrhu?`)) return;
+    commit({ ...draft, items: draft.items.filter(it => it._key !== key) });
+  };
+  const addItem = (kind) => {
+    if (!kind) return;
+    commit({ ...draft, items: [...draft.items, { _key: newKey(), kind, enabled: true, currency: 'EUR', name: '', city: '' }] });
+  };
 
   return (
     <div style={{ ...box, marginBottom: '1.5rem' }}>
@@ -630,7 +719,7 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
           <b style={{ fontSize: 15, color: colors.primary }}>🧩 Návrh nabídky</b>
           <span style={{ display: 'block', fontSize: 12, color: colors.muted, marginTop: 2 }}>
             {busy ? step
-              : asm ? `Sestaveno ${fmtWhen(asm.createdAt)} (${who(asm.createdBy)})${newSince ? ` · od té doby přibylo ${newSince} přečtených podkladů` : ''}`
+              : asm ? `Sestaveno ${fmtWhen(asm.createdAt)} (${who(asm.createdBy)})${asm.editedAt ? ` · upraveno ${fmtWhen(asm.editedAt)} (${who(asm.editedBy)})` : ''}${newSince ? ` · od té doby přibylo ${newSince} přečtených podkladů` : ''}${saveState ? ` · ${saveState}` : ''}`
               : 'Claude spojí všechny přečtené podklady do jednoho návrhu nabídky. Zatím se nic neukládá do nabídek.'}
           </span>
         </span>
@@ -643,9 +732,19 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
         <div style={{ ...warnBox, background: '#fdf3f3', color: colors.danger }}>⚠ Sestavení selhalo: {asm.error}</div>
       )}
 
-      {r && (
+      {r && draft && (
         <div>
           {filled(r.summary) && <div style={{ fontSize: 13, marginBottom: 10 }}>{r.summary}</div>}
+
+          {/* Souhrn kontroly */}
+          <div style={{ ...warnBox, fontSize: 14, background: allGood ? '#EAF3DE' : '#FCEBEB', color: allGood ? '#27500A' : '#791F1F' }}>
+            {allGood
+              ? <b>✓ Vše sedí na cent — karty i konečné ceny odpovídají prodané kalkulaci.</b>
+              : <b>⚠ Ještě nesedí: {diffCount > 0 ? `${diffCount} ${diffCount === 1 ? 'karta' : diffCount < 5 ? 'karty' : 'karet'} s rozdílem` : ''}{diffCount > 0 && finalBad > 0 ? ' · ' : ''}{finalBad > 0 ? `${finalBad} ${finalBad === 1 ? 'konečná cena' : 'konečné ceny'} s rozdílem` : ''}{finals.length === 0 ? 'chybí prodané ceny k porovnání' : ''}</b>}
+            {calc && calc.nonEur.length > 0 && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>Pozor: návrh obsahuje měny {calc.nonEur.join(', ')} — konečné ceny se počítají aktuálním kurzem, takže na cent sedět nemusí. Karty se kontrolují v jejich měně.</div>
+            )}
+          </div>
 
           {(r.otherEventFiles || []).filter(x => filled(x.fileName)).length > 0 && (
             <div style={{ ...warnBox, background: '#FAEEDA', color: '#633806' }}>
@@ -653,13 +752,12 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
               {(r.otherEventFiles || []).filter(x => filled(x.fileName)).map((x, i) => (
                 <div key={i} style={{ marginTop: 4 }}>• <b>{x.fileName}</b> — {x.reason}</div>
               ))}
-              <div style={{ marginTop: 6, fontSize: 12 }}>Pokud tam nepatří, odeberte je ze složky ✕ a sestavte znovu.</div>
             </div>
           )}
 
           {(r.conflicts || []).filter(c => filled(c.topic)).length > 0 && (
-            <div style={{ ...warnBox, background: '#FCEBEB', color: '#791F1F' }}>
-              <b>⚠ Podklady si odporují:</b>
+            <details style={{ ...warnBox, background: '#FCEBEB', color: '#791F1F' }}>
+              <summary style={{ cursor: 'pointer' }}><b>⚠ Podklady si odporují ({(r.conflicts || []).filter(c => filled(c.topic)).length}) — rozbalit</b></summary>
               {(r.conflicts || []).filter(c => filled(c.topic)).map((c, i) => (
                 <div key={i} style={{ marginTop: 6 }}>
                   <b>{c.topic}</b>
@@ -667,41 +765,141 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
                   {filled(c.used) && <div style={{ marginLeft: 12, fontSize: 12 }}>→ použito: {c.used}</div>}
                 </div>
               ))}
-            </div>
+            </details>
           )}
 
-          <AsmHeader h={r.header || {}} colors={colors} />
+          {/* Hlavička */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 14px', fontSize: 12, marginBottom: 12, padding: '10px', background: '#faf8f4', borderRadius: 8, alignItems: 'flex-end' }}>
+            <label>Název<br /><input style={inp(260)} value={draft.header.name} onChange={e => setHeader('name', e.target.value)} onBlur={blurSave} /></label>
+            <label>Klient<br />
+              <select style={inp(200)} value={draft.header.clientId} onChange={e => commit({ ...draft, header: { ...draft.header, clientId: e.target.value } })}>
+                <option value="">— vyberte —</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {!draft.header.clientId && draft.header.clientNameRaw && <span style={{ display: 'block', color: '#854F0B' }}>v podkladech: {draft.header.clientNameRaw}</span>}
+            </label>
+            <label>Od<br /><input type="date" style={inp(130)} value={draft.header.startDate} onChange={e => setHeader('startDate', e.target.value)} onBlur={blurSave} /></label>
+            <label>Do<br /><input type="date" style={inp(130)} value={draft.header.endDate} onChange={e => setHeader('endDate', e.target.value)} onBlur={blurSave} /></label>
+            <label>Varianty osob<br /><input style={inp(110)} value={draft.header.paxList} onChange={e => setHeader('paxList', e.target.value)} onBlur={blurSave} /></label>
+            <label>Marže %<br /><input style={inp(60)} value={draft.header.margin} onChange={e => setHeader('margin', e.target.value)} onBlur={blurSave} /></label>
+            <label>FOC<br /><input style={inp(44)} value={draft.header.focCount} onChange={e => setHeader('focCount', e.target.value)} onBlur={blurSave} />
+              <select style={{ ...inp(64), marginLeft: 4 }} value={draft.header.focType} onChange={e => commit({ ...draft, header: { ...draft.header, focType: e.target.value } })}>
+                <option value="dbl">DBL</option><option value="sngl">SGL</option>
+              </select>
+            </label>
+            <label style={{ flex: 1, minWidth: 200 }}>Destinace<br /><input style={inp('100%')} value={draft.header.destinations} onChange={e => setHeader('destinations', e.target.value)} onBlur={blurSave} /></label>
+          </div>
 
-          <b style={{ fontSize: 13, color: colors.primary }}>Karty ({(r.items || []).length})</b>
-          <div style={{ overflowX: 'auto', margin: '4px 0 14px' }}>
+          {/* Karty */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <b style={{ fontSize: 13, color: colors.primary }}>Karty ({draft.items.length})</b>
+            <select style={inp(170)} value="" onChange={e => addItem(e.target.value)}>
+              <option value="">＋ Přidat kartu…</option>
+              {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div style={{ overflowX: 'auto', margin: '0 0 14px' }}>
             <table style={{ borderCollapse: 'collapse', minWidth: '100%', background: '#fff' }}>
               <thead><tr>
-                <th style={head}>V kalk.</th><th style={head}>Typ</th>
-                {ITEM_COLS.map(([k, l]) => <th key={k} style={head}>{l}</th>)}
+                <th style={head} title="Započítat do výpočtu">V kalk.</th>
+                <th style={head}>Typ</th><th style={head}>Město</th><th style={head}>Název</th><th style={head}>Od</th><th style={head}>Do</th>
+                {NUM_COLS.map(([k, l]) => <th key={k} style={head}>{l}</th>)}
+                <th style={head}>Měna</th><th style={head}>Kontrola</th><th style={head}></th>
               </tr></thead>
-              <tbody>{(r.items || []).map((it, i) => (
-                <tr key={i} style={{ opacity: it.enabled === false ? 0.55 : 1 }}>
-                  <td style={cell}>{it.enabled === false ? '—' : '✓'}</td>
-                  <td style={{ ...cell, whiteSpace: 'nowrap' }}>{KIND_LABEL[it.kind] || it.kind}</td>
-                  {ITEM_COLS.map(([k]) => <td key={k} style={{ ...cell, ...(k === 'conversionNote' || k === 'notes' ? { minWidth: 220 } : {}) }}>{filled(it[k]) ? String(it[k]) : ''}</td>)}
-                </tr>
-              ))}</tbody>
+              <tbody>{draft.items.map((it, idx) => {
+                const ck = checks[idx];
+                const editable = FIELDS_BY_KIND[it.kind] || [];
+                const open = !!openInfo[it._key];
+                const auto = it.kind === 'guide_hotel' ? calc.autoGuide : it.kind === 'driver_hotel' ? calc.autoDriver : null;
+                return (
+                  <React.Fragment key={it._key}>
+                    <tr style={{ background: ck.status === 'diff' ? '#FDF3F3' : undefined, opacity: it.enabled === false ? 0.6 : 1 }}>
+                      <td style={cell}><input type="checkbox" checked={it.enabled !== false} onChange={e => commit({ ...draft, items: draft.items.map(x => x._key === it._key ? { ...x, enabled: e.target.checked } : x) })} /></td>
+                      <td style={cell}>
+                        <select style={inp(116)} value={it.kind} onChange={e => commit({ ...draft, items: draft.items.map(x => x._key === it._key ? { ...x, kind: e.target.value } : x) })}>
+                          {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </td>
+                      <td style={cell}><input style={inp(100)} value={str(it.city)} onChange={e => setItem(it._key, { city: e.target.value })} onBlur={blurSave} /></td>
+                      <td style={cell}><input style={inp(170)} value={str(it.name)} onChange={e => setItem(it._key, { name: e.target.value })} onBlur={blurSave} /></td>
+                      <td style={cell}><input type="date" style={inp(118)} value={str(it.dateFrom)} onChange={e => setItem(it._key, { dateFrom: e.target.value })} onBlur={blurSave} /></td>
+                      <td style={cell}><input type="date" style={inp(118)} value={str(it.dateTo)} onChange={e => setItem(it._key, { dateTo: e.target.value })} onBlur={blurSave} /></td>
+                      {NUM_COLS.map(([k, , w]) => (
+                        <td key={k} style={cell}>
+                          {editable.includes(k)
+                            ? <input style={inp(w)} value={str(it[k])} placeholder={k === 'guideOverride' && auto !== null ? `auto ${fmt2(auto)}` : ''}
+                                onChange={e => setItem(it._key, { [k]: e.target.value })} onBlur={blurSave} />
+                            : null}
+                        </td>
+                      ))}
+                      <td style={cell}><input style={inp(48)} value={str(it.currency) || 'EUR'} onChange={e => setItem(it._key, { currency: e.target.value.toUpperCase() })} onBlur={blurSave} /></td>
+                      <td style={{ ...cell, minWidth: 190 }}>
+                        {ck.status === 'ok' && <span style={{ color: '#3B6D11' }}>✓ sedí</span>}
+                        {ck.status === 'off' && <span style={{ color: colors.muted }}>mimo výpočet</span>}
+                        {ck.status === 'nocheck' && <span style={{ color: '#854F0B' }}>bez kontrolní částky</span>}
+                        {ck.status === 'diff' && (
+                          <div style={{ color: '#791F1F' }}>
+                            {ck.lines.filter(l => !l.ok).map((l, i) => (
+                              <div key={i}>{l.label}: <b>{fmt2(l.got)}</b> ≠ kalkulace <b>{fmt2(l.exp)}</b></div>
+                            ))}
+                            {ck.fix && (
+                              <button type="button" onClick={() => applyFix(it._key, ck.fix)}
+                                style={{ marginTop: 4, padding: '3px 8px', border: 'none', borderRadius: 5, background: colors.primary, color: '#fff', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                Opravit podle kalkulace ({Object.entries(ck.fix).map(([k, v]) => `${FIELD_LABEL[k] || k} → ${v}`).join(', ')})
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                        <button type="button" title="Podrobnosti" onClick={() => setOpenInfo(o => ({ ...o, [it._key]: !o[it._key] }))}
+                          style={{ background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, cursor: 'pointer', fontSize: 12, padding: '2px 6px', marginRight: 4 }}>ⓘ</button>
+                        <button type="button" title="Smazat kartu" onClick={() => removeItem(it._key, it.name)}
+                          style={{ background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, cursor: 'pointer', fontSize: 12, padding: '2px 6px', color: colors.muted }}>✕</button>
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr><td colSpan={NUM_COLS.length + 9} style={{ ...cell, background: '#faf8f4', fontSize: 12 }}>
+                        {filled(it.conversionNote) && <div><b>Jak převedeno:</b> {it.conversionNote}</div>}
+                        {filled(it.notes) && <div><b>Poznámka:</b> {it.notes}</div>}
+                        <div><b>Kontrolní částky z kalkulace:</b>{' '}
+                          {[['expectedDbl', 'na os. DBL'], ['expectedSngl', 'na os. SGL'], ['expectedGroup', 'celkem']].filter(([k]) => filled(it[k])).map(([k, l]) => `${l} ${it[k]}`).join(' · ') || '—'}
+                          {filled(it.sourceRef) && ` (${it.sourceRef})`}
+                        </div>
+                        {(it.sourceFiles || []).filter(filled).length > 0 && <div><b>Zdroj:</b> {(it.sourceFiles || []).filter(filled).join(', ')}</div>}
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}</tbody>
             </table>
           </div>
 
-          {(r.soldPrices || []).length > 0 && (
-            <>
-              <b style={{ fontSize: 13, color: colors.primary }}>Prodané ceny na osobu (z podkladů)</b>
-              <div style={{ overflowX: 'auto', margin: '4px 0 14px' }}>
-                <table style={{ borderCollapse: 'collapse', background: '#fff' }}>
-                  <thead><tr><th style={head}>Osob</th><th style={head}>DBL</th><th style={head}>SGL</th><th style={head}>Měna</th><th style={head}>Zdroj</th></tr></thead>
-                  <tbody>{r.soldPrices.map((p, i) => (
-                    <tr key={i}><td style={cell}>{p.pax}</td><td style={cell}><b>{p.finalDbl}</b></td><td style={cell}>{filled(p.finalSngl) ? p.finalSngl : ''}</td><td style={cell}>{p.currency}</td><td style={cell}>{p.sourceFile}</td></tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </>
-          )}
+          {/* Konečné ceny */}
+          <b style={{ fontSize: 13, color: colors.primary }}>Konečné ceny na osobu — aplikace vs. prodáno</b>
+          <div style={{ overflowX: 'auto', margin: '4px 0 14px' }}>
+            <table style={{ borderCollapse: 'collapse', background: '#fff' }}>
+              <thead><tr>
+                <th style={head}>Osob</th><th style={head}>Prodáno DBL</th><th style={head}>Aplikace DBL</th><th style={head}>Rozdíl</th>
+                <th style={head}>Prodáno SGL</th><th style={head}>Aplikace SGL</th><th style={head}></th>
+              </tr></thead>
+              <tbody>{draft.soldPrices.map((p, i) => {
+                const f = finals[i] || {};
+                const bad = f.missing || f.okDbl === false || f.okSngl === false;
+                return (
+                  <tr key={i} style={{ background: bad ? '#FDF3F3' : '#F4F9EE' }}>
+                    <td style={cell}><b>{p.pax}</b></td>
+                    <td style={cell}><input style={inp(80)} value={p.finalDbl} onChange={e => setSold(i, { finalDbl: e.target.value })} onBlur={blurSave} /></td>
+                    <td style={cell}>{f.missing ? <span style={{ color: '#791F1F' }}>varianta chybí v „Varianty osob"</span> : fmt2(f.gotDbl)}</td>
+                    <td style={cell}>{f.missing ? '' : fmt2(f.gotDbl - f.expDbl)}</td>
+                    <td style={cell}><input style={inp(80)} value={p.finalSngl} onChange={e => setSold(i, { finalSngl: e.target.value })} onBlur={blurSave} /></td>
+                    <td style={cell}>{f.missing ? '' : fmt2(f.gotSngl)}</td>
+                    <td style={cell}>{bad ? <span style={{ color: '#791F1F' }}>⚠</span> : <span style={{ color: '#3B6D11' }}>✓</span>}</td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </div>
 
           {(r.observations || []).filter(o => filled(o.topic) || filled(o.issue)).length > 0 && (
             <div style={{ ...warnBox, background: '#EEF3FA', color: '#1F3A5F' }}>
@@ -716,24 +914,10 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
           )}
 
           <div style={{ fontSize: 12, color: colors.muted }}>
-            Kontrola, že aplikace z těchto karet spočítá stejné prodané ceny, přijde v dalším kroku (3b).
+            Uložení do nabídky přijde v dalším kroku. Úpravy v návrhu se ukládají samy.
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function AsmHeader({ h, colors }) {
-  const rows = [
-    ['Název', h.name], ['Klient', filled(h.clientName) ? `${h.clientName}${h.clientMatched === false ? ' ⚠ není v seznamu klientů' : ''}` : ''],
-    ['Termín', [h.startDate, h.endDate].filter(filled).join(' – ')], ['Destinace', h.destinations],
-    ['Varianty osob', h.paxList], ['Marže', filled(h.margin) ? `${h.margin} %` : ''],
-    ['FOC', filled(h.focCount) ? `${h.focCount} × ${String(h.focType || 'dbl').toUpperCase()}` : ''],
-  ].filter(([, v]) => filled(v));
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 13, marginBottom: 12, padding: '8px 10px', background: '#faf8f4', borderRadius: 8 }}>
-      {rows.map(([l, v]) => <span key={l}><span style={{ color: colors.muted }}>{l}:</span> <b>{v}</b></span>)}
     </div>
   );
 }
