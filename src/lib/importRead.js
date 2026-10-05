@@ -14,7 +14,8 @@ const IMG_MAX_SIDE = 1800;      // zmenšení fotek — čitelné a levnější
 const LIBS = {
   XLSX: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   mammoth: 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
-  heic2any: 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js',
+  // heic2any neuměl novější fotky z iPhonu (ERR_LIBHEIF) — heic-to má aktuální libheif.
+  HeicTo: 'https://cdn.jsdelivr.net/npm/heic-to@1.6.5/dist/iife/heic-to.js',
 };
 
 const loadLib = (name) => new Promise((resolve, reject) => {
@@ -83,35 +84,42 @@ async function downloadBlob(url) {
   return res.blob();
 }
 
-// Fotka → zmenšený JPEG. HEIC z iPhonu se nejdřív převede.
+// Fotka → zmenšený JPEG. HEIC z iPhonu: Safari ho umí otevřít sám,
+// jinde (Brave, Chrome) se nejdřív převede knihovnou heic-to.
+const openImage = (blob) => new Promise((resolve, reject) => {
+  const url = URL.createObjectURL(blob);
+  const i = new Image();
+  i.onload = () => { URL.revokeObjectURL(url); resolve(i); };
+  i.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Fotku se nepodařilo otevřít.')); };
+  i.src = url;
+});
+
 async function imageToJpegBase64(blob, fileName) {
-  let src = blob;
   const isHeic = /\.(heic|heif)$/i.test(fileName || '') || /heic|heif/i.test(blob.type || '');
-  if (isHeic) {
-    const heic2any = await loadLib('heic2any');
-    const out = await heic2any({ blob, toType: 'image/jpeg', quality: 0.9 });
-    src = Array.isArray(out) ? out[0] : out;
-  }
-  const url = URL.createObjectURL(src);
+  let img;
   try {
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('Fotku se nepodařilo otevřít.'));
-      i.src = url;
-    });
-    const scale = Math.min(1, IMG_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(img, 0, 0, w, h);
-    const jpeg = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
-    return blobToBase64(jpeg);
-  } finally {
-    URL.revokeObjectURL(url);
+    img = await openImage(blob);
+  } catch (e) {
+    if (!isHeic) throw e;
+    const HeicTo = await loadLib('HeicTo');
+    let jpeg;
+    try {
+      jpeg = await HeicTo({ blob, type: 'image/jpeg', quality: 0.9 });
+    } catch (err) {
+      throw new Error('Fotku HEIC se nepodařilo převést (' + (err?.message || err) + ').');
+    }
+    img = await openImage(jpeg);
   }
+  const scale = Math.min(1, IMG_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const out = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+  if (!out) throw new Error('Fotku se nepodařilo zmenšit.');
+  return blobToBase64(out);
 }
 
 async function excelToText(blob) {
