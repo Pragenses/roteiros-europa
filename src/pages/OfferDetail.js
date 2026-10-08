@@ -15,6 +15,7 @@ const PRESENCE_TIMEOUT_MS = 90 * 1000;
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
   { value: 'sent', label: 'Sent to client' },
+  { value: 'returned', label: 'Returned for edit' },
   { value: 'won', label: 'Won → confirmed' },
   { value: 'lost', label: 'Lost / declined' },
 ];
