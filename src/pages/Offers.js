@@ -7,6 +7,7 @@ import { ensureOfferNumber } from '../lib/offerNumber';
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
   { value: 'sent', label: 'Sent to client' },
+  { value: 'returned', label: 'Returned for edit' },
   { value: 'won', label: 'Won → confirmed' },
   { value: 'lost', label: 'Lost / declined' },
 ];
@@ -14,6 +15,7 @@ const STATUS_OPTS = [
 const STATUS_STYLE = {
   draft: { bg: '#F1EFE8', color: '#444441' },
   sent: { bg: '#E6F1FB', color: '#0C447C' },
+  returned: { bg: '#FAEEDA', color: '#854F0B' },
   won: { bg: '#EAF3DE', color: '#27500A' },
   lost: { bg: '#FCEBEB', color: '#791F1F' },
 };
