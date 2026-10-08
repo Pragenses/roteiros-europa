@@ -12,18 +12,20 @@ import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
 //   responsible = '' (společné) | 'HD' | 'FD' | 'HŠ'
 //   pinnedFor   = '' (nepřipnuto) | 'ALL' (všichni) | 'HD' | 'FD' | 'HŠ'
 
-const STATUS_LABEL = { draft: 'Draft', sent: 'Odesláno', won: 'Potvrzeno', lost: 'Zamítnuto' };
+const STATUS_LABEL = { draft: 'Draft', sent: 'Odesláno', returned: 'Vráceno k úpravě', won: 'Potvrzeno', lost: 'Zamítnuto' };
 const STATUS_STYLE = {
   draft: { bg: '#F1EFE8', color: '#444441' },
   sent: { bg: '#E6F1FB', color: '#0C447C' },
+  returned: { bg: '#FAEEDA', color: '#854F0B' },
   won: { bg: '#EAF3DE', color: '#27500A' },
   lost: { bg: '#FCEBEB', color: '#791F1F' },
 };
 
 const STATUS_FILTERS = [
-  { id: 'active', label: 'Rozpracované', match: s => s === 'draft' || s === 'sent' },
+  { id: 'active', label: 'Rozpracované', match: s => s === 'draft' || s === 'sent' || s === 'returned' },
   { id: 'draft', label: 'Draft', match: s => s === 'draft' },
   { id: 'sent', label: 'Odeslané', match: s => s === 'sent' },
+  { id: 'returned', label: 'Vráceno', match: s => s === 'returned' },
   { id: 'won', label: 'Potvrzené', match: s => s === 'won' },
   { id: 'all', label: 'Vše', match: () => true },
 ];
