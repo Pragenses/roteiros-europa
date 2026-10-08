@@ -48,13 +48,15 @@ const COLORS = {
   info: '#0c447c',
 };
 
-const ALLOWED_EMAILS = ['helena.maria.brito@gmail.com', 'filipdlask@gmail.com', 'skorkovska@gmail.com'];
+const ALLOWED_EMAILS = ['helena.maria.brito@gmail.com', 'filipdlask@gmail.com', 'grupos@tour-pragenses.com', 'skorkovska@gmail.com'];
 // 'owner' = full access to everything. 'limited' = restricted employee role:
 // no Clients, no Calendar, and Offers are only visible when explicitly
 // granted per-offer (see offer.allowedUsers in OfferDetail.js).
 const USER_ROLES = {
   'helena.maria.brito@gmail.com': 'owner',
   'filipdlask@gmail.com': 'owner',
+  // Firemní účet (záloha pro případ ztráty osobních účtů) — plný přístup.
+  'grupos@tour-pragenses.com': 'owner',
   'skorkovska@gmail.com': 'limited',
 };
 
