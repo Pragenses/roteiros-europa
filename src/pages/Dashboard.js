@@ -137,7 +137,8 @@ function NoteBoardCard({ item, navigate, colors }) {
 
 // --- Rozpracované nabídky ------------------------------------------------
 const WIP_LIMIT = 8;
-const WIP_STATUS = { draft: { label: 'Draft', bg: '#F1EFE8', color: '#444441' }, sent: { label: 'Odesláno', bg: '#E6F1FB', color: '#0C447C' },
+const WIP_STATUS = { draft: { label: 'Draft', bg: '#F1EFE8', color: '#444441' }, check: { label: 'Ke kontrole', bg: '#EEEAF8', color: '#4B2E83' },
+                     sent: { label: 'Odesláno', bg: '#E6F1FB', color: '#0C447C' },
                      returned: { label: 'Vráceno k úpravě', bg: '#FAEEDA', color: '#854F0B' },
                      won: { label: 'Potvrzeno', bg: '#EAF3DE', color: '#27500A' }, lost: { label: 'Zamítnuto', bg: '#FCEBEB', color: '#791F1F' } };
 
@@ -427,7 +428,7 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const wipBase = wipOffers.filter(o => forPerson(o.responsible));
   const wipPinned = wipBase.filter(pinnedForView).sort(byEdit);
   const wipRecentAll = wipBase
-    .filter(o => !pinnedForView(o) && ['draft', 'sent', 'returned'].includes(o.status || 'draft'))
+    .filter(o => !pinnedForView(o) && ['draft', 'check', 'sent', 'returned'].includes(o.status || 'draft'))
     .sort(byEdit);
   const wipRecent = wipRecentAll.slice(0, WIP_LIMIT);
 
