@@ -8,6 +8,7 @@ import { ensureOfferNumber } from '../lib/offerNumber';
 import OfferVersions from '../components/OfferVersions';
 import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, hotelLabel } from '../lib/hotelAlt';
 import { computeAltDiffs } from '../lib/altPricing';
+import { codeForEmail } from '../lib/people';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -704,8 +705,35 @@ const asNoteEntries = (entries, legacyText) => {
   return [{ id: 'legacy', stamp: '', author: '', text: legacyText }];
 };
 
+// Čas k razítku. Razítko v datech je jen „dd.mm.rrrr Den“; čas se bere
+// z createdAt, které má každý zápis uložené. Nic se tím nepřepisuje — čas se
+// jen doplní při zobrazení, takže ho dostanou i starší zápisy.
+const hhmm = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+const stampWithTime = (e) => {
+  const st = (e && e.stamp) || '';
+  if (!st || /\d{1,2}:\d{2}/.test(st)) return st;
+  const t = hhmm(e.createdAt);
+  return t ? `${st} ${t}` : st;
+};
+// Iniciály přihlášeného (HD / FD / HŠ). Neznámý účet → část e-mailu před @.
+const myInitials = () => {
+  const email = (auth.currentUser && auth.currentUser.email) || '';
+  return codeForEmail(email) || email.split('@')[0] || '';
+};
+const fullStamp = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return `${noteStamp(d)} ${hhmm(iso)}`;
+};
+
 const noteEntriesToText = (list) => (list || [])
-  .map(e => [[e.stamp, e.author].filter(Boolean).join(' - '), e.text].filter(Boolean).join('\n'))
+  .map(e => [[stampWithTime(e), e.author].filter(Boolean).join(' - '), e.text].filter(Boolean).join('\n'))
   .filter(Boolean).join('\n\n');
 
 // Čas zápisu pro řazení: createdAt, jinak razítko „dd.mm.rrrr …“, jinak id
@@ -861,7 +889,7 @@ const NoteLog = ({ entries, onChange, colors, compact, onMakeTask, sourceLabel, 
             const entry = row.entry;
             const a = noteAuthor(entry.author);
             const isOpen = expandAll || openIds.has(row.key);
-            const label = [entry.stamp, entry.author].filter(Boolean).join(' - ');
+            const label = [stampWithTime(entry), entry.author].filter(Boolean).join(' - ');
             const cardTag = !row.own ? (
               <span title={`Zápis u karty: ${row.cardLabel}`}
                 style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -1018,7 +1046,7 @@ const resolveTaskItem = (t, items) => {
 // Text úkolu: v klidu jeden řádek (dlouhý nebo víceřádkový text končí „…“),
 // po kliknutí se rozbalí pole na celou výšku textu, po kliknutí jinam se sbalí.
 // Ukládá se stejně jako dřív — při každé změně textu.
-const TaskText = ({ value, done, onChange, colors }) => {
+const TaskText = ({ value, done, onChange, colors, tip }) => {
   const [editing, setEditing] = React.useState(false);
   const taRef = React.useRef(null);
   const text = value || '';
@@ -1063,7 +1091,7 @@ const TaskText = ({ value, done, onChange, colors }) => {
     <div role="button" tabIndex={0}
       onClick={() => setEditing(true)}
       onFocus={() => setEditing(true)}
-      title={text || 'Kliknutím upravit'}
+      title={[text || 'Kliknutím upravit', tip].filter(Boolean).join('\n\n')}
       style={{ ...base, padding: '4px 8px', cursor: 'text', whiteSpace: 'nowrap',
                overflow: 'hidden', textOverflow: 'ellipsis', border: '1px solid transparent', borderRadius: 5 }}>
       {text.trim()
@@ -1094,6 +1122,23 @@ const TaskList = ({ todos, onChange, colors, items }) => {
   const [showAllDone, setShowAllDone] = React.useState(false);
   const DONE_VISIBLE = 3;
 
+  // Nesplněných úkolů je vidět jen prvních 7, zbytek se roluje v okénku
+  // (stejně jako Programa da viagem). Výška okénka se měří podle skutečného
+  // 7. řádku, aby se nic neusekávalo v půlce. Tlačítkem se dá roztáhnout.
+  const OPEN_VISIBLE = 7;
+  const [showAllOpen, setShowAllOpen] = React.useState(false);
+  const openBoxRef = React.useRef(null);
+  const [openBoxMax, setOpenBoxMax] = React.useState(null);
+  const openTooLong = open.length > OPEN_VISIBLE;
+  React.useLayoutEffect(() => {
+    if (!openTooLong) { setOpenBoxMax(null); return; }
+    const box = openBoxRef.current;
+    const nth = box && box.children[OPEN_VISIBLE - 1];
+    if (!nth) return;
+    const h = nth.offsetTop - box.offsetTop + nth.offsetHeight + 2;
+    setOpenBoxMax(prev => (prev === h ? prev : h));
+  });
+
   const add = () => {
     if (!draft.text.trim()) return;
     onChange([{
@@ -1103,6 +1148,7 @@ const TaskList = ({ todos, onChange, colors, items }) => {
       who: draft.who || '',
       done: false,
       createdAt: new Date().toISOString(),
+      createdBy: myInitials(),
     }, ...list]);
     setDraft({ text: '', due: '', who: '' });
   };
@@ -1127,11 +1173,19 @@ const TaskList = ({ todos, onChange, colors, items }) => {
 
   const small = { fontSize: 12, padding: '4px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontFamily: 'inherit' };
 
+  // Razítko úkolu jen v bublině po najetí myší: kdy a kým byl zadán,
+  // u hotových i kdy se odškrtl. Starší úkoly bez uloženého času ho nemají.
+  const taskTip = (t) => [
+    t.createdAt && fullStamp(t.createdAt) && `Zadáno: ${fullStamp(t.createdAt)}${t.createdBy ? ` – ${t.createdBy}` : ''}`,
+    t.done && t.doneAt && fullStamp(t.doneAt) && `Hotovo: ${fullStamp(t.doneAt)}`,
+  ].filter(Boolean).join('\n');
+
   const row = (t) => {
     const a = noteAuthor(t.who);
+    const tip = taskTip(t);
     const overdue = !t.done && t.due && t.due.length === 10 && t.due < new Date().toISOString().slice(0, 10);
     return (
-      <div key={t.id} style={{
+      <div key={t.id} title={tip || undefined} style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '5px 7px',
         borderRadius: 5, background: '#fff', border: `1px solid ${colors.border}`,
         opacity: t.done ? 0.55 : 1,
@@ -1139,7 +1193,7 @@ const TaskList = ({ todos, onChange, colors, items }) => {
         <input type="checkbox" checked={!!t.done} onChange={e => updMany(t.id, { done: e.target.checked, doneAt: e.target.checked ? new Date().toISOString() : '' })}
           title={t.done ? 'Vrátit mezi nesplněné' : 'Označit jako hotové'}
           style={{ width: 15, height: 15, cursor: 'pointer', flexShrink: 0 }} />
-        <TaskText value={t.text} done={!!t.done} colors={colors}
+        <TaskText value={t.text} done={!!t.done} colors={colors} tip={tip}
           onChange={v => upd(t.id, 'text', v)} />
         {(() => {
           const card = resolveTaskItem(t, cards);
@@ -1213,7 +1267,22 @@ const TaskList = ({ todos, onChange, colors, items }) => {
         <div style={{ fontSize: 12, color: colors.muted, fontStyle: 'italic' }}>Zatím žádný úkol.</div>
       ) : (
         <>
-          {open.map(row)}
+          {open.length > 0 && (
+            <div ref={openBoxRef}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2,
+                       ...(openTooLong && !showAllOpen && openBoxMax
+                         ? { maxHeight: openBoxMax, overflowY: 'auto' } : {}) }}>
+              {open.map(row)}
+            </div>
+          )}
+          {openTooLong && (
+            <button type="button" onClick={() => setShowAllOpen(v => !v)}
+              style={{ alignSelf: 'flex-start', padding: '5px 12px', background: colors.white,
+                       border: `1px solid ${colors.border}`, borderRadius: 6, cursor: 'pointer',
+                       fontSize: 12, color: colors.primary, fontFamily: 'inherit' }}>
+              {showAllOpen ? '▴ Sbalit úkoly' : `▾ Zobrazit všechny úkoly (${open.length})`}
+            </button>
+          )}
           {done.length > 0 && (
             <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>✔ Hotové úkoly ({done.length})</div>
           )}
@@ -1458,7 +1527,7 @@ const HotelSummaryRow = ({ it, colors }) => {
           {/* Poslední poznámka */}
           {lastNote && (
             <div style={{ marginTop: 8, paddingTop: 6, borderTop: `1px solid ${colors.border}`, fontSize: 11, color: colors.muted }}>
-              📝 {[lastNote.stamp, lastNote.author].filter(Boolean).join(' – ')}
+              📝 {[stampWithTime(lastNote), lastNote.author].filter(Boolean).join(' – ')}
               {(lastNote.stamp || lastNote.author) ? ': ' : ''}
               <span style={{ color: colors.text || '#333' }}>
                 {lastNote.text.trim().split('\n')[0]}
@@ -2927,6 +2996,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       itemId: todoDraft.itemId !== undefined ? todoDraft.itemId : '',
       done: false,
       createdAt: new Date().toISOString(),
+      createdBy: myInitials(),
     }, ...list]);
     if (todoDraft.mark) todoDraft.mark();
     setTodoDraft(null);
