@@ -5,6 +5,7 @@ import { logDeletion } from '../lib/activityLog';
 
 const STATUS_OPTS = [
   { value: 'draft', label: 'Draft' },
+  { value: 'check', label: 'Ready to send – need check' },
   { value: 'sent', label: 'Sent to client' },
   { value: 'returned', label: 'Returned for edit' },
   { value: 'won', label: 'Won → confirmed' },
@@ -13,6 +14,7 @@ const STATUS_OPTS = [
 
 const STATUS_STYLE = {
   draft: { bg: '#F1EFE8', color: '#444441' },
+  check: { bg: '#EEEAF8', color: '#4B2E83' },
   sent: { bg: '#E6F1FB', color: '#0C447C' },
   returned: { bg: '#FAEEDA', color: '#854F0B' },
   won: { bg: '#EAF3DE', color: '#27500A' },
