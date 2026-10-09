@@ -40,6 +40,15 @@ const dashEntries = (entries, legacyText) => {
   return [{ id: 'legacy', stamp: '', author: '', text: legacyText }];
 };
 
+// Čas k razítku zápisu — z createdAt, nic se nepřepisuje (stejně jako v nabídce).
+const dashStamp = (e) => {
+  const st = (e && e.stamp) || '';
+  if (!st || /\d{1,2}:\d{2}/.test(st) || !e.createdAt) return st;
+  const d = new Date(e.createdAt);
+  if (isNaN(d.getTime())) return st;
+  return `${st} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
 const dashTodayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -108,7 +117,7 @@ function NoteBoardCard({ item, navigate, colors }) {
           {(e.stamp || e.author) && (
             <span style={{ fontWeight: 700, flexShrink: 0,
                            color: DASH_AUTHOR_COLORS[e.author] || colors.muted }}>
-              {[e.stamp, e.author].filter(Boolean).join(' - ')}
+              {[dashStamp(e), e.author].filter(Boolean).join(' - ')}
             </span>
           )}
           {e.source && (
