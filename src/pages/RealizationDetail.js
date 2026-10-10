@@ -8,6 +8,7 @@ import { isInRealization, realizationItems, itemStatus, serviceCounts, fmtMoney,
 import { DEFAULT_RATES } from '../lib/offerCalc';
 import { computeOfferRows } from '../lib/offerRows';
 import { loadRatesDoc, effectiveRates } from '../lib/rates';
+import { allDeposits, DEPOSIT_STYLE } from '../lib/deposits';
 
 // Přehled jedné akce v Realizaci. Všechno se čte ŽIVĚ z nabídky
 // (offers/<id>) — žádná kopie. Upravuje se v nabídce („Otevřít nabídku“);
@@ -104,7 +105,7 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
         <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
           Z verze <b>{rz.soldVersionName || '—'}</b>{rz.soldVersionCreatedAt ? ` (uložena ${fmtDate(rz.soldVersionCreatedAt)})` : ''} ·
           potvrzeno {fmtDate(rz.confirmedAt)}{rz.confirmedBy ? ` – ${rz.confirmedBy}` : ''}
-          {rz.history && rz.history.length > 1 ? ` · prodaná verze změněna ${rz.history.length - 1}×, naposledy ${fmtDate(rz.changedAt)}${rz.changedBy ? ' – ' + rz.changedBy : ''}` : ''}
+          {(() => { const n = (rz.history || []).filter(h => h.action === 'change').length; return n > 0 ? ` · prodaná verze změněna ${n}×, naposledy ${fmtDate(rz.changedAt)}${rz.changedBy ? ' – ' + rz.changedBy : ''}` : ''; })()}
         </div>
         <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
           <thead><tr><th style={{ ...th, textAlign: 'left' }}>Skupina</th><th style={th}>DBL / os.</th><th style={th}>SNGL / os.</th></tr></thead>
@@ -195,8 +196,10 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
       <ServicesByKind offerId={offerId} colors={colors} card={card} cnt={cnt} itemsCount={items.length}
         byKind={byKind} kindOrder={kindOrder} nLate={nLate} nWarn={nWarn} nNoKind={nNoKind} nSuggest={nSuggest} rowsK={rowsK} />
 
+      <DepositsBlock offer={offer} offerId={offerId} navigate={navigate} colors={colors} card={card} />
+
       <div style={{ ...card, background: '#F7F6F3', color: colors.muted, fontSize: 13 }}>
-        Další kroky Realizace (připravujeme): finální počet osob a pokoje · platby dodavatelům · rooming list · vouchery · kontrolní seznam před odjezdem.
+        Další kroky Realizace (připravujeme): finální počet osob a pokoje · kontrola faktur hotelů · rooming list · vouchery · kontrolní seznam před odjezdem.
       </div>
     </div>
   );
@@ -272,6 +275,8 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
                   </span>
                   <span style={{ color: colors.muted, minWidth: 140, fontSize: 12 }}>
                     {it.dateFrom ? fmtDate(it.dateFrom) : ''}{it.dateTo && it.dateTo !== it.dateFrom ? ` – ${fmtDate(it.dateTo)}` : ''}{it.nights ? ` · ${it.nights} n.` : ''}
+                    {it.subType === 'hotel' && it.trplOffer === 'yes' && <span style={{ marginLeft: 6, color: '#1a3a5c' }}>· TRPL ✓{String(it.trplPrice || '').trim() ? ` ${it.trplPrice} ${it.currency || 'EUR'}` : ''}</span>}
+                    {it.subType === 'hotel' && it.trplOffer === 'no' && <span style={{ marginLeft: 6, color: '#c2410c', fontWeight: 700 }}>· TRPL ✕</span>}
                   </span>
                   <span style={{ fontSize: 11, minWidth: 150 }}>
                     {it.optionDate ? <span style={{ color: '#c2410c' }}>Opce {fmtDate(it.optionDate)} </span> : null}
@@ -324,6 +329,66 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
         );
       })}
       {itemsCount === 0 && <div style={{ fontSize: 13, color: colors.muted }}>V nabídce nejsou žádné zaškrtnuté služby.</div>}
+    </div>
+  );
+}
+
+// ── Zálohy dodavatelům: co je po splatnosti, co se blíží, co je zaplaceno ──
+// Jen přehled — data jsou na kartách v nabídce (jedno místo), upravují se tam,
+// aby se nic nepřepsalo souběžnou úpravou. Tlačítko otevře nabídku.
+function DepositsBlock({ offer, offerId, navigate, colors, card }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const list = allDeposits(offer.items, today);
+  const order = { overdue: 0, soon: 1, nodue: 2, planned: 3, paid: 4 };
+  list.sort((a, b) => (order[a.status] - order[b.status]) || String(a.row.due || a.row.date || '').localeCompare(String(b.row.due || b.row.date || '')));
+  const byCur = {};
+  list.forEach(d => {
+    const c = byCur[d.currency] = byCur[d.currency] || { total: 0, paid: 0, open: 0 };
+    c.total += d.amount; if (d.status === 'paid') c.paid += d.amount; else c.open += d.amount;
+  });
+  const n = (s) => list.filter(d => d.status === s).length;
+  const fmtN = (v) => (Math.round(v * 100) / 100).toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const label = (it) => [it.city, it.name].filter(Boolean).join(' – ') || '(bez názvu)';
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>💸 Zálohy dodavatelům</div>
+        {n('overdue') > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE.overdue.color, background: DEPOSIT_STYLE.overdue.bg, borderRadius: 6, padding: '2px 8px' }}>⛔ {n('overdue')} po splatnosti</span>}
+        {n('soon') > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE.soon.color, background: DEPOSIT_STYLE.soon.bg, borderRadius: 6, padding: '2px 8px' }}>⏳ {n('soon')} splatné do 14 dní</span>}
+        {n('nodue') > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE.nodue.color, background: DEPOSIT_STYLE.nodue.bg, borderRadius: 6, padding: '2px 8px' }}>❓ {n('nodue')} bez splatnosti</span>}
+        <button onClick={() => navigate('offer-detail', { offerId })} style={{ marginLeft: 'auto', padding: '3px 10px', background: '#fff', color: colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+          Upravit v nabídce
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
+        Zálohy se zapisují na kartách v nabídce („+ záloha“ → částka, splatnost, ✓ zaplaceno). Tady je přehled celé akce.
+      </div>
+      {list.length === 0 ? (
+        <div style={{ fontSize: 13, color: colors.muted }}>Zatím nejsou zapsané žádné zálohy.</div>
+      ) : (
+        <>
+          <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: 'hidden' }}>
+            {list.map((d, i) => {
+              const ds = DEPOSIT_STYLE[d.status];
+              return (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 10px', fontSize: 13, borderTop: i ? `1px solid ${colors.border}` : 'none', borderLeft: `4px solid ${ds.color}`, background: d.status === 'paid' ? 'transparent' : ds.bg }}>
+                  <span style={{ fontWeight: 600, flex: '1 1 220px' }}>{label(d.item)}</span>
+                  <span style={{ minWidth: 110, textAlign: 'right', fontWeight: 700 }}>{fmtN(d.amount)} {d.currency}</span>
+                  <span style={{ minWidth: 140, fontSize: 12 }}>{d.row.due ? `splatnost ${fmtDate(d.row.due)}` : 'splatnost ?'}</span>
+                  <span style={{ minWidth: 190, fontSize: 12, fontWeight: 700, color: ds.color }}>
+                    {ds.icon} {ds.label}{d.status === 'paid' && d.row.date ? ` ${fmtDate(d.row.date)}` : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12 }}>
+            {Object.entries(byCur).map(([c, v]) => (
+              <span key={c}><b>{c}</b>: celkem {fmtN(v.total)} · zaplaceno {fmtN(v.paid)} · <b style={{ color: v.open > 0 ? '#9a3412' : '#27500A' }}>zbývá {fmtN(v.open)}</b></span>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

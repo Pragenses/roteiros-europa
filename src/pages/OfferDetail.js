@@ -12,6 +12,7 @@ import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, 
 import { computeAltDiffs } from '../lib/altPricing';
 import { codeForEmail } from '../lib/people';
 import { loadRatesDoc, effectiveRates, ratesState, refreshFromEcb } from '../lib/rates';
+import { isPaid, depositStatus, depositSummary, DEPOSIT_STYLE } from '../lib/deposits';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -292,32 +293,26 @@ const fillDisplayValue = (key, value) => {
   return value;
 };
 
-// Částka zapsaná ručně může mít desetinnou čárku i mezery mezi tisíci
-// ("10 000,50"). Bez odstranění mezer by parseFloat přečetl jen "10", takže
-// součet záloh vycházel špatně. Čte se tímhle jedním způsobem všude, aby
-// karta i souhrn ukazovaly stejné číslo.
-const readAmount = (v) => {
-  const cleaned = String(v === 0 ? '0' : (v || ''))
-    .replace(/[\s\u00a0\u202f\u2009]/g, '')
-    .replace(',', '.');
-  return parseFloat(cleaned) || 0;
-};
+// Čtení částek (mezery, desetinná čárka) je ve sdíleném lib/deposits.js.
 
 const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
-  // Deposits are paid in INSTALMENTS — hotels and buses alike — so this is a
-  // list, not a single amount. Stored on the item as `deposits`; the currency
-  // is not repeated per row because it always follows the item's own currency.
+  // Zálohy dodavateli: plán i zaplacené (11. 10. 2026). Každá splátka má
+  // splatnost (do kdy zaplatit) a stav ⏳ k zaplacení / ✅ zaplaceno.
+  // Starší řádky bez stavu s vyplněným datem jsou zaplacené (viz lib/deposits).
+  // Měna je vždy měna karty. Do ceny pro klienta se nic nepočítá.
   const rows = Array.isArray(item.deposits) ? item.deposits : [];
   const set = (next) => onChange('deposits', next);
-  const add = () => set([...rows, { id: Date.now() + Math.random(), amount: '', date: '', method: '' }]);
-  const upd = (id, field, v) => set(rows.map(r => (r.id === id ? { ...r, [field]: v } : r)));
+  const add = () => set([...rows, { id: Date.now() + Math.random(), amount: '', due: '', paid: false, date: '', method: '' }]);
+  const upd = (id, patch) => set(rows.map(r => (r.id === id ? { ...r, ...patch } : r)));
   const del = (id) => set(rows.filter(r => r.id !== id));
-  const total = rows.reduce((s, r) => s + readAmount(r.amount), 0);
+  const sum = depositSummary(item);
   const termsFilled = String(item.depositTerms || '').trim() !== '';
+  const today = new Date().toISOString().slice(0, 10);
 
   const small = { fontSize: 10, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 };
   const lbl = { fontSize: 9, color: colors.muted };
   const cur = item.currency || 'EUR';
+  const r2 = (n) => Math.round(n * 100) / 100;
   // Na hotelové kartě: bez záloh se neukazuje nic (tlačítko „+ záloha“ je
   // jinde na kartě) a podmínky mají vlastní řádek.
   if (rowsOnly && rows.length === 0) return null;
@@ -325,36 +320,52 @@ const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
   return (
     <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
       {rows.map((r, i) => {
-        const filled = String(r.amount || '').trim() !== '';
+        const paid = isPaid(r);
+        const st = depositStatus(r, today);
+        const ds = DEPOSIT_STYLE[st];
         return (
           <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
-                                   padding: '1px 5px', borderRadius: 4,
-                                   background: filled ? '#e8f5e9' : 'transparent' }}>
+                                   padding: '1px 5px', borderRadius: 4, background: ds.bg,
+                                   borderLeft: st === 'empty' ? 'none' : `3px solid ${ds.color}` }}>
             <span style={{ ...lbl, width: 46 }}>{i === 0 ? 'Zálohy:' : ''}</span>
             <input type="text" inputMode="decimal" placeholder="0" value={r.amount || ''}
               onInput={decimalInput}
-              onChange={e => upd(r.id, 'amount', e.target.value)}
-              style={{ ...small, width: 56, textAlign: 'right' }} />
+              onChange={e => upd(r.id, { amount: e.target.value })}
+              style={{ ...small, width: 64, textAlign: 'right' }} />
             <span style={lbl}>{cur}</span>
-            <span style={{ ...lbl, marginLeft: 2 }}>zaplaceno:</span>
-            <DateDMY dateKey={`dep-${item.id}-${r.id}`} value={r.date || ''} colors={colors}
-              onChange={v => upd(r.id, 'date', v)} />
-            <select value={r.method || ''} onChange={e => upd(r.id, 'method', e.target.value)}
-              title="Čím bylo zaplaceno" style={small}>
-              {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
+            <span style={{ ...lbl, marginLeft: 2 }}>splatnost:</span>
+            <DateDMY dateKey={`due-${item.id}-${r.id}`} value={r.due || ''} colors={colors}
+              onChange={v => upd(r.id, { due: v })} />
+            {paid ? (
+              <>
+                <button type="button" onClick={() => upd(r.id, { paid: false })} title="Kliknutím vrátit na „k zaplacení“"
+                  style={{ ...small, cursor: 'pointer', background: '#e8f5e9', color: '#27500A', fontWeight: 700, borderColor: '#27500A' }}>✅ zaplaceno</button>
+                <DateDMY dateKey={`dep-${item.id}-${r.id}`} value={r.date || ''} colors={colors}
+                  onChange={v => upd(r.id, { date: v })} />
+                <select value={r.method || ''} onChange={e => upd(r.id, { method: e.target.value })}
+                  title="Čím bylo zaplaceno" style={small}>
+                  {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 10, fontWeight: 700, color: ds.color }}>{ds.icon} {st === 'empty' ? 'k zaplacení' : ds.label}</span>
+                <button type="button" onClick={() => upd(r.id, { paid: true, date: r.date || today })} title="Označit jako zaplacené (dnešní datum, jde změnit)"
+                  style={{ ...small, cursor: 'pointer', background: '#fff', color: '#27500A', borderColor: '#27500A' }}>✓ zaplaceno</button>
+              </>
+            )}
             <button type="button" onClick={() => del(r.id)} title="Smazat tuto splátku"
               style={{ ...small, cursor: 'pointer', color: '#b91c1c', background: '#fff', lineHeight: 1 }}>✕</button>
           </div>
         );
       })}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ ...lbl, width: 46 }}>{rows.length === 0 ? 'Zálohy:' : ''}</span>
         <button type="button" onClick={add}
           style={{ ...small, cursor: 'pointer', background: '#fff', color: colors.primary }}>+ splátka</button>
-        {rows.length > 1 && (
+        {sum.total > 0 && (
           <span style={{ fontSize: 10, color: colors.text, fontWeight: 600 }}>
-            celkem {Math.round(total * 100) / 100} {cur}
+            celkem {r2(sum.total)} · zaplaceno {r2(sum.paid)} · <span style={{ color: sum.open > 0 ? '#9a3412' : '#27500A' }}>zbývá {r2(sum.open)}</span> {cur}
           </span>
         )}
       </div>
@@ -1422,7 +1433,7 @@ const HotelSummaryRow = ({ it, colors }) => {
   const st = BOOKING_STATUS.find(o => o.value === itemStatus(it)) || BOOKING_STATUS[0];
 
   const deposits = Array.isArray(it.deposits) ? it.deposits : [];
-  const depositsTotal = deposits.reduce((s, d) => s + readAmount(d.amount), 0);
+  const depSum = depositSummary(it);
 
   const emails = it.contactEmails || (it.contactEmail ? [it.contactEmail] : []);
 
@@ -1515,14 +1526,14 @@ const HotelSummaryRow = ({ it, colors }) => {
             {it.optionDate && <span>Option do <b style={{ color: '#c2410c' }}>{fmtDateBR(it.optionDate)}</b></span>}
             {it.cancellationDeadline && <span>Storno zdarma do <b style={{ color: '#dc2626' }}>{fmtDateBR(it.cancellationDeadline)}</b></span>}
             {it.focRatio && <span>FOC {it.focRatio}{it.focRoomType ? ` (${it.focRoomType.toUpperCase()})` : ''}</span>}
-            {deposits.length > 0 && (
+            {deposits.length > 0 && depSum.total > 0 && (
               <span>
-                Zálohy: <b>{fmtMoney(depositsTotal)} {cur}</b>
-                {' ('}
-                {deposits.map(d => `${fmtMoney(readAmount(d.amount))}${d.date ? ` ${fmtDateBR(d.date)}` : ''}`).join(', ')}
-                {')'}
+                Zálohy: zaplaceno <b>{fmtMoney(depSum.paid)}</b> / {fmtMoney(depSum.total)} {cur}
+                {depSum.open > 0 && <> · <b style={{ color: DEPOSIT_STYLE[depSum.worst === 'paid' ? 'planned' : depSum.worst].color }}>zbývá {fmtMoney(depSum.open)}{depSum.next ? ` (splatnost ${fmtDateBR(depSum.next.due)})` : ''}</b></>}
               </span>
             )}
+            {it.trplOffer === 'yes' && <span>TRPL ✓{it.trplType === 'extrabed' ? ' DBL+přistýlka' : it.trplType === '3beds' ? ' 3 lůžka' : ''}{String(it.trplPrice || '').trim() ? ` ${it.trplPrice} ${cur}/pokoj/noc` : ''}</span>}
+            {it.trplOffer === 'no' && <span style={{ color: '#c2410c', fontWeight: 700 }}>TRPL ✕</span>}
           </div>
 
           {String(it.depositTerms || '').trim() !== '' && (
@@ -4423,9 +4434,35 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                             <option value="dbl">DBL</option>
                           </select>
                         </div>
+                        {/* TRPL — jen interní informace (11. 10. 2026): nepovinné, nepočítá se,
+                            klient ho nikdy nevidí, neukládá se do verzí. */}
+                        <div style={{ ...grp, background: it.trplOffer === 'no' ? '#ffedd5' : 'transparent', borderRadius: 4, padding: it.trplOffer === 'no' ? '1px 4px' : 0 }}
+                          title="Trojlůžkový pokoj — jen pro vás, nic se nepočítá a klient to nevidí">
+                          <span style={{ ...sLbl, color: it.trplOffer === 'no' ? '#c2410c' : sLbl.color }}>TRPL:</span>
+                          <select value={it.trplOffer || ''} onChange={e => updateItem(it.id, 'trplOffer', e.target.value)}
+                            style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${it.trplOffer === 'no' ? '#c2410c' : colors.border}`, borderRadius: 4, color: it.trplOffer === 'no' ? '#c2410c' : 'inherit' }}>
+                            <option value="">— nevím</option>
+                            <option value="yes">✓ nabízí</option>
+                            <option value="no">✕ nenabízí</option>
+                          </select>
+                          {it.trplOffer === 'yes' && (
+                            <>
+                              <select value={it.trplType || ''} onChange={e => updateItem(it.id, 'trplType', e.target.value)}
+                                style={{ fontSize: 11, padding: '2px 4px', border: `1px solid ${colors.border}`, borderRadius: 4 }}>
+                                <option value="">druh?</option>
+                                <option value="3beds">3 lůžka</option>
+                                <option value="extrabed">DBL + přistýlka</option>
+                              </select>
+                              <input type="text" inputMode="decimal" placeholder="cena" value={it.trplPrice || ''} onInput={decimalInput}
+                                onChange={e => updateItem(it.id, 'trplPrice', e.target.value)} title="Cena TRPL pokoje za noc (ve měně hotelu)"
+                                style={{ width: 56, fontSize: 11, padding: '3px 4px', border: `1px solid ${colors.border}`, borderRadius: 4, textAlign: 'right' }} />
+                              <span style={sLbl}>{it.currency || 'EUR'}/pokoj/noc</span>
+                            </>
+                          )}
+                        </div>
                         {deposits.length === 0 && (
-                          <button type="button" title="Přidat zaplacenou zálohu dodavateli"
-                            onClick={() => updateItem(it.id, 'deposits', [{ id: Date.now() + Math.random(), amount: '', date: '', method: '' }])}
+                          <button type="button" title="Přidat zálohu dodavateli (k zaplacení nebo zaplacenou)"
+                            onClick={() => updateItem(it.id, 'deposits', [{ id: Date.now() + Math.random(), amount: '', due: '', paid: false, date: '', method: '' }])}
                             style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${colors.border}`, borderRadius: 4, background: '#fff', cursor: 'pointer', color: colors.primary }}>+ záloha</button>
                         )}
                         <HotelAttachment
@@ -4601,8 +4638,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px 14px', flexWrap: 'wrap' }}>
                       <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
                       {deposits.length === 0 && (
-                        <button type="button" title="Přidat zaplacenou zálohu dodavateli"
-                          onClick={() => updateItem(it.id, 'deposits', [{ id: Date.now() + Math.random(), amount: '', date: '', method: '' }])}
+                        <button type="button" title="Přidat zálohu dodavateli (k zaplacení nebo zaplacenou)"
+                          onClick={() => updateItem(it.id, 'deposits', [{ id: Date.now() + Math.random(), amount: '', due: '', paid: false, date: '', method: '' }])}
                           style={{ fontSize: 11, padding: '2px 6px', border: `1px solid ${colors.border}`, borderRadius: 4, background: '#fff', cursor: 'pointer', color: colors.primary }}>+ záloha</button>
                       )}
                       {(isTicket || isTransportGroup) && (
