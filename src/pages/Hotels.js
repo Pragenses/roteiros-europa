@@ -1,7 +1,8 @@
-// force-rebuild-poslat-sem-log
+// force-rebuild-auto-zpracovani
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, deleteField } from 'firebase/firestore';
+import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -206,9 +207,20 @@ function emailProblem(email) {
   if ((e.match(/@/g) || []).length !== 1) return 'Adresa nemá právě jeden zavináč';
   const dom = e.slice(e.indexOf('@') + 1);
   if (!dom.includes('.')) return 'Doména bez tečky';
-  if (BROKEN_TAIL_RE.test(dom)) return 'Slepená adresa z importu — za koncovkou domény pokračuje text';
+  // looksGlued navíc pozná skutečné dlouhé koncovky (.travel, .design, .group…),
+  // které by jinak vypadaly jako slepené (".tr" + "avel").
+  if (BROKEN_TAIL_RE.test(dom) && looksGlued(dom)) return 'Slepená adresa z importu — za koncovkou domény pokračuje text';
   if (/[^a-zA-Z0-9._%+-]/.test(e.slice(0, e.indexOf('@')))) return 'Neplatný znak před zavináčem';
   return '';
+}
+
+// Problém adresy konkrétního řádku. Adresu, u které automatická kontrola
+// ověřila, že doména opravdu existuje (`emailOkFor`), už za slepenou nepovažuje.
+function rowEmailProblem(r) {
+  const p = emailProblem(r?.email);
+  if (p && p.startsWith('Slepená') && r?.emailOkFor
+      && r.emailOkFor === String(r.email || '').trim().toLowerCase()) return '';
+  return p;
 }
 
 const stripDia = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -249,8 +261,8 @@ function buildCardSuggestions(rows) {
   const pool = rows.filter(r => !r.cardId && r.email);
 
   // Vadné řádky se do návrhů vůbec nepustí — patří do záložky Kontrola adres.
-  const broken = pool.filter(r => emailProblem(r.email));
-  const clean  = pool.filter(r => !emailProblem(r.email));
+  const broken = pool.filter(r => rowEmailProblem(r));
+  const clean  = pool.filter(r => !rowEmailProblem(r));
 
   // Adresa, která leží na SHARED_EMAIL_MIN a víc řádcích, je rezervační
   // centrála. Nikdy nic nespojuje a smí být na libovolném počtu karet.
@@ -328,7 +340,12 @@ function buildCardSuggestions(rows) {
     const split = g.items.filter(i => i.hasName).map(i => splitNameNote(i.row.name));
     const names = [...new Set(split.map(x => x.name).filter(Boolean))];
     names.sort((a, b) => b.length - a.length);
-    const notes = [...new Set(split.map(x => x.note).filter(Boolean))];
+    // Poznámky z názvu + poznámky, které už automatická oprava z názvu
+    // přesunula do pole `nameNote`.
+    const notes = [...new Set([
+      ...split.map(x => x.note),
+      ...g.items.map(i => String(i.row.nameNote || '').trim()),
+    ].filter(Boolean))];
     const cities = [...new Set(g.items.map(i => i.row.city).filter(Boolean))];
     const emails = [...new Set(g.items.map(i => i.email))];
     return {
@@ -563,7 +580,7 @@ const BUILTIN_TEMPLATES = [
 ];
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v212-poslat-sem-log');
+  console.debug('Hotels v213-auto-zpracovani');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -765,9 +782,9 @@ export default function Hotels({ navigate, colors, navParams }) {
   // Vytvoří JEDNU kartu ze skupiny řádků a napojí na ni ty řádky.
   // Řádky v `hotels` zůstávají beze změny až na přidané `cardId` — rozesílání
   // poptávek na ně sahá dál stejně jako dosud.
-  const createCardFromGroup = async (g) => {
+  const cardDataFromGroup = (g, source) => {
     const emails = [...new Set(g.rows.map(r => String(r.email || '').toLowerCase()).filter(Boolean))];
-    const ref = await addDoc(collection(db, 'hotelCards'), {
+    return {
       name: g.name,
       city: g.city || '',
       country: '',
@@ -779,9 +796,13 @@ export default function Hotels({ navigate, colors, navParams }) {
       notes: (g.notes || []).join(' · '),
       // Původ údajů — odkud se karta vzala. Podrobné ⓘ u jednotlivých polí
       // přibude s detailem karty; tohle je jeho základ.
-      source: { type: 'hotels-db', label: 'Z databáze hotelů', at: new Date().toISOString() },
+      source: source || { type: 'hotels-db', label: 'Z databáze hotelů', at: new Date().toISOString() },
       createdAt: serverTimestamp(),
-    });
+    };
+  };
+
+  const createCardFromGroup = async (g) => {
+    const ref = await addDoc(collection(db, 'hotelCards'), cardDataFromGroup(g));
     for (const r of g.rows) {
       await updateDoc(doc(db, 'hotels', r.id), { cardId: ref.id });
     }
@@ -836,6 +857,275 @@ export default function Hotels({ navigate, colors, navParams }) {
     setCardBusy('');
   };
 
+  // ── 🤖 AUTOMATICKÉ ZPRACOVÁNÍ (etapa 1, bez AI) ─────────────────────────────
+  // Jedním tlačítkem: úplné duplicity do archivu, oprava slepených a
+  // neuklizených adres (doména se ověří na internetu), poznámky z názvů do
+  // poznámky a karty pro jisté shody a hotely v řetězcích.
+  // Každá změna se zapíše do deníku `hotelAutoFixes` i s původní hodnotou,
+  // takže jde jednotlivě vrátit (↩) nebo upravit (✏). Řádky, které někdo
+  // upravil ručně (`manualEdit`), automatika nikdy nepřepíše.
+  const [autoBusy, setAutoBusy]   = useState('');
+  const [fixLog, setFixLog]       = useState([]);
+  const [fixLogAll, setFixLogAll] = useState(false);
+
+  const fetchFixLog = useCallback(async () => {
+    try {
+      const snap = await getDocs(collection(db, 'hotelAutoFixes'));
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      items.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+      setFixLog(items);
+    } catch (e) {
+      console.error('Deník automatických oprav se nepodařilo načíst:', e);
+    }
+  }, []);
+  useEffect(() => { if (tab === 'clean') fetchFixLog(); }, [tab, fetchFixLog]);
+
+  // Zápis po dávkách. Jedna "jednotka" = všechny zápisy jedné opravy (řádek +
+  // záznam v deníku); jednotka se nikdy nerozdělí do dvou dávek, takže nemůže
+  // vzniknout oprava bez záznamu v deníku.
+  const commitUnits = async (units, label) => {
+    let batch = writeBatch(db), n = 0, done = 0;
+    for (const ops of units) {
+      if (n > 0 && n + ops.length > 450) {
+        await batch.commit();
+        batch = writeBatch(db); n = 0;
+        setAutoBusy(`${label}: ${done} z ${units.length}…`);
+      }
+      for (const o of ops) {
+        if (o.t === 'set') batch.set(o.ref, o.data);
+        else if (o.t === 'update') batch.update(o.ref, o.data);
+        else batch.delete(o.ref);
+      }
+      n += ops.length; done++;
+    }
+    if (n) await batch.commit();
+  };
+
+  const handleAutoRun = async () => {
+    if (!window.confirm(
+      '🤖 Automatické zpracování databáze hotelů\n\n' +
+      '• sloučí úplné duplicity (stejná adresa, název i město) — přebytečné řádky jdou do archivu\n' +
+      '• opraví slepené a neuklizené adresy — doménu vždy ověří na internetu\n' +
+      '• přesune poznámky z názvů do interní poznámky\n' +
+      '• vytvoří karty pro jisté shody a hotely v řetězcích\n\n' +
+      'Sporné případy nechá na vás. Každou změnu půjde vrátit nebo upravit.\n\nPokračovat?')) return;
+    const by = auth.currentUser?.email || '';
+    const at = new Date().toISOString();
+    const runId = at;
+    const logRef = () => doc(collection(db, 'hotelAutoFixes'));
+    const stats = { dup: 0, email: 0, verify: 0, name: 0, cards: 0, review: 0 };
+    try {
+      setAutoBusy('Načítám databázi…');
+      const snap = await getDocs(collection(db, 'hotels'));
+      let rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // 1) Úplné duplicity — stejná adresa, název i město.
+      const groups = new Map();
+      for (const r of rows) {
+        const e = String(r.email || '').trim().toLowerCase();
+        if (!e) continue;
+        const k = `${e}|${normName(splitNameNote(r.name).name)}|${normCity(r.city)}`;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      }
+      const dupUnits = [];
+      const archived = new Set();
+      for (const list of groups.values()) {
+        if (list.length < 2) continue;
+        // Patří k různým kartám → to rozhodne člověk.
+        if (new Set(list.map(r => r.cardId).filter(Boolean)).size > 1) { stats.review++; continue; }
+        const keep = [...list].sort((a, b) =>
+          (b.cardId ? 1 : 0) - (a.cardId ? 1 : 0)
+          || String(b.name || '').length - String(a.name || '').length)[0];
+        for (const r of list) {
+          if (r.id === keep.id) continue;
+          // Řádek s vlastní poznámkou nebo ruční úpravou se nemaže.
+          if (r.manualEdit || (r.nameNote && r.nameNote !== keep.nameNote)) { stats.review++; continue; }
+          const { id, ...data } = r;
+          dupUnits.push([
+            { t: 'set', ref: doc(db, 'hotelsArchive', id), data: { ...data, archivedAt: at, archivedBy: by, duplicateOf: keep.id } },
+            { t: 'delete', ref: doc(db, 'hotels', id) },
+            { t: 'set', ref: logRef(), data: {
+              runId, at, by, kind: 'dup', rowId: id, keepId: keep.id, before: data, undone: false,
+              label: `${r.name || '—'} · ${r.city || ''}`,
+              reason: `Úplná duplicita (${r.email}) — řádek přesunut do archivu, zůstal jeden`,
+            } },
+          ]);
+          archived.add(id);
+        }
+      }
+      stats.dup = dupUnits.length;
+      if (dupUnits.length) await commitUnits(dupUnits, 'Duplicity');
+      rows = rows.filter(r => !archived.has(r.id));
+
+      // 2) Adresy — po pěti najednou, protože ověření domény chvíli trvá.
+      const todo = rows.filter(r => r.email && !r.manualEdit
+        && !(r.emailOkFor && r.emailOkFor === String(r.email).trim().toLowerCase()));
+      const plans = new Map();
+      let idx = 0, checked = 0;
+      setAutoBusy(`Kontroluji adresy 0 z ${todo.length}…`);
+      const worker = async () => {
+        while (idx < todo.length) {
+          const r = todo[idx++];
+          try { plans.set(r.id, await planEmailFix(r.email, { needsAttention: !!rowEmailProblem(r) })); }
+          catch { plans.set(r.id, null); }
+          checked++;
+          if (checked % 25 === 0) setAutoBusy(`Kontroluji adresy ${checked} z ${todo.length}…`);
+        }
+      };
+      await Promise.all([1, 2, 3, 4, 5].map(worker));
+
+      const fixUnits = [];
+      for (const r of todo) {
+        const p = plans.get(r.id);
+        if (!p) continue;
+        const label = `${r.name || '—'} · ${r.city || ''}`;
+        if (p.action === 'review') { stats.review++; continue; }
+        if (p.action === 'verify') {
+          const ok = String(r.email).trim().toLowerCase();
+          fixUnits.push([
+            { t: 'update', ref: doc(db, 'hotels', r.id), data: { emailOkFor: ok } },
+            { t: 'set', ref: logRef(), data: { runId, at, by, kind: 'verify', rowId: r.id, label, before: { email: r.email }, after: { email: r.email }, reason: p.reason, undone: false } },
+          ]);
+          stats.verify++;
+        } else if (p.action === 'fix') {
+          // Řádek už na kartě — karta má adresu u sebe, tak ho nechat člověku.
+          if (r.cardId) { stats.review++; continue; }
+          fixUnits.push([
+            { t: 'update', ref: doc(db, 'hotels', r.id), data: { email: p.email } },
+            { t: 'set', ref: logRef(), data: { runId, at, by, kind: 'email', rowId: r.id, label, before: { email: r.email }, after: { email: p.email }, reason: p.reason, undone: false } },
+          ]);
+          stats.email++;
+        }
+      }
+
+      // 3) Názvy s poznámkou.
+      for (const r of rows) {
+        if (r.manualEdit || !String(r.name || '').trim()) continue;
+        const p = planNameFix(r.name, { splitNameNote, stripLead, NOTE_HINT });
+        if (!p) continue;
+        if (p.action === 'review') { stats.review++; continue; }
+        const prevNote = String(r.nameNote || '').trim();
+        const newNote = p.note && !prevNote.includes(p.note) ? (prevNote ? `${prevNote} · ${p.note}` : p.note) : prevNote;
+        fixUnits.push([
+          { t: 'update', ref: doc(db, 'hotels', r.id), data: { name: p.name, nameNote: newNote } },
+          { t: 'set', ref: logRef(), data: {
+            runId, at, by, kind: 'name', rowId: r.id, label: `${r.email || ''} · ${r.city || ''}`,
+            before: { name: r.name || '', nameNote: r.nameNote || '' }, after: { name: p.name, nameNote: newNote },
+            reason: p.reason, undone: false,
+          } },
+        ]);
+        stats.name++;
+      }
+      if (fixUnits.length) await commitUnits(fixUnits, 'Ukládám opravy');
+
+      // 4) Karty pro jisté shody a hotely v řetězcích — z čerstvých dat.
+      setAutoBusy('Zakládám karty…');
+      const fresh = (await getDocs(collection(db, 'hotels'))).docs.map(d => ({ id: d.id, ...d.data() }));
+      const sug = buildCardSuggestions(fresh);
+      const toCreate = [...sug.green, ...sug.chain];
+      const cardIds = [];
+      const cardUnits = toCreate.map(g => {
+        const ref = doc(collection(db, 'hotelCards'));
+        cardIds.push(ref.id);
+        return [
+          { t: 'set', ref, data: cardDataFromGroup(g, { type: 'auto', label: '🤖 Automaticky z databáze hotelů', at, runId }) },
+          ...g.rows.map(r => ({ t: 'update', ref: doc(db, 'hotels', r.id), data: { cardId: ref.id } })),
+        ];
+      });
+      if (cardUnits.length) {
+        await commitUnits(cardUnits, 'Zakládám karty');
+        await setDoc(logRef(), {
+          runId, at, by, kind: 'cards', cardIds, label: `${cardIds.length} karet`,
+          reason: `Karty pro jisté shody (${sug.green.length}) a hotely v řetězcích (${sug.chain.length})`, undone: false,
+        });
+      }
+      stats.cards = cardIds.length;
+
+      await Promise.all([fetchHotels(), fetchCards(), fetchFixLog()]);
+      setAutoBusy('');
+      alert(
+        '🤖 Hotovo.\n\n' +
+        `Duplicit sloučeno: ${stats.dup}\n` +
+        `Adres opraveno: ${stats.email}\n` +
+        `Adres ověřeno jako v pořádku: ${stats.verify}\n` +
+        `Názvů vyčištěno: ${stats.name}\n` +
+        `Karet vytvořeno: ${stats.cards}\n\n` +
+        `Ponecháno k ručnímu rozhodnutí: ${stats.review}\n\n` +
+        'Všechny změny najdete v přehledu „🤖 Automatické opravy" a každou jde vrátit.');
+    } catch (e) {
+      setAutoBusy('');
+      await Promise.all([fetchHotels(), fetchCards(), fetchFixLog()]);
+      alert('Zpracování se přerušilo: ' + e.message + '\n\nCo se stihlo, je zapsané v přehledu oprav a jde vrátit. Můžete spustit znovu — pokračuje se tam, kde to skončilo.');
+    }
+  };
+
+  const handleUndoFix = async (f) => {
+    if (!window.confirm(`Vrátit tuto změnu?\n\n${f.label || ''}\n${f.reason || ''}`)) return;
+    setAutoBusy('Vracím…');
+    try {
+      if (f.kind === 'dup') {
+        await setDoc(doc(db, 'hotels', f.rowId), f.before);
+        await deleteDoc(doc(db, 'hotelsArchive', f.rowId));
+      } else if (f.kind === 'cards') {
+        const ids = new Set(f.cardIds || []);
+        const snap = await getDocs(collection(db, 'hotels'));
+        const units = [];
+        snap.docs.forEach(d => { if (ids.has(d.data().cardId)) units.push([{ t: 'update', ref: d.ref, data: { cardId: '' } }]); });
+        ids.forEach(id => units.push([{ t: 'delete', ref: doc(db, 'hotelCards', id) }]));
+        await commitUnits(units, 'Ruším karty');
+      } else {
+        const row = hotels.find(h => h.id === f.rowId);
+        if (!row) throw new Error('Řádek už v databázi není.');
+        const ref = doc(db, 'hotels', f.rowId);
+        if (f.kind === 'email') {
+          if (row.cardId) throw new Error('Řádek už patří ke kartě — nejdřív kartu zrušte, nebo použijte ✏ Upravit.');
+          await updateDoc(ref, { email: f.before.email });
+        } else if (f.kind === 'verify') {
+          await updateDoc(ref, { emailOkFor: deleteField() });
+        } else if (f.kind === 'name') {
+          await updateDoc(ref, { name: f.before.name || '', nameNote: f.before.nameNote ? f.before.nameNote : deleteField() });
+        }
+      }
+      await updateDoc(doc(db, 'hotelAutoFixes', f.id), { undone: true, undoneAt: new Date().toISOString(), undoneBy: auth.currentUser?.email || '' });
+      await Promise.all([fetchHotels(), fetchCards(), fetchFixLog()]);
+    } catch (e) {
+      alert('Nepodařilo se vrátit: ' + e.message);
+    }
+    setAutoBusy('');
+  };
+
+  // ✏ Upravit — oprava automatické změny ručně. Řádek se označí jako ručně
+  // upravený a automatika na něj už nesáhne.
+  const handleEditFix = async (f) => {
+    const row = hotels.find(h => h.id === f.rowId);
+    if (!row) { alert('Řádek už v databázi není.'); return; }
+    const ref = doc(db, 'hotels', f.rowId);
+    try {
+      let editedTo;
+      if (f.kind === 'email') {
+        const v = window.prompt('Upravit adresu:', row.email || '');
+        if (v == null) return;
+        const val = v.trim().toLowerCase();
+        const problem = emailProblem(val);
+        if (problem) { alert('Takhle to pořád nesedí: ' + problem); return; }
+        await updateDoc(ref, { email: val, manualEdit: true });
+        editedTo = { email: val };
+      } else if (f.kind === 'name') {
+        const v = window.prompt('Název hotelu:', row.name || '');
+        if (v == null) return;
+        const n = window.prompt('Interní poznámka (co bylo v názvu navíc):', row.nameNote || '');
+        if (n == null) return;
+        await updateDoc(ref, { name: v.trim(), nameNote: n.trim(), manualEdit: true });
+        editedTo = { name: v.trim(), nameNote: n.trim() };
+      } else return;
+      await updateDoc(doc(db, 'hotelAutoFixes', f.id), { edited: true, editedTo, editedAt: new Date().toISOString(), editedBy: auth.currentUser?.email || '' });
+      await Promise.all([fetchHotels(), fetchFixLog()]);
+    } catch (e) {
+      alert('Nepodařilo se uložit: ' + e.message);
+    }
+  };
+
   // Oprava jedné vadné adresy přímo v databázi hotelů. Mění se jen ten jeden
   // řádek, na kartách ani na rozesílání se nic dalšího nedotýká.
   const handleFixEmail = async (row) => {
@@ -846,8 +1136,19 @@ export default function Hotels({ navigate, colors, navParams }) {
     const newName = String(nameEdit[row.id] ?? row.name ?? '').trim();
     setCardBusy(row.id);
     try {
-      const patch = { email: val };
-      if (newName !== String(row.name || '').trim()) patch.name = newName;
+      // Ručně opravený řádek už automatické zpracování nepřepíše.
+      const patch = { email: val, manualEdit: true };
+      if (newName !== String(row.name || '').trim()) {
+        patch.name = newName;
+        // Poznámka, která byla schovaná v původním názvu ("neberou skupiny"),
+        // se při přepsání názvu nesmí ztratit — uloží se do `nameNote` a při
+        // zakládání karty se z ní stane interní poznámka.
+        const oldNote = splitNameNote(row.name).note;
+        if (oldNote && !newName.includes(oldNote)) {
+          const prev = String(row.nameNote || '').trim();
+          if (!prev.includes(oldNote)) patch.nameNote = prev ? `${prev} · ${oldNote}` : oldNote;
+        }
+      }
       await updateDoc(doc(db, 'hotels', row.id), patch);
       setFixEdit(prev => { const n = { ...prev }; delete n[row.id]; return n; });
       setNameEdit(prev => { const n = { ...prev }; delete n[row.id]; return n; });
@@ -1161,7 +1462,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     const out = [];
     for (const h of hotels) {
       const e = String(h.email || '').toLowerCase();
-      const problem = emailProblem(h.email);
+      const problem = rowEmailProblem(h);
       if (problem) { out.push({ row: h, kind: 'bad', problem }); continue; }
       if (!isRealName(h.name)) { out.push({ row: h, kind: 'name', problem: 'Chybí název hotelu — ve sloupci je ' + (h.name ? `"${h.name}"` : 'prázdno') }); continue; }
       if (nameHasNote(h.name)) {
@@ -1639,7 +1940,7 @@ export default function Hotels({ navigate, colors, navParams }) {
               Databáze hotelů má <strong>jeden řádek na emailovou adresu</strong>, takže jeden hotel se třemi
               adresami je v ní třikrát. Karta ty řádky spojí do <strong>jednoho hotelu</strong>.
               Původní řádky se nemažou ani nemění a rozesílání poptávek funguje dál úplně stejně.
-              Nic se nespojí samo — každou kartu odklepneš ty a jde kdykoliv zrušit.
+              Jisté shody umí založit i tlačítko 🤖 Zpracovat automaticky v Kontrole adres; každá karta jde kdykoliv zrušit.
             </p>
           </div>
 
@@ -1899,6 +2200,29 @@ export default function Hotels({ navigate, colors, navParams }) {
             </p>
           </div>
 
+          {/* 🤖 AUTOMATICKÉ ZPRACOVÁNÍ */}
+          <div style={{ ...cardS, marginBottom: '1.2rem', borderColor: '#9fb7e0', background: '#f5f8fe' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 260 }}>
+                <strong style={{ fontSize: 15, color: C.primary }}>🤖 Zpracovat automaticky</strong>
+                <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 0', lineHeight: 1.5 }}>
+                  Sloučí úplné duplicity, opraví slepené adresy (doménu ověří na internetu), přesune
+                  poznámky z názvů a založí karty pro jisté shody. Jen jisté případy — sporné zůstanou
+                  níže. Každou změnu jde vrátit ↩ nebo upravit ✏. Zdarma, bez AI.
+                </p>
+              </div>
+              <button onClick={handleAutoRun} disabled={!!autoBusy || !!cardBusy || loading}
+                style={{ ...btn('#2f5fb3'), opacity: (autoBusy || cardBusy || loading) ? 0.6 : 1 }}>
+                {autoBusy ? '⏳ Pracuji…' : '🤖 Zpracovat automaticky'}
+              </button>
+            </div>
+            {autoBusy && (
+              <div style={{ marginTop: 10, fontSize: 13, color: '#2f5fb3' }}>
+                ⏳ {autoBusy} <span style={{ color: C.muted, fontSize: 12 }}>— nechte stránku otevřenou</span>
+              </div>
+            )}
+          </div>
+
           {loading ? <p style={{ color: C.muted }}>Načítám…</p> : cleanupRows.length === 0 ? (
             <div style={{ ...cardS, textAlign: 'center', color: C.muted, fontSize: 13 }}>
               Databáze je čistá. Není co opravovat.
@@ -1963,6 +2287,72 @@ export default function Hotels({ navigate, colors, navParams }) {
                 Uložit zapíše obojí najednou — název i adresu. Poznámky vytažené z názvu se při
                 zakládání karty neztratí, uloží se na kartu jako interní poznámka.
               </p>
+            </div>
+          )}
+
+          {/* 🤖 PŘEHLED AUTOMATICKÝCH OPRAV */}
+          {fixLog.length > 0 && (
+            <div style={{ ...cardS, marginTop: '1.2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+                <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>
+                  🤖 Automatické opravy ({fixLog.filter(f => !f.undone).length})
+                </h3>
+                {fixLog.length > 50 && (
+                  <button onClick={() => setFixLogAll(v => !v)}
+                    style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>
+                    {fixLogAll ? 'zobrazit jen posledních 50' : `zobrazit všech ${fixLog.length}`}
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
+                ↩ vrátí změnu do původního stavu · ✏ umožní ji opravit ručně (řádek pak automatika už nepřepíše)
+              </p>
+              <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr>
+                    <th style={thS}>Kdy</th><th style={thS}>Co</th><th style={thS}>Řádek</th>
+                    <th style={thS}>Změna</th><th style={thS}></th>
+                  </tr></thead>
+                  <tbody>
+                    {(fixLogAll ? fixLog : fixLog.slice(0, 50)).map(f => {
+                      const what = { dup: '⚪ Duplicita', email: '🔴 Adresa', verify: '✅ Adresa ověřena', name: '🟡 Název', cards: '🗂 Karty' }[f.kind] || f.kind;
+                      const change = f.kind === 'email'
+                        ? <><span style={{ textDecoration: 'line-through', color: C.muted }}>{f.before?.email}</span> → <strong>{f.after?.email}</strong></>
+                        : f.kind === 'name'
+                          ? <><span style={{ textDecoration: 'line-through', color: C.muted }}>{f.before?.name || '—'}</span> → <strong>{f.after?.name || '(bez názvu)'}</strong>
+                              {f.after?.nameNote && <div style={{ fontSize: 11, color: C.muted }}>poznámka: {f.after.nameNote}</div>}</>
+                          : f.kind === 'dup' ? <span>{f.before?.email}</span>
+                          : f.kind === 'verify' ? <span>{f.before?.email}</span>
+                          : <span>{(f.cardIds || []).length} karet</span>;
+                      return (
+                        <tr key={f.id} style={{ borderBottom: `1px solid ${C.border}`, opacity: f.undone ? 0.5 : 1 }}>
+                          <td style={{ ...tdS, fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>
+                            {f.at ? new Date(f.at).toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                          </td>
+                          <td style={{ ...tdS, fontSize: 12, whiteSpace: 'nowrap' }}>{what}</td>
+                          <td style={{ ...tdS, fontSize: 12 }}>{f.label}</td>
+                          <td style={{ ...tdS, fontSize: 12 }}>
+                            {change}
+                            <div style={{ fontSize: 11, color: C.muted }}>{f.reason}</div>
+                            {f.edited && <div style={{ fontSize: 11, color: '#2e7d32' }}>✏ upraveno ručně</div>}
+                            {f.undone && <div style={{ fontSize: 11, color: '#b00020' }}>↩ vráceno</div>}
+                          </td>
+                          <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {!f.undone && (f.kind === 'email' || f.kind === 'name') && (
+                              <button onClick={() => handleEditFix(f)} disabled={!!autoBusy}
+                                style={{ ...smallBtn(C.primary), opacity: autoBusy ? 0.5 : 1, marginRight: 6 }}>✏ Upravit</button>
+                            )}
+                            {!f.undone && (
+                              <button onClick={() => handleUndoFix(f)} disabled={!!autoBusy}
+                                style={{ ...smallBtn(C.muted), opacity: autoBusy ? 0.5 : 1 }}>↩ Vrátit</button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
