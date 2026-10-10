@@ -1,9 +1,9 @@
-// force-rebuild-ai-nazvy
+// force-rebuild-ai-overeni
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { namesFromEmails, nameFromWeb } from '../lib/hotelAi';
+import { nameFromWeb } from '../lib/hotelAi';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -581,7 +581,7 @@ const BUILTIN_TEMPLATES = [
 ];
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v215-ai-nazvy');
+  console.debug('Hotels v217-ai-overeni');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1097,6 +1097,9 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [aiBusy, setAiBusy]         = useState('');
   const [aiLimit, setAiLimit]       = useState('500');
   const [aiAttempts, setAiAttempts] = useState({});
+  // ⏹ Zastavit — běh se dokončí u rozpracované adresy a pak skončí; co je
+  // hotové, z toho se rovnou založí karty.
+  const aiStopRef = React.useRef(false);
 
   const aiKey = (email, city) => `${String(email || '').trim().toLowerCase()}|${normCity(city)}`;
   const aiDocId = (k) => encodeURIComponent(k).slice(0, 1400);
@@ -1128,18 +1131,21 @@ export default function Hotels({ navigate, colors, navParams }) {
     let limit = Number(String(aiLimit).replace(',', '.')) || 500;
     if (!window.confirm(
       `🤖 AI doplní chybějící názvy hotelů${maxKeys ? ` — ZKOUŠKA na ${maxKeys} adresách` : ''}.\n\n` +
-      '• nejdřív levně z e-mailové adresy (cca 0,10 Kč za hotel)\n' +
-      '• nejisté ověří na internetu (cca 1–1,50 Kč za hotel)\n' +
+      '• každou adresu ověří chytřejší model na internetu (cca 2 Kč za adresu)\n' +
+      '• kartu založí JEN když webová stránka potvrdí hotel — s odkazem na zdroj\n' +
+      '• nejisté zůstanou v Kontrole s návrhem, rozhodnete vy\n' +
       '• výsledek se zapíše JEN do karet, databáze hotelů zůstane beze změny\n\n' +
       `Limit útraty: ${limit} Kč. Po jeho vyčerpání se zpracování zastaví a zeptá se na nový limit.\n\nPokračovat?`)) return;
     const by = auth.currentUser?.email || '';
     const at = new Date().toISOString();
     const runId = at;
     let spent = 0, stopped = false;
-    const stats = { domain: 0, web: 0, unsure: 0, newCards: 0, addedTo: 0 };
+    aiStopRef.current = false;
+    const stats = { web: 0, unsure: 0, ready: 0, newCards: 0, addedTo: 0 };
 
     // Hlídání limitu. window.prompt zastaví i ostatní souběžná volání.
     const budgetOk = () => {
+      if (aiStopRef.current) { stopped = true; return false; }
       while (spent >= limit) {
         const v = window.prompt(
           `Utraceno ${fmtKc(spent)} Kč — limit ${limit} Kč je vyčerpaný.\n\n` +
@@ -1175,54 +1181,34 @@ export default function Hotels({ navigate, colors, navParams }) {
       keys.sort((a, b) => (attempts.has(a) ? 1 : 0) - (attempts.has(b) ? 1 : 0));
       if (maxKeys) keys = keys.slice(0, maxKeys);
 
-      // 1) Levně z adresy, po 25.
-      const need1 = keys.filter(k => !attempts.has(k));
-      for (let i = 0; i < need1.length && !stopped; i += 25) {
-        if (!budgetOk()) break;
-        setAiBusy(`Názvy z adres: ${i} z ${need1.length} · utraceno ${fmtKc(spent)} Kč`);
-        const chunk = need1.slice(i, i + 25);
-        const items = chunk.map((k, j) => ({ i: j, email: byKey.get(k)[0].email.trim().toLowerCase(), city: byKey.get(k)[0].city || '' }));
-        const r = await namesFromEmails(items);
-        spent += r.cost;
-        const batch = writeBatch(db);
-        chunk.forEach((k, j) => {
-          const res = r.results.find(x => Number(x.i) === j) || {};
-          const name = String(res.name || '').trim();
-          const a = {
-            key: k, email: items[j].email, city: items[j].city,
-            name, sure: res.sure === true && !!name, how: 'domain', source: '',
-            web: false, model: r.model, at: new Date().toISOString(), by,
-          };
-          attempts.set(k, a);
-          batch.set(doc(db, 'hotelAiAttempts', aiDocId(k)), a);
-        });
-        await batch.commit();
-      }
-
-      // 2) Nejisté s internetem, po třech najednou.
-      const need2 = keys.filter(k => { const a = attempts.get(k); return a && !a.sure && !a.web; });
+      // Každou adresu ověří chytřejší model na internetu. Kartu založí jen
+      // tehdy, když webová stránka potvrdí, že adresa patří tomu hotelu
+      // v tom městě — a uloží odkaz na zdroj. Hotové (jisté) výsledky se už
+      // znovu neplatí; nejisté ze starších pokusů se ověří znovu přísněji (v2).
+      const need = keys.filter(k => { const a = attempts.get(k); return !a || (!a.sure && a.v !== 2); });
       let idx = 0, done = 0;
       const worker = async () => {
-        while (!stopped && idx < need2.length) {
+        while (!stopped && idx < need.length) {
           if (!budgetOk()) return;
-          const k = need2[idx++];
-          const a0 = attempts.get(k);
-          const r = await nameFromWeb(a0.email, a0.city);
+          const k = need[idx++];
+          const r0 = byKey.get(k)[0];
+          const a0 = attempts.get(k) || { key: k, email: String(r0.email).trim().toLowerCase(), city: r0.city || '' };
+          const r = await nameFromWeb(a0.email, a0.city, a0.name || '');
           spent += r.cost;
-          const sure = r.sure && !!r.name;
           const a = {
-            ...a0, web: true, webAt: new Date().toISOString(), model: r.model,
-            name: sure ? r.name : (r.name || a0.name), sure,
-            how: sure ? 'web' : a0.how, source: r.source || '',
+            key: k, email: a0.email, city: a0.city,
+            name: r.name, sure: r.sure, how: 'web', source: r.source, evidence: r.evidence,
+            web: true, v: 2, model: r.model, at: new Date().toISOString(), by,
           };
           attempts.set(k, a);
           await setDoc(doc(db, 'hotelAiAttempts', aiDocId(k)), a);
           done++;
-          setAiBusy(`Ověřuji na internetu: ${done} z ${need2.length} · utraceno ${fmtKc(spent)} Kč`);
+          if (a.sure) stats.web++; else stats.unsure++;
+          if (!aiStopRef.current) setAiBusy(`Ověřuji na internetu: ${done} z ${need.length} · utraceno ${fmtKc(spent)} Kč`);
         }
       };
-      if (!stopped && need2.length) {
-        setAiBusy(`Ověřuji na internetu: 0 z ${need2.length} · utraceno ${fmtKc(spent)} Kč`);
+      if (need.length) {
+        setAiBusy(`Ověřuji na internetu: 0 z ${need.length} · utraceno ${fmtKc(spent)} Kč`);
         await Promise.all([1, 2, 3].map(worker));
       }
 
@@ -1239,8 +1225,8 @@ export default function Hotels({ navigate, colors, navParams }) {
       for (const k of keys) {
         const a = attempts.get(k);
         if (!a) continue;
-        if (!a.sure || !a.name) { stats.unsure++; continue; }
-        if (a.how === 'web') stats.web++; else stats.domain++;
+        if (!a.sure || !a.name) continue;
+        stats.ready++;
         const rowsK = byKey.get(k).filter(r => !r.cardId);
         if (!rowsK.length || !normName(a.name)) continue;
         const gk = `${normName(a.name)}|${normCity(rowsK[0].city)}`;
@@ -1293,15 +1279,14 @@ export default function Hotels({ navigate, colors, navParams }) {
         await setDoc(doc(collection(db, 'hotelAutoFixes')), {
           runId, at, by, kind: 'ai-names', cardIds, added, rowIds, costCzk: Math.round(spent * 100) / 100, undone: false,
           label: `AI názvy: ${cardIds.length} nových karet, ${added.length} doplněno do existujících`,
-          reason: `Z adresy: ${stats.domain} · z internetu: ${stats.web} · nejisté: ${stats.unsure} · útrata ${fmtKc(spent)} Kč`,
+          reason: `Ověřeno na internetu: ${stats.web} · nejisté: ${stats.unsure} · útrata ${fmtKc(spent)} Kč`,
         });
       }
       await Promise.all([fetchHotels(), fetchCards(), fetchFixLog(), fetchAiAttempts()]);
       setAiBusy('');
       alert(
-        (stopped ? '⏸ Zastaveno na limitu. Hotová práce je uložená.\n\n' : '🤖 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
-        `Název z adresy: ${stats.domain}\n` +
-        `Název ověřený na internetu: ${stats.web}\n` +
+        (stopped ? '⏹ Zastaveno. Z hotové práce jsou založené karty, zbytek pokračuje při dalším spuštění.\n\n' : '🤖 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
+        `Ověřeno na internetu teď: ${stats.web}\n` +
         `Nejisté (zůstávají v Kontrole s návrhem AI): ${stats.unsure}\n\n` +
         `Nových karet: ${stats.newCards}\n` +
         `Adresy přidané k existující kartě: ${stats.addedTo}\n\n` +
@@ -2474,10 +2459,10 @@ export default function Hotels({ navigate, colors, navParams }) {
               <div style={{ flex: 1, minWidth: 260 }}>
                 <strong style={{ fontSize: 15, color: '#5b3fa0' }}>🤖 AI: doplnit chybějící názvy ({aiTargetCount} adres)</strong>
                 <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 0', lineHeight: 1.5 }}>
-                  U řádků, kde je jen adresa a město, určí AI název hotelu — nejdřív levně z adresy
-                  (cca 0,10 Kč za hotel), nejisté ověří na internetu (cca 1–1,50 Kč za hotel).
-                  Jisté výsledky založí kartu, nejisté zůstanou níže s návrhem. <strong>Jen do karet</strong>,
-                  databáze hotelů beze změny. Za stejnou adresu se nikdy neplatí dvakrát.
+                  U řádků, kde je jen adresa a město, dohledá AI na internetu, kterému hotelu adresa patří
+                  (cca 2 Kč za adresu). Kartu založí <strong>jen s potvrzením z webové stránky</strong> a odkazem
+                  na zdroj; nejisté zůstanou níže s návrhem. <strong>Jen do karet</strong>, databáze hotelů beze změny.
+                  Za potvrzenou adresu se nikdy neplatí dvakrát.
                 </p>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: C.muted }}>
                   Limit útraty:
@@ -2490,10 +2475,17 @@ export default function Hotels({ navigate, colors, navParams }) {
                   style={{ ...btn('#7b5fc4'), opacity: (aiBusy || autoBusy || cardBusy || loading || aiTargetCount === 0) ? 0.6 : 1 }}>
                   Vyzkoušet na 20
                 </button>
-                <button onClick={() => handleAiNames(0)} disabled={!!aiBusy || !!autoBusy || !!cardBusy || loading || aiTargetCount === 0}
-                  style={{ ...btn('#5b3fa0'), opacity: (aiBusy || autoBusy || cardBusy || loading || aiTargetCount === 0) ? 0.6 : 1 }}>
-                  {aiBusy ? '⏳ Pracuji…' : `Zpracovat vše (${aiTargetCount})`}
-                </button>
+                {aiBusy ? (
+                  <button onClick={() => { aiStopRef.current = true; setAiBusy('Zastavuji — dokončuji rozpracované adresy a zakládám karty…'); }}
+                    style={btn('#b00020')}>
+                    ⏹ Zastavit
+                  </button>
+                ) : (
+                  <button onClick={() => handleAiNames(0)} disabled={!!autoBusy || !!cardBusy || loading || aiTargetCount === 0}
+                    style={{ ...btn('#5b3fa0'), opacity: (autoBusy || cardBusy || loading || aiTargetCount === 0) ? 0.6 : 1 }}>
+                    {`Zpracovat vše (${aiTargetCount})`}
+                  </button>
+                )}
               </div>
             </div>
             {aiBusy && (
