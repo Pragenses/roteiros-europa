@@ -1,12 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // AI PRO KARTY HOTELŮ — etapa 2a: doplnění chybějících názvů.
 //
-// Dva průchody:
-//   1) LEVNÝ — model Haiku bez internetu dostane po dávkách adresy + města
-//      a z domény určí název ("info@hotelbern.ch" + Bern → "Hotel Bern").
-//      Jistý je jen tam, kde doména název opravdu obsahuje.
-//   2) S INTERNETEM — jen pro nejisté případy (kódy řetězců, gmail, centrály):
-//      AI dohledá na webu, komu adresa patří, a vrátí odkaz na zdroj.
+// Každá adresa se ověří na internetu chytřejším modelem (Sonnet). Výsledek je
+// "jistý" jen s odkazem na stránku, která hotel potvrzuje. (Levný odhad jen
+// z adresy se v praxi neosvědčil a správnost má přednost před cenou.)
 //
 // Každé volání vrací i cenu v Kč spočtenou z údajů, které posílá Anthropic
 // (počet tokenů a hledání), takže útrata se dá hlídat limitem.
@@ -17,11 +14,15 @@ import { doc, getDoc } from 'firebase/firestore';
 
 export const MODEL_FAST = 'claude-haiku-5-5';
 export const MODEL_FALLBACK = 'claude-sonnet-5';
+// Pojistka, kdyby účet Sonnet 5 neměl k dispozici: model, který aplikace
+// už dnes používá jinde (src/lib/ai.js).
+const MODEL_LAST = 'claude-sonnet-4-6';
 
 // USD za milion tokenů (vstup / výstup).
 const PRICES = {
   'claude-haiku-5-5': { in: 0.10, out: 0.50 },
   'claude-sonnet-5':  { in: 2,    out: 10 },
+  'claude-sonnet-4-6': { in: 3,   out: 15 },
 };
 const WEB_SEARCH_USD = 0.01;   // 10 USD za 1 000 hledání
 export const USD_CZK = 23;     // orientační kurz pro hlídání limitu
@@ -92,11 +93,12 @@ async function callOnce({ model, prompt, web, maxTokens }) {
 // nějakou funkci nepodporuje, použije dražší (Sonnet).
 // Když levný model nějakou funkci odmítne, zapamatuje se to a další volání
 // stejného druhu jdou rovnou na Sonnet (bez zbytečného neúspěšného pokusu).
-const useFallback = { web: false, plain: false };
+const useFallback = { web: false, plain: false, last: false };
 
 export async function callAi(opts) {
   const kind = opts.web ? 'web' : 'plain';
-  let model = useFallback[kind] ? MODEL_FALLBACK : MODEL_FAST;
+  let model = opts.model || (useFallback[kind] ? MODEL_FALLBACK : MODEL_FAST);
+  if (model === MODEL_FALLBACK && useFallback.last) model = MODEL_LAST;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       return await callOnce({ ...opts, model });
@@ -105,47 +107,40 @@ export async function callAi(opts) {
       if (busy) { await sleep(4000 * (attempt + 1)); continue; }
       const unsupported = (e.status === 400 || e.status === 404) && model === MODEL_FAST && /model|tool|support/i.test(e.message);
       if (unsupported) { model = MODEL_FALLBACK; useFallback[kind] = true; continue; }
+      const noModel = (e.status === 400 || e.status === 404) && model === MODEL_FALLBACK && /model/i.test(e.message);
+      if (noModel) { model = MODEL_LAST; useFallback.last = true; continue; }
       throw e;
     }
   }
   throw new Error('AI je přetížená, zkuste to za chvíli znovu.');
 }
 
-// 1) Levný průchod: názvy z adres, po dávkách.
-//    items = [{ i, email, city }] → [{ i, name, sure }]
-export async function namesFromEmails(items) {
+// Ověření na internetu: komu adresa patří. → { name, sure, source, evidence }
+// Vždy chytřejší model (Sonnet) — správnost má přednost před cenou.
+// "Jisté" je výsledek jen se zdrojem (odkazem); bez odkazu se bere jako nejisté.
+export async function nameFromWeb(email, city, hint) {
   const prompt =
-`You help a tour operator identify hotels in its supplier list. Each item is a hotel booking e-mail address and the city it is filed under (city may be written in Czech, Portuguese or upper-case).
-Return ONLY a JSON array, one object per item, in the same order: {"i": <number>, "name": "<hotel name or empty string>", "sure": true|false}
-
-Rules:
-- sure=true ONLY when the e-mail domain itself clearly spells the hotel's own name, e.g. info@hotelbern.ch in Bern -> "Hotel Bern"; reservation@belvedere-hotel.it in Bolzano -> "Hotel Belvedere"; info@kursaal-bern.ch -> "Kursaal Bern".
-- Write the name the way the hotel writes it: proper capitalisation, accents, spaces ("Cappello d'Oro", not "cappellodoro").
-- sure=false for: hotel chains and their booking centres (accor.com, nh-hotels.com, marriott.com, iberostar.com…), codes (h1765@accor.com), free-mail (gmail, hotmail…), agencies, event/MICE departments where the domain is a group name, or whenever you are guessing. Still give your best guess in "name".
-- Never invent a hotel that the address does not point to.
-
-Items:
-${JSON.stringify(items)}`;
-  const r = await callAi({ prompt, web: false, maxTokens: 120 + items.length * 60 });
-  const arr = Array.isArray(r.json) ? r.json : [];
-  return { results: arr, cost: r.cost, model: r.model };
-}
-
-// 2) S internetem: komu adresa patří. → { name, sure, source }
-export async function nameFromWeb(email, city) {
-  const prompt =
-`Find which hotel uses this booking e-mail address. Search the web.
+`A tour operator has this hotel booking e-mail address in its supplier list and needs to know exactly which hotel it belongs to.
 E-mail: ${email}
-City (from our list; may be in Czech/Portuguese/upper-case): ${city || 'unknown'}
+City it is filed under (may be in Czech, Portuguese or upper-case): ${city || 'unknown'}
+${hint ? `Earlier unverified guess (may be wrong): ${hint}\n` : ''}
+Search the web (hotel's own website, contact/imprint page, booking pages, chain hotel pages). Then return ONLY a JSON object:
+{"name": "<official hotel name as the hotel writes it>", "sure": true|false, "source": "<URL of the page that confirms it>", "evidence": "<one short sentence: what on that page confirms it>"}
 
-Return ONLY a JSON object: {"name": "<official hotel name or empty>", "sure": true|false, "source": "<URL of the page that confirms it, or empty>"}
-sure=true ONLY if a web page confirms that this exact e-mail address (or, for a chain code like h1765@accor.com, this hotel code) belongs to that hotel in that city. Otherwise sure=false with your best guess.`;
-  const r = await callAi({ prompt, web: true, maxTokens: 600 });
+Rules — correctness matters more than anything:
+- sure=true ONLY if the page at "source" shows this exact e-mail address, or this exact domain as the hotel's own website, or (for chain codes like h1765@accor.com) the hotel code matching that hotel — AND the hotel is in that city.
+- If the domain belongs to a group, chain, booking centre, agency or several hotels, or the city does not match, or you are not certain: sure=false, but still give your best guess in "name".
+- Never invent a URL. If you have no confirming page, leave "source" empty and set sure=false.`;
+  const r = await callAi({ prompt, web: true, maxTokens: 700, model: MODEL_FALLBACK });
   const j = r.json && !Array.isArray(r.json) ? r.json : {};
+  const name = String(j.name || '').trim();
+  const source = String(j.source || '').trim();
+  const okUrl = /^https?:\/\/[^\s]+\.[^\s]+/i.test(source);
   return {
-    name: String(j.name || '').trim(),
-    sure: j.sure === true,
-    source: String(j.source || '').trim(),
+    name,
+    sure: j.sure === true && !!name && okUrl,
+    source: okUrl ? source : '',
+    evidence: String(j.evidence || '').trim().slice(0, 300),
     cost: r.cost,
     model: r.model,
   };
