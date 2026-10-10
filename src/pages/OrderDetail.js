@@ -4,6 +4,7 @@ import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, query, 
 import { evalAmount } from '../lib/offerCalc';
 import { cityTaxForOrder, r4 } from '../lib/cityTax';
 import { codeForEmail } from '../lib/people';
+import { loadRatesDoc, effectiveRates } from '../lib/rates';
 import { parseServiceText, parseServiceDocument, aiFillProviderFree } from '../lib/ai';
 
 const SERVICE_TYPES = [
@@ -180,21 +181,14 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   };
 
   const fetchLiveRates = useCallback(async () => {
+    // Kurzy z Nastavení → „💱 Kurzy měn“ (jedno místo pro celou aplikaci).
     setRatesLoading(true);
     try {
-      const symbols = Object.keys(DEFAULT_RATES).join(',');
-      const resp = await fetch(`https://api.frankfurter.app/latest?from=EUR&to=${symbols}`);
-      const data = await resp.json();
-      if (data && data.rates) {
-        const newRates = {};
-        Object.entries(data.rates).forEach(([cur, value]) => {
-          if (value > 0) newRates[cur] = 1 / value; // value = "1 EUR = X cur" -> we want "1 cur = ? EUR"
-        });
-        setRates(prev => ({ ...prev, ...newRates }));
-        setRatesUpdatedAt(data.date || new Date().toISOString().slice(0, 10));
-      }
+      const d = await loadRatesDoc();
+      setRates(prev => ({ ...prev, ...effectiveRates(d) }));
+      setRatesUpdatedAt('z Nastavení');
     } catch (err) {
-      console.error('Failed to fetch live exchange rates', err);
+      console.error('Kurzy z Nastavení se nepodařilo načíst — platí výchozí', err);
     }
     setRatesLoading(false);
   }, []);
@@ -1056,7 +1050,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12, color: colors.muted, fontWeight: 600 }}>
-            Exchange rates (→ EUR){ratesUpdatedAt ? ` · ECB ${ratesUpdatedAt}` : ''}:
+            Exchange rates (→ EUR){ratesUpdatedAt ? ` · ${ratesUpdatedAt}` : ''}:
           </div>
           {Object.entries(rates).map(([cur, rate]) => (
             <div key={cur} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

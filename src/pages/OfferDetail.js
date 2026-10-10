@@ -11,6 +11,7 @@ import { isInRealization, soldFromVersion, soldSummary, fmtMoney as rzMoney, fmt
 import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, hotelLabel } from '../lib/hotelAlt';
 import { computeAltDiffs } from '../lib/altPricing';
 import { codeForEmail } from '../lib/people';
+import { loadRatesDoc, effectiveRates, ratesState, refreshFromEcb } from '../lib/rates';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -1655,7 +1656,6 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   const [showShareLink, setShowShareLink] = useState(false);
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
   const [rates, setRates] = useState(DEFAULT_RATES);
-  const [ratesUpdatedAt, setRatesUpdatedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -1701,25 +1701,35 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Kurzy bere nabídka z jednoho místa: Nastavení → „💱 Kurzy měn“ (settings/rates).
+  // Když tam nic není, platí výchozí hodnoty z programu (DEFAULT_RATES) — stejné jako dřív.
+  const [ratesDoc, setRatesDoc] = useState(null);
+  const [ratesBusy, setRatesBusy] = useState(false);
   const fetchLiveRates = useCallback(async () => {
     try {
-      const symbols = Object.keys(DEFAULT_RATES).join(',');
-      const resp = await fetch(`https://api.frankfurter.app/latest?from=EUR&to=${symbols}`);
-      const data = await resp.json();
-      if (data && data.rates) {
-        const newRates = {};
-        Object.entries(data.rates).forEach(([cur, value]) => {
-          if (value > 0) newRates[cur] = 1 / value;
-        });
-        setRates(prev => ({ ...prev, ...newRates }));
-        setRatesUpdatedAt(data.date || '');
-      }
+      const d = await loadRatesDoc();
+      setRatesDoc(d);
+      setRates(effectiveRates(d));
     } catch (err) {
-      console.error('Failed to fetch live exchange rates', err);
+      console.error('Kurzy z Nastavení se nepodařilo načíst — platí výchozí', err);
     }
   }, []);
 
   useEffect(() => { fetchLiveRates(); }, [fetchLiveRates]);
+
+  // „🔄 Načíst kurzy“ v nabídce = totéž tlačítko jako v Nastavení: načte dnešní
+  // kurzy ECB a změní jen ODEMČENÉ měny (pro celou aplikaci), zamčené nechá.
+  const refreshRatesHere = async () => {
+    setRatesBusy(true);
+    try {
+      const d = await refreshFromEcb(ratesDoc);
+      setRatesDoc(d);
+      setRates(effectiveRates(d));
+    } catch (err) {
+      window.alert('Kurzy se nepodařilo načíst: ' + (err.message || err));
+    }
+    setRatesBusy(false);
+  };
 
   // 30-second interval autosave DISABLED — debounced per-field auto-save (updateItem) now handles this more reliably
   // Jediné místo, přes které se nabídka ukládá. Díky tomu lišta nahoře vždycky
@@ -4711,8 +4721,20 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           </button>
           {/* Stav ukládání se ukazuje v liště nahoře, která nemizí. */}
           <div style={{ fontSize: 12, color: colors.muted }}>
-            Exchange rates (→ EUR){ratesUpdatedAt ? ` · ECB ${ratesUpdatedAt}` : ''}: {Object.entries(rates).map(([c, r]) => `${c} ${r.toFixed(4)}`).join(' · ')}
+            Exchange rates (→ EUR): {Object.entries(rates).map(([c, r]) => `${c} ${r.toFixed(4)}`).join(' · ')}
+            {(() => {
+              const st = ratesState(ratesDoc);
+              const locked = Object.values(st.currencies).filter(x => x.locked).length;
+              return <span> · {locked === Object.keys(st.currencies).length ? '🔒 vše zamčeno' : `🔒 ${locked} zamčeno`}{st.ecb ? ` · ECB načteno ${String(st.ecb.date || '').split('-').reverse().join('.')}` : ''} · upravit v Nastavení</span>;
+            })()}
           </div>
+          {userRole === 'owner' && (
+            <button type="button" onClick={refreshRatesHere} disabled={ratesBusy}
+              title="Načte dnešní kurzy ECB. Změní jen odemčené měny (pro celou aplikaci), zamčené zůstanou."
+              style={{ padding: '4px 10px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', color: colors.primary, fontFamily: 'inherit' }}>
+              {ratesBusy ? 'Načítám…' : '🔄 Načíst kurzy'}
+            </button>
+          )}
         </div>
       </div>
 

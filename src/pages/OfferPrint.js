@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { DEFAULT_RATES, computeOfferPricing, evalAmount } from '../lib/offerCalc';
+import { loadRatesDoc, effectiveRates } from '../lib/rates';
 import { isOfferedAlt, altMainOf } from '../lib/hotelAlt';
 import { usedVersionNumbers, versionFileName, versionNoFromName, cleanTypedFileName, saveOfferVersion } from '../lib/offerVersions';
 import coverBase64 from '../lib/coverBase64';
@@ -237,18 +238,12 @@ export default function OfferPrint({ offerId, navigate, colors, isPublic = false
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Kurzy z Nastavení → „💱 Kurzy měn“ (stejné jako v nabídce). Bez přístupu
+  // (veřejný odkaz) nebo bez nastavení platí výchozí hodnoty z programu.
   useEffect(() => {
     (async () => {
-      try {
-        const symbols = Object.keys(DEFAULT_RATES).join(',');
-        const resp = await fetch(`https://api.frankfurter.app/latest?from=EUR&to=${symbols}`);
-        const data = await resp.json();
-        if (data && data.rates) {
-          const newRates = {};
-          Object.entries(data.rates).forEach(([cur, value]) => { if (value > 0) newRates[cur] = 1 / value; });
-          setRates(prev => ({ ...prev, ...newRates }));
-        }
-      } catch (err) { console.error('Failed to fetch rates', err); }
+      try { setRates(effectiveRates(await loadRatesDoc())); }
+      catch (err) { console.error('Kurzy z Nastavení se nepodařilo načíst — platí výchozí', err); }
     })();
   }, []);
 

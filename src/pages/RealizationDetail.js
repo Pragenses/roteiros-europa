@@ -7,6 +7,7 @@ import { KINDS, TRANSPORT, kindById, suggestKind, kindOf as serviceKindOf, deadl
 import { isInRealization, realizationItems, itemStatus, serviceCounts, fmtMoney, fmtDate } from '../lib/realization';
 import { DEFAULT_RATES } from '../lib/offerCalc';
 import { computeOfferRows } from '../lib/offerRows';
+import { loadRatesDoc, effectiveRates } from '../lib/rates';
 
 // Přehled jedné akce v Realizaci. Všechno se čte ŽIVĚ z nabídky
 // (offers/<id>) — žádná kopie. Upravuje se v nabídce („Otevřít nabídku“);
@@ -24,21 +25,13 @@ const STATUS = {
 
 export default function RealizationDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(undefined);
-  // Dnešní kurzy — stejný zdroj jako v nabídce (frankfurter.app), jinak výchozí.
+  // Kurzy z Nastavení → „💱 Kurzy měn“ — stejné jako v nabídce.
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [ratesDate, setRatesDate] = useState('');
   useEffect(() => {
     (async () => {
-      try {
-        const resp = await fetch(`https://api.frankfurter.app/latest?from=EUR&to=${Object.keys(DEFAULT_RATES).join(',')}`);
-        const data = await resp.json();
-        if (data && data.rates) {
-          const r = {};
-          Object.entries(data.rates).forEach(([cur, v]) => { if (v > 0) r[cur] = 1 / v; });
-          setRates(prev => ({ ...prev, ...r }));
-          setRatesDate(data.date || '');
-        }
-      } catch (e) { console.error('Kurzy se nepodařilo načíst', e); }
+      try { setRates(effectiveRates(await loadRatesDoc())); setRatesDate('ok'); }
+      catch (e) { console.error('Kurzy z Nastavení se nepodařilo načíst', e); }
     })();
   }, []);
 
@@ -192,7 +185,7 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
             )}
             <div style={{ fontSize: 11, color: colors.muted, marginTop: 8, lineHeight: 1.5 }}>
               Náklady = na platící osobu ve dvoulůžkovém pokoji, včetně podílu na FOC. „Pevné“ = služby ve stavu Potvrzeno, zbytek je zatím odhad.
-              Kurzy {ratesDate ? `z ${fmtDate(ratesDate)}` : 'výchozí (dnešní se nenačetly)'}.
+              Kurzy {ratesDate ? 'z Nastavení (💱 Kurzy měn)' : 'výchozí z programu (Nastavení se nenačetlo)'}.
               Zisk celkem = zisk na osobu × počet platících osob.
             </div>
           </div>
