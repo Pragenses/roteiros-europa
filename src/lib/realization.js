@@ -77,6 +77,7 @@ export function nextDeadline(offer, today = new Date().toISOString().slice(0, 10
   realizationItems(offer).filter(it => !it.cancelled).forEach(it => {
     const label = [it.city, it.name].filter(Boolean).join(' – ') || 'služba';
     [['optionDate', 'Opce'], ['cancellationDeadline', 'Storno']].forEach(([f, kind]) => {
+      if (f === 'optionDate' && itemStatus(it) === 'confirmed') return; // potvrzené už opci nehlídá
       const d = String(it[f] || '').slice(0, 10);
       if (d.length === 10 && d >= today && (!best || d < best.date)) best = { date: d, kind, label };
     });

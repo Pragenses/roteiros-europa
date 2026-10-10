@@ -30,4 +30,17 @@ export const isConfirmedStray = (it) =>
 export const strayNeedsAction = (it, items, offer) =>
   isConfirmedStray(it) && (!isOfferedAlt(it, items) || offerIsClosed(offer));
 
+// Hlídat opci? (schváleno 11. 10. 2026) — jen u hotelu, který není potvrzený
+// ani zrušený, a je buď zaškrtnutý do kalkulace, nebo je platnou nabídnutou
+// alternativou v otevřené nabídce. Odškrtnuté/nevybrané hotely se nehlídají.
+export const watchOption = (it, items, offer) =>
+  isHotelItem(it) && !!it.optionDate && !it.cancelled && it.bookingStatus !== 'confirmed'
+  && (it.enabled !== false || (isOfferedAlt(it, items) && !offerIsClosed(offer)));
+
+// Hlídat storno lhůtu? — zaškrtnutý nezrušený hotel, nebo potvrzený hotel mimo
+// kalkulaci (ten je potřeba zrušit včas).
+export const watchStorno = (it) =>
+  isHotelItem(it) && !!it.cancellationDeadline && !it.cancelled
+  && (it.enabled !== false || it.bookingStatus === 'confirmed');
+
 export const hotelLabel = (it) => [it.city, it.name].filter(Boolean).join(' – ') || 'hotel bez názvu';
