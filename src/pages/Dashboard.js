@@ -3,6 +3,8 @@ import { db } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
 import { strayNeedsAction } from '../lib/hotelAlt';
+import { allDeposits, DEPOSIT_STYLE, SOON_DAYS } from '../lib/deposits';
+import { fmtMoney } from '../lib/realization';
 
 const STATUS_COLORS = {
   'confirmed': { bg: '#EAF3DE', color: '#27500A' },
@@ -172,9 +174,10 @@ const DASH_PERSON_KEY = 'dashPerson';
 // --- Pořadí sekcí -----------------------------------------------------------
 // Každý přihlášený má své pořadí: v databázi (settings/dashboardLayouts,
 // pole podle kódu osoby) a pro jistotu i v prohlížeči.
-const DEFAULT_SECTION_ORDER = ['stray', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
+const DEFAULT_SECTION_ORDER = ['stray', 'deposits', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
 const SECTION_NAMES = {
   stray: 'Potvrzené hotely mimo výběr',
+  deposits: 'Zálohy k zaplacení',
   metrics: 'Čísla', attention: 'Vyžaduje pozornost', wip: 'Rozpracované',
   notes: 'Poznámky a úkoly', departures: 'Upcoming departures', quick: 'Quick actions',
 };
@@ -186,8 +189,9 @@ const normalizeOrder = (saved) => {
   const list = Array.isArray(saved) ? saved.filter(id => DEFAULT_SECTION_ORDER.includes(id)) : [];
   const unique = list.filter((id, i) => list.indexOf(id) === i);
   const missing = DEFAULT_SECTION_ORDER.filter(id => !unique.includes(id));
-  // Upozornění na potvrzené hotely mimo výběr přibude nahoru, ostatní nové sekce na konec.
-  return [...missing.filter(id => id === 'stray'), ...unique, ...missing.filter(id => id !== 'stray')];
+  // Upozornění (hotely mimo výběr, zálohy) přibudou nahoru, ostatní nové sekce na konec.
+  const TOP = ['stray', 'deposits'];
+  return [...missing.filter(id => TOP.includes(id)), ...unique, ...missing.filter(id => !TOP.includes(id))];
 };
 
 function SectionFrame({ id, idx, total, visible, children, colors, onMove, dragState }) {
@@ -229,6 +233,20 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   // Potvrzené hotely mimo výběr pro kalkulaci (alternativy) ze všech nabídek.
   const [strayHotels, setStrayHotels] = useState([]);
   const [balanceTasks, setBalanceTasks] = useState([]);
+  // Nezaplacené zálohy dodavatelům: po splatnosti a splatné do 14 dní (+ počet bez splatnosti).
+  const [depositTasks, setDepositTasks] = useState([]);
+  const [depositNoDue, setDepositNoDue] = useState([]);
+  const [depCollapsed, setDepCollapsed] = useState(() => {
+    try { return localStorage.getItem('dashDepCollapsed') === '1'; } catch (e) { return false; }
+  });
+  const [depShowNoDue, setDepShowNoDue] = useState(false);
+  const toggleDep = () => {
+    setDepCollapsed(v => {
+      const next = !v;
+      try { localStorage.setItem('dashDepCollapsed', next ? '1' : '0'); } catch (e) {}
+      return next;
+    });
+  };
   const [noteBoard, setNoteBoard] = useState([]);
   const [wipOffers, setWipOffers] = useState([]);
   // Čí obsah se na Dashboardu ukazuje. Při prvním otevření přihlášený člověk.
@@ -351,6 +369,33 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
         });
         hTasks.sort((a, b) => a.diff - b.diff);
         setHotelTasks(hTasks);
+
+        // Zálohy dodavatelům — ze všech neodmítnutých nabídek (stejné karty jako
+        // v kontrole před převodem: zaškrtnuté a nezrušené).
+        const todayStr = dashTodayISO();
+        const dTasks = [];
+        const dNoDue = [];
+        allOffers
+          .filter(o => userRole !== 'limited' || (o.allowedUsers || []).includes(userEmail))
+          .forEach(offer => {
+            const items = (offer.items || []).filter(it => it.enabled !== false && !it.cancelled);
+            allDeposits(items, todayStr).forEach(d => {
+              if (!['overdue', 'soon', 'nodue'].includes(d.status)) return;
+              const due = String(d.row.due || '').slice(0, 10);
+              const t = {
+                key: offer.id + '-' + d.item.id + '-' + (d.row.id || due), offerId: offer.id, itemId: d.item.id,
+                offerLabel: [offer.offerNumber, offer.name].filter(Boolean).join(' · ') || '(bez názvu)',
+                clientName: offer.clientName || '',
+                cardLabel: [d.item.city, d.item.name].filter(Boolean).join(' – ') || 'služba bez názvu',
+                amount: d.amount, currency: d.currency, due, status: d.status,
+                diff: due.length === 10 ? Math.round((new Date(due + 'T12:00:00') - new Date(todayStr + 'T12:00:00')) / 86400000) : null,
+              };
+              (d.status === 'nodue' ? dNoDue : dTasks).push(t);
+            });
+          });
+        dTasks.sort((a, b) => a.due.localeCompare(b.due));
+        setDepositTasks(dTasks);
+        setDepositNoDue(dNoDue);
 
         // Potvrzené, ale nezaškrtnuté a nezrušené hotely — ze VŠECH nabídek,
         // i odmítnutých a už převedených na zakázku (tam se alternativa
@@ -558,8 +603,40 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   );
 
   // ── Sekce Dashboardu (pořadí si každý nastaví sám) ─────────────────
+  // Otevře nabídku a sjede rovnou na kartu se zálohou.
+  const openCard = (offerId, itemId) => {
+    try { sessionStorage.setItem('focusCard', JSON.stringify({ offerId, itemId })); } catch (e) {}
+    navigate('offer-detail', { offerId });
+  };
+  const depTotals = (list) => {
+    const t = {};
+    list.forEach(d => { t[d.currency] = (t[d.currency] || 0) + d.amount; });
+    return Object.entries(t).map(([c, a]) => `${fmtMoney(a)} ${c}`).join(' · ');
+  };
+  const depOverdue = depositTasks.filter(d => d.status === 'overdue');
+  const depSoon = depositTasks.filter(d => d.status === 'soon');
+  const DepRow = ({ d }) => {
+    const ds = DEPOSIT_STYLE[d.status];
+    const when = d.diff === null ? 'chybí splatnost'
+      : d.diff < 0 ? `${-d.diff} dní po splatnosti` : d.diff === 0 ? 'splatné DNES' : `splatné za ${d.diff} dní`;
+    return (
+      <div onClick={() => openCard(d.offerId, d.itemId)} title="Otevřít kartu v nabídce"
+        style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '7px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13, borderLeft: `4px solid ${ds.color}` }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: ds.color, width: 150, flexShrink: 0 }}>
+          {ds.icon} {when}
+        </span>
+        <span style={{ fontWeight: 700, color: colors.text, whiteSpace: 'nowrap' }}>{fmtMoney(d.amount)} {d.currency}</span>
+        <span style={{ fontWeight: 600, color: colors.text }}>{d.cardLabel}</span>
+        <span style={{ color: colors.muted, fontSize: 12, marginLeft: 'auto' }}>
+          {d.due ? `do ${d.due.split('-').reverse().join('.')} · ` : ''}{d.offerLabel}{d.clientName ? ` · ${d.clientName}` : ''}
+        </span>
+      </div>
+    );
+  };
+
   const SECTION_VISIBLE = {
     stray: strayHotels.length > 0,
+    deposits: depositTasks.length > 0 || depositNoDue.length > 0,
     metrics: true, attention: hotelTasks.length > 0 || balanceTasks.length > 0,
     wip: !loading, notes: boardView.length > 0, departures: true, quick: true,
   };
@@ -595,6 +672,32 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
             </span>
           </div>
         ))}
+      </div>
+    ),
+    deposits: (
+      <div style={{ background: '#FFF5F5', border: `2px solid ${depOverdue.length ? '#b91c1c' : '#ea580c'}`, borderRadius: 10, padding: depCollapsed ? '0.75rem 1.25rem' : '0.875rem 1.25rem', marginBottom: '1.25rem' }}>
+        <div onClick={toggleDep} title={depCollapsed ? 'Rozbalit' : 'Sbalit'}
+          style={{ fontSize: 15, fontWeight: 700, color: '#7f1d1d', marginBottom: depCollapsed ? 0 : 8, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, width: 12 }}>{depCollapsed ? '▸' : '▾'}</span>
+          <span>💸 Zálohy k zaplacení</span>
+          {depOverdue.length > 0 && <span style={{ fontSize: 12, color: DEPOSIT_STYLE.overdue.color, background: DEPOSIT_STYLE.overdue.bg, borderRadius: 6, padding: '2px 8px' }}>⛔ {depOverdue.length} po splatnosti · {depTotals(depOverdue)}</span>}
+          {depSoon.length > 0 && <span style={{ fontSize: 12, color: DEPOSIT_STYLE.soon.color, background: DEPOSIT_STYLE.soon.bg, borderRadius: 6, padding: '2px 8px' }}>⏳ {depSoon.length} do {SOON_DAYS} dní · {depTotals(depSoon)}</span>}
+          {depositNoDue.length > 0 && <span style={{ fontSize: 12, color: DEPOSIT_STYLE.nodue.color, background: DEPOSIT_STYLE.nodue.bg, borderRadius: 6, padding: '2px 8px' }}>❓ {depositNoDue.length} bez splatnosti</span>}
+        </div>
+        {!depCollapsed && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
+            {depositTasks.map(d => <DepRow key={d.key} d={d} />)}
+            {depositTasks.length === 0 && <div style={{ fontSize: 13, color: colors.muted }}>Nic po splatnosti ani splatného do {SOON_DAYS} dní.</div>}
+            {depositNoDue.length > 0 && (
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                <span onClick={() => setDepShowNoDue(v => !v)} style={{ cursor: 'pointer', color: DEPOSIT_STYLE.nodue.color, textDecoration: 'underline' }}>
+                  {depShowNoDue ? '▾' : '▸'} Zálohy bez data splatnosti ({depositNoDue.length}) — doplňte splatnost na kartě
+                </span>
+              </div>
+            )}
+            {depShowNoDue && depositNoDue.map(d => <DepRow key={d.key} d={d} />)}
+          </div>
+        )}
       </div>
     ),
     metrics: (

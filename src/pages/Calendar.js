@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { PEOPLE } from '../lib/people';
+import { allDeposits } from '../lib/deposits';
+import { fmtMoney } from '../lib/realization';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const CLIENT_PALETTE = ['#E6F1FB','#FAEEDA','#EAF3DE','#EEEDFE','#FCEBEB','#F1EFE8','#FCF0E8','#E8F5F1','#F5E8F5','#E8EEF5'];
@@ -14,9 +16,10 @@ const FILTERS = [
   { key: 'option',  icon: '⏳', label: '⏳ Opce hotelů',      bg: '#FEF9C3', color: '#854d0e' },
   { key: 'storno',  icon: '✂',  label: '✂ Storno lhůty',     bg: '#E0F2FE', color: '#075985' },
   { key: 'alt',     icon: '⚠',  label: '⚠ Alternativy',      bg: '#FFF7ED', color: '#9a3412' },
+  { key: 'deposit', icon: '💸', label: '💸 Zálohy',           bg: '#FDECEC', color: '#9f1239' },
   { key: 'task',    icon: '✅', label: '✅ Úkoly',            bg: '#EAF3DE', color: '#27500A' },
 ];
-const DEFAULT_FILTERS = { orders: true, offers: true, option: true, storno: true, alt: true, task: true, client: '', person: 'ALL' };
+const DEFAULT_FILTERS = { orders: true, offers: true, option: true, storno: true, alt: true, deposit: true, task: true, client: '', person: 'ALL' };
 const FILTER_KEY = 'calFilters';
 
 const ymd = (d) => String(d || '').slice(0, 10);
@@ -53,6 +56,12 @@ export const buildDeadlines = (offers) => {
       }
     });
     if (offer.declined) return;
+    // Nezaplacené zálohy dodavatelům v den splatnosti (zaškrtnuté, nezrušené karty).
+    allDeposits((offer.items || []).filter(it => it.enabled !== false && !it.cancelled)).forEach(d => {
+      if (d.status === 'paid' || d.status === 'nodue') return;
+      const card = [d.item.city, d.item.name].filter(Boolean).join(' – ') || 'služba';
+      list.push({ ...base, kind: 'deposit', date: ymd(d.row.due), text: `Záloha ${fmtMoney(d.amount)} ${d.currency} · ${card}`, itemId: d.item.id });
+    });
     (offer.todos || []).forEach(t => {
       if (t.done || !t.due) return;
       list.push({ ...base, kind: 'task', date: ymd(t.due), text: t.text || 'úkol', who: t.who || '', itemId: t.itemId || '' });
@@ -172,7 +181,7 @@ export default function Calendar({ navigate, colors, userRole, userEmail }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: colors.primary, margin: 0 }}>Calendar</h1>
-          <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Odjezdy, termíny hotelů a úkoly po měsících</div>
+          <div style={{ fontSize: 13, color: colors.muted, marginTop: 3 }}>Odjezdy, termíny hotelů, zálohy a úkoly po měsících</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button onClick={() => setYear(y => y - 1)} style={{ padding: '6px 12px', background: 'transparent', border: `1px solid ${colors.border}`, borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14 }}>←</button>
