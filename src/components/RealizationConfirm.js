@@ -34,7 +34,8 @@ export default function RealizationConfirm({ offer, mode, onClose, onConfirm, ge
   }, [offer.id, offer.realization, mode]);
 
   const chosen = (versions || []).find(v => v.id === pick);
-  const currentId = offer.realization && offer.realization.soldVersionId;
+  // „teď prodaná“ jen u akce, která v Realizaci opravdu je (ne po vrácení).
+  const currentId = offer.realization && offer.realization.status === 'active' ? offer.realization.soldVersionId : null;
 
   const checks = useMemo(() => {
     if (!chosen) return [];
