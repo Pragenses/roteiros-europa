@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import { normalizeClientCode, yearTwoDigits } from '../lib/offerNumber';
+import RatesSettings from '../components/RatesSettings';
 
-export default function Settings({ colors }) {
+export default function Settings({ colors, userRole }) {
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
@@ -507,6 +508,9 @@ export default function Settings({ colors }) {
           </div>
         )}
       </div>
+
+      {/* Kurzy měn — vidí všichni, měnit jen vlastníci */}
+      <RatesSettings colors={colors} canEdit={userRole === 'owner'} />
     </div>
   );
 }
