@@ -6,6 +6,8 @@ import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiv
 import { parseServiceText, parseServiceDocument } from '../lib/ai';
 import { ensureOfferNumber } from '../lib/offerNumber';
 import OfferVersions from '../components/OfferVersions';
+import RealizationConfirm from '../components/RealizationConfirm';
+import { isInRealization, soldFromVersion, soldSummary, fmtMoney as rzMoney, fmtDate as rzDate } from '../lib/realization';
 import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, hotelLabel } from '../lib/hotelAlt';
 import { computeAltDiffs } from '../lib/altPricing';
 import { codeForEmail } from '../lib/people';
@@ -3241,6 +3243,47 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // podmíněnými return, jinak by React při načítání spadl.
   const topBarRef = React.useRef(null);
 
+  // ── Realizace: „Klient potvrdil“ ─────────────────────────────────────────
+  // Nabídka se nikam nekopíruje. Dostane pole `realization` se zamčenou
+  // prodejní cenou z vybrané verze (NR) a stav „won“. Viz src/lib/realization.js.
+  const [realizationModal, setRealizationModal] = useState(null); // null | 'confirm' | 'change'
+  const openRealization = (mode) => {
+    if (mode === 'confirm') {
+      const strays = (itemsRef.current || []).filter(it =>
+        it.type === 'per_pax' && it.subType === 'hotel' && it.enabled === false && itemStatus(it) === 'confirmed');
+      if (strays.length > 0) {
+        const names = strays.map(it => '• ' + ([it.city, it.name].filter(Boolean).join(' – ') || 'hotel bez názvu')).join('\n');
+        if (!window.confirm('⚠ POZOR: tyto POTVRZENÉ hotely nejsou ve výběru pro kalkulaci:\n\n' + names +
+          '\n\nNezapomeňte je u hotelu zrušit a v nabídce nastavit stav Zrušeno (dál je hlídá Dashboard i kalendář).' +
+          '\n\nPokračovat?')) return;
+      }
+    }
+    setRealizationModal(mode);
+  };
+  const saveRealization = async (version) => {
+    const now = new Date().toISOString();
+    const by = codeForEmail(userEmail) || userEmail || '';
+    const prev = offer.realization || null;
+    const entry = { at: now, by, versionId: version.id, versionName: version.fileName || `NR${version.versionNo}` };
+    const realization = {
+      status: 'active',
+      confirmedAt: (prev && prev.confirmedAt) || now,
+      confirmedBy: (prev && prev.confirmedBy) || by,
+      soldVersionId: version.id,
+      soldVersionNo: version.versionNo || null,
+      soldVersionName: entry.versionName,
+      soldVersionCreatedAt: version.createdAt || '',
+      sold: soldFromVersion(version),
+      changedAt: now,
+      changedBy: by,
+      history: [...((prev && prev.history) || []), entry],
+    };
+    const ok = await trackedUpdate({ realization, status: 'won', updatedAt: now });
+    if (!ok) throw new Error('nabídku teď upravuje někdo jiný nebo se nepodařilo uložit');
+    setOffer(o => ({ ...o, realization, status: 'won' }));
+    setRealizationModal(null);
+  };
+
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
   if (userRole === 'limited' && !(offer.allowedUsers || []).includes(userEmail)) {
@@ -3557,7 +3600,61 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             ))}
           </div>
         )}
+        {isInRealization(offer) && (() => {
+          const rz = offer.realization;
+          const sold = rz.sold || {};
+          // Zisk na osobu v DBL: prodáno − (náklady + podíl FOC). „Při prodeji“
+          // ze zamčené verze, „teď“ z aktuálního výpočtu nabídky (vč. kurzu).
+          const cmp = (sold.combinedRows || []).map(sr => {
+            const cur = rows.find(r => r.pax === sr.pax);
+            const profitNow = cur ? sr.finalDbl - (cur.costDbl + cur.focShare) : null;
+            const profitSold = (sr.costDbl !== undefined && sr.focShare !== undefined) ? sr.finalDbl - (sr.costDbl + sr.focShare) : null;
+            return { pax: sr.pax, sold: sr.finalDbl, calcNow: cur ? cur.finalDbl : null, profitSold, profitNow };
+          });
+          const anyChange = cmp.some(c => c.calcNow !== null && Math.abs(c.calcNow - c.sold) >= 0.01);
+          return (
+            <div style={{ flexBasis: '100%', background: '#EAF3DE', border: '2px solid #27500A', borderRadius: 6, padding: '8px 12px', color: '#1f3d08' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>🧭 V Realizaci</span>
+                <span style={{ fontSize: 13 }}>
+                  prodaná cena zamčená: <b>{rz.soldVersionName}</b> · {soldSummary(sold)}
+                </span>
+                <span style={{ fontSize: 12, color: '#3f5f22' }}>potvrzeno {rzDate(rz.confirmedAt)}{rz.confirmedBy ? ' – ' + rz.confirmedBy : ''}</span>
+                <span style={{ flex: 1 }} />
+                <button onClick={() => navigate('realization-detail', { offerId })}
+                  style={{ padding: '3px 10px', background: '#27500A', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}>
+                  Otevřít Realizaci
+                </button>
+                {userRole === 'owner' && (
+                  <button onClick={() => openRealization('change')}
+                    style={{ padding: '3px 10px', background: '#fff', color: '#27500A', border: '1px solid #27500A', borderRadius: 5, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>
+                    Změnit prodanou verzi
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Úpravy nabídky už cenu pro klienta nemění — projeví se jen v nákladech a zisku.
+              </div>
+              {anyChange && (
+                <div style={{ fontSize: 12, marginTop: 4, color: '#9a3412', fontWeight: 600 }}>
+                  ⚠ Od prodeje se změnily náklady (nebo kurz):{' '}
+                  {cmp.filter(c => c.calcNow !== null).map(c => (
+                    <span key={c.pax} style={{ marginRight: 12, fontWeight: 400 }}>
+                      {c.pax} pax: dnešní výpočet by dal {rzMoney(c.calcNow)} € (prodáno {rzMoney(c.sold)} €)
+                      {c.profitNow !== null && <> · zisk/os {c.profitSold !== null ? <>{rzMoney(c.profitSold)} → </> : ''}<b>{rzMoney(c.profitNow)} €</b></>}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
+
+      {realizationModal && (
+        <RealizationConfirm offer={{ ...offer, id: offerId }} mode={realizationModal} colors={colors}
+          onClose={() => setRealizationModal(null)} onConfirm={saveRealization} />
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <button onClick={() => navigate('offers')} style={{ padding: '6px 14px', background: '#f7f6f3', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 7, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -4996,6 +5093,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem' }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {userRole === 'owner' && !isInRealization(offer) && (
+            <button onClick={() => openRealization('confirm')} title="Zamkne prodejní cenu z vybrané verze (NR) a akce přejde do Realizace. Nic se nekopíruje."
+              style={{ padding: '9px 20px', background: '#27500A', color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+              ✓ Klient potvrdil → Realizace
+            </button>
+          )}
           <button onClick={handleConvertToOrder} style={{ padding: '9px 20px', background: colors.success, color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
             ✓ Client confirmed — Convert to Order
           </button>
