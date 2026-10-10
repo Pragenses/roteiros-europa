@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { RATE_CURRENCIES, ratesState, loadRatesDoc, refreshFromEcb, setManualRate, takeEcbRate, setLocked } from '../lib/rates';
 
 // Nastavení → „💱 Kurzy měn“. Jedno místo pro kurzy celé aplikace.
-// Krok 1+2 (10. 10. 2026): jen přehled a nastavení — výpočty v nabídkách
-// tuto tabulku zatím NEPOUŽÍVAJÍ (přepnou se až v dalším kroku).
+// Od 10. 10. 2026 ji používají nabídka, PDF, zakázky i Realizace (lib/rates.js).
 
 const fmtD = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
 const fmtDay = (s) => { const t = String(s || '').slice(0, 10); if (t.length < 10) return t; const [y, m, d] = t.split('-'); return `${d}.${m}.${y}`; };
@@ -39,7 +38,7 @@ export default function RatesSettings({ colors, canEdit }) {
       <div style={{ fontSize: 13, color: colors.muted, marginBottom: '1rem', lineHeight: 1.5 }}>
         Jedno místo pro kurzy celé aplikace. Částky se nikdy nepřepisují do jiné měny — kurz slouží jen k převodu na EUR pro zobrazení a součet.
         Uložené verze nabídek (NR) a zamčené ceny v Realizaci se změnou kurzu nemění.<br />
-        <b>Zatím jen přehled:</b> nabídky, PDF, zakázky a Realizace tuto tabulku začnou používat až v dalším kroku.
+        Tyto kurzy používá celá aplikace: nabídky, PDF, zakázky i Realizace. Přepočet na EUR je orientační (sjednocení celkové ceny); účetní kurzy se řeší v účetnictví.
       </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
@@ -110,7 +109,7 @@ export default function RatesSettings({ colors, canEdit }) {
                         )}
                         <button disabled={!!busy} style={btn('#fff', x.locked ? '#1d4ed8' : '#9a3412', `1px solid ${x.locked ? '#1d4ed8' : '#9a3412'}`)}
                           onClick={() => run('l' + c, () => setLocked(data, c, !x.locked), x.locked ? `${c} odemčeno — změní se při příštím „Načíst dnešní kurzy“.` : `${c} zamčeno.`)}>
-                          {x.locked ? '🔓 Odemknout' : '🔒 Zamknout'}
+                          {x.locked ? 'Odemknout' : 'Zamknout'}
                         </button>
                       </span>
                     )}
