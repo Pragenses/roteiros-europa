@@ -7,7 +7,8 @@
 
 import { compareSnapshots } from './offerCompare';
 import { evalAmount } from './offerCalc';
-import { itemStatus, fmtDate } from './realization';
+import { itemStatus, fmtDate, fmtMoney } from './realization';
+import { isOfferedAlt, altMainOf } from './hotelAlt';
 
 const STATUS_LABEL = { '': 'bez stavu', requested: 'Poptáno', negotiating: 'V jednání', preapproved: 'Předschváleno', confirmed: 'Potvrzeno', cancelled: 'Zrušeno' };
 const label = (it) => [it.city, it.name].filter(Boolean).join(' – ') || it.name || 'bez názvu';
@@ -99,12 +100,17 @@ export function checkBeforeRealization({ offer, version, currentSnapshot, today 
     const priceRows = (cmp.combined || []).filter(r => r.dblDiff !== null && r.dblDiff !== 0);
     if (priceRows.length) {
       add('warn', 'Dnešní výpočet nabídky se liší od vybrané verze' + (cmp.onlyRateEffect ? ' (jen vlivem kurzu)' : ''),
-        [...priceRows.map(r => `${r.pax} pax: verze ${r.dblA} € → dnes ${r.dblB} € (${r.dblDiff > 0 ? '+' : ''}${r.dblDiff} €)`),
+        [...priceRows.map(r => `${r.pax} pax: verze ${fmtMoney(r.dblA)} € → dnes ${fmtMoney(r.dblB)} € (${r.dblDiff > 0 ? '+' : ''}${fmtMoney(r.dblDiff)} €)`),
           'Zamkne se cena z VERZE — to, co klient dostal.']);
     }
+    // Hotel, který se mezitím stal alternativou (mimo cenu), není „ubylý“ — je to záměr.
+    const nowAlt = (it) => {
+      const cur = items.find(x => it.id !== undefined && String(x.id) === String(it.id));
+      return cur && isOfferedAlt(cur, items) ? cur : null;
+    };
     const svc = [
       ...cmp.added.map(it => `přibylo: ${label(it)}`),
-      ...cmp.removed.map(it => `ubylo: ${label(it)}`),
+      ...cmp.removed.map(it => nowAlt(it) ? `přesunuto do alternativ (mimo cenu): ${label(it)}` : `ubylo: ${label(it)}`),
       ...cmp.changed.map(c => `změněno: ${label(c.item)} (${c.diffs.map(d => d.label).join(', ')})`),
       ...cmp.settings.map(s => `${s.label}: ${s.a} → ${s.b}`),
     ];
@@ -121,8 +127,13 @@ export function checkBeforeRealization({ offer, version, currentSnapshot, today 
   const expired = active.filter(it => isDate(it.optionDate) && ymd(it.optionDate) < today && itemStatus(it) !== 'confirmed');
   if (expired.length) add('stop', 'Prošlá opce u nepotvrzené služby', expired.map(it => `${label(it)} — opce ${fmtDate(it.optionDate)}`));
 
-  const strays = items.filter(it => it.subType === 'hotel' && it.enabled === false && !it.cancelled && itemStatus(it) === 'confirmed');
+  const strays = items.filter(it => it.subType === 'hotel' && it.enabled === false && !it.cancelled && itemStatus(it) === 'confirmed' && !isOfferedAlt(it, items));
   if (strays.length) add('warn', 'Potvrzené hotely, které nejsou ve výběru (zrušit u hotelu?)', strays.map(label));
+  const alts = items.filter(it => isOfferedAlt(it, items));
+  if (alts.length) add('warn', `Alternativy hotelů mimo cenu (${alts.length})`, [
+    ...alts.map(it => `${label(it)} — alternativa k ${label(altMainOf(it, items))} (${STATUS_LABEL[itemStatus(it)] || itemStatus(it)})`),
+    'Klient vybral: alternativu u hotelu zrušte (stav Zrušeno), nebo ji vyměňte za hlavní hotel.',
+  ]);
 
   const byNight = {};
   hotels.forEach(h => nightsOf(h).forEach(d => { (byNight[d] = byNight[d] || []).push(h); }));
