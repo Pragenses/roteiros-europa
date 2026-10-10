@@ -3247,19 +3247,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // Nabídka se nikam nekopíruje. Dostane pole `realization` se zamčenou
   // prodejní cenou z vybrané verze (NR) a stav „won“. Viz src/lib/realization.js.
   const [realizationModal, setRealizationModal] = useState(null); // null | 'confirm' | 'change'
-  const openRealization = (mode) => {
-    if (mode === 'confirm') {
-      const strays = (itemsRef.current || []).filter(it =>
-        it.type === 'per_pax' && it.subType === 'hotel' && it.enabled === false && itemStatus(it) === 'confirmed');
-      if (strays.length > 0) {
-        const names = strays.map(it => '• ' + ([it.city, it.name].filter(Boolean).join(' – ') || 'hotel bez názvu')).join('\n');
-        if (!window.confirm('⚠ POZOR: tyto POTVRZENÉ hotely nejsou ve výběru pro kalkulaci:\n\n' + names +
-          '\n\nNezapomeňte je u hotelu zrušit a v nabídce nastavit stav Zrušeno (dál je hlídá Dashboard i kalendář).' +
-          '\n\nPokračovat?')) return;
-      }
-    }
-    setRealizationModal(mode);
-  };
+  // Potvrzené nezaškrtnuté hotely i další problémy ukáže kontrola v okně.
+  const openRealization = (mode) => setRealizationModal(mode);
   const saveRealization = async (version) => {
     const now = new Date().toISOString();
     const by = codeForEmail(userEmail) || userEmail || '';
@@ -3707,7 +3696,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       )}
 
       {realizationModal && (
-        <RealizationConfirm offer={{ ...offer, id: offerId }} mode={realizationModal} colors={colors}
+        <RealizationConfirm offer={{ ...offer, id: offerId, items }} mode={realizationModal} colors={colors} getCurrentSnapshot={buildCurrentSnapshot}
           onClose={() => setRealizationModal(null)} onConfirm={saveRealization} />
       )}
 
