@@ -9,6 +9,7 @@ import { compareSnapshots } from './offerCompare';
 import { evalAmount } from './offerCalc';
 import { itemStatus, fmtDate, fmtMoney } from './realization';
 import { isOfferedAlt, altMainOf } from './hotelAlt';
+import { allDeposits } from './deposits';
 
 const STATUS_LABEL = { '': 'bez stavu', requested: 'Poptáno', negotiating: 'V jednání', preapproved: 'Předschváleno', confirmed: 'Potvrzeno', cancelled: 'Zrušeno' };
 const label = (it) => [it.city, it.name].filter(Boolean).join(' – ') || it.name || 'bez názvu';
@@ -183,6 +184,16 @@ export function checkBeforeRealization({ offer, version, currentSnapshot, today 
     if (issues.length) add('warn', `Program a hotely nesedí (${issues.length})`, [...issues, 'Názvy měst se mohou lišit jazykem — zkontrolujte, co opravdu nesedí.']);
     else add('ok', `Program sedí s hotely (${days.length} dní)`);
   }
+
+  // ── 3b. Zálohy dodavatelům ──
+  const deps = allDeposits(items.filter(it => it.enabled !== false && !it.cancelled), today);
+  const dl = (d) => `${label(d.item)} — ${Math.round(d.amount * 100) / 100} ${d.currency}${d.row.due ? `, splatnost ${fmtDate(d.row.due)}` : ''}`;
+  const over = deps.filter(d => d.status === 'overdue');
+  if (over.length) add('stop', `Zálohy po splatnosti, nezaplacené (${over.length})`, over.map(dl));
+  const soon = deps.filter(d => d.status === 'soon');
+  if (soon.length) add('warn', `Zálohy splatné do 14 dní (${soon.length})`, soon.map(dl));
+  const nodue = deps.filter(d => d.status === 'nodue');
+  if (nodue.length) add('warn', `Zálohy bez data splatnosti (${nodue.length})`, nodue.map(dl));
 
   // ── 4. Ostatní služby ──
   const others = active.filter(it => it.subType !== 'hotel' && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel' && (it.type === 'per_pax' || it.type === 'group'));
