@@ -1576,7 +1576,7 @@ const HotelSummary = ({ items, colors, offer }) => {
   const calmCount = offeredAlts.length - offeredAlts.filter(offeredWarn).length;
 
   return (
-    <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+    <div id="offer-hotel-summary" style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>🏨 Souhrn hotelů</span>
         <span style={{ fontSize: 12, fontWeight: 600, background: '#eef2f7', color: colors.primary, padding: '2px 8px', borderRadius: 10 }}>
@@ -1716,6 +1716,15 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [addMenuOpen]);
+  // Rozbalovací nabídka „↕ Přesun“ v horní liště (skoky po stránce).
+  const [moveMenuOpen, setMoveMenuOpen] = useState(false);
+  const moveMenuRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!moveMenuOpen) return;
+    const close = (e) => { if (moveMenuRef.current && !moveMenuRef.current.contains(e.target)) setMoveMenuOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [moveMenuOpen]);
   const [lastSavedAt, setLastSavedAt] = useState(null);
   const trackedUpdate = React.useCallback((payload) => {
     // Pojistka proti přepsání cizí práce: kdo nedrží štafetu, neuloží nic.
@@ -3164,6 +3173,10 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     navigate('order-detail', { orderId: ref.id });
   };
 
+  // Skoky z horní lišty (viz nabídka „↕ Přesun“ níže) — háček musí být před
+  // podmíněnými return, jinak by React při načítání spadl.
+  const topBarRef = React.useRef(null);
+
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
   if (!offer) return <div style={{ color: colors.muted, fontSize: 14 }}>Offer not found.</div>;
   if (userRole === 'limited' && !(offer.allowedUsers || []).includes(userEmail)) {
@@ -3325,12 +3338,37 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // nebo odmítnutí znovu ano – klient vybral a alternativu je třeba zrušit.
   const strayConfirmed = (items || []).filter(it => strayNeedsAction(it, items, offer));
 
+  // Nabídka „↕ Přesun“: skoky po stránce. Jen posouvají, nic nemění —
+  // fungují i v režimu jen ke čtení. Cíl se zastaví těsně pod lištou
+  // (její výška se mění, např. s varováním). Karty se hledají v pořadí,
+  // v jakém jsou na stránce, takže „první“ je opravdu ta nejvýš.
+  const scrollUnderBar = (el) => {
+    if (!el) return;
+    const bar = topBarRef.current;
+    el.style.scrollMarginTop = `${(bar ? bar.offsetHeight : 0) + 12}px`;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const firstCardEl = (pred) => {
+    const byId = new Map((items || []).map(it => [String(it.id), it]));
+    return Array.from(document.querySelectorAll('[data-item-id]'))
+      .find(el => { const it = byId.get(el.getAttribute('data-item-id')); return it && pred(it); }) || null;
+  };
+  const isTicketItem = (it) => it.subType === 'ticket';
+  const isGroupItem = (it) => it.type === 'group';
+  const moveTargets = [
+    { label: '🏨 Přehled hotelů', find: () => document.getElementById('offer-hotel-summary') },
+    { label: '🎟 Vstupenky', find: () => firstCardEl(isTicketItem) },
+    { label: '🚐 Společné náklady', find: () => firstCardEl(isGroupItem) },
+    { label: '💰 Selling price per pax', find: () => document.getElementById('offer-selling-price') },
+    { label: '📜 Program', find: () => document.getElementById('offer-program') },
+  ];
+
   return (
     <div>
       {/* Lišta se stavem ukládání. Drží se nahoře i při rolování a nikdy nemizí —
           čas posledního uložení je vidět pořád, ne jen pět vteřin po uložení.
           Sem později přibude i informace, kdo je v nabídce a kdo ji upravuje. */}
-      <div style={{
+      <div ref={topBarRef} style={{
         position: 'sticky', top: 0, zIndex: 900,
         display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
         padding: '8px 14px', marginBottom: '0.75rem',
@@ -3377,6 +3415,29 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             )}
           </>
         )}
+        <div ref={moveMenuRef} style={{ position: 'relative' }}>
+          <button type="button" onClick={() => setMoveMenuOpen(o => !o)} title="Přesunout se na část nabídky"
+            style={{ padding: '5px 10px', background: colors.white, color: colors.primary, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            ↕ Přesun ▾
+          </button>
+          {moveMenuOpen && (
+            <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 8, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', padding: 4, minWidth: 210, zIndex: 950 }}>
+              {moveTargets.map(t => {
+                const el = t.find();
+                return (
+                  <button key={t.label} type="button" disabled={!el}
+                    onClick={() => { setMoveMenuOpen(false); scrollUnderBar(t.find()); }}
+                    title={el ? '' : 'V této nabídce zatím není'}
+                    onMouseEnter={e => { if (el) e.currentTarget.style.background = '#f7f6f3'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', background: 'transparent', border: 'none', borderRadius: 5, fontSize: 13, fontFamily: 'inherit', color: el ? colors.text : colors.muted, cursor: el ? 'pointer' : 'default' }}>
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         {/* Přidání servisní karty odkudkoli — stejné funkce jako tlačítka pod kartami. */}
         <div ref={addMenuRef} style={{ position: 'relative' }}>
           <button onClick={() => setAddMenuOpen(o => !o)} disabled={isLocked || !canEdit}
@@ -4443,7 +4504,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         </div>
       </div>
 
-      <div style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem', overflowX: 'auto' }}>
+      <div id="offer-selling-price" style={{ background: colors.white, border: `2px solid ${colors.primary}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem', overflowX: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>💰 Selling price per pax</div>
           {hasSplit && (
@@ -4604,7 +4665,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         }}
       />
 
-      <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
+      <div id="offer-program" style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: '1.25rem' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>Programa da viagem (PT-BR)</div>
         <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
           Cole aqui o texto do roteiro dia-a-dia (em português). Selecione o texto e use os botões para formatar. Este texto será usado na proposta gerada para o cliente.
