@@ -1,7 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { serviceCounts, nextDeadline, soldSummary, fmtDate } from '../lib/realization';
+import { serviceCounts, nextDeadline, soldSummary, fmtDate, realizationItems, itemStatus } from '../lib/realization';
+import { kindOf, deadlineState } from '../lib/serviceKinds';
+
+// Počty termínů rezervací u akce (⛔ po termínu, ⏳ rezervovat teď, ❓ bez druhu).
+const deadlineCounts = (o, today) => {
+  const items = realizationItems(o);
+  const hotels = items.filter(it => it.subType === 'hotel' && !it.cancelled);
+  const hotelsAllConfirmed = hotels.length > 0 && hotels.every(it => itemStatus(it) === 'confirmed');
+  const c = { late: 0, warn: 0, nokind: 0 };
+  items.forEach(it => {
+    const rz = o.rzServices || {};
+    const kind = kindOf(it, rz);
+    const lv = deadlineState({ it, kind, saved: rz[String(it.id)] || null, offer: o, statusOf: itemStatus, hotelsAllConfirmed, today }).level;
+    if (c[lv] !== undefined) c[lv]++;
+  });
+  return c;
+};
 
 // Menu „Realization – Operations“: seznam potvrzených akcí.
 // Data se čtou přímo z nabídek (offers s realization.status = 'active');
@@ -30,7 +46,7 @@ export default function Realization({ navigate, colors }) {
   const past = (list || []).filter(o => o.endDate && o.endDate < today);
   const shown = showPast ? past : upcoming;
 
-  const cols = '110px minmax(180px, 1.4fr) minmax(120px, 1fr) 170px minmax(160px, 1.2fr) 90px minmax(150px, 1fr)';
+  const cols = '110px minmax(180px, 1.4fr) minmax(120px, 1fr) 170px minmax(160px, 1.2fr) 90px 120px minmax(150px, 1fr)';
 
   return (
     <div>
@@ -62,15 +78,16 @@ export default function Realization({ navigate, colors }) {
 
       {list && shown.length > 0 && (
         <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, overflowX: 'auto' }}>
-          <div style={{ minWidth: 980 }}>
+          <div style={{ minWidth: 1100 }}>
             <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, padding: '9px 14px', background: '#F4F6F8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: colors.muted }}>
-              <div>Číslo</div><div>Skupina</div><div>Klient</div><div>Termín</div><div>Prodáno</div><div>Potvrzeno</div><div>Nejbližší termín</div>
+              <div>Číslo</div><div>Skupina</div><div>Klient</div><div>Termín</div><div>Prodáno</div><div>Potvrzeno</div><div>Rezervace</div><div>Nejbližší termín</div>
             </div>
             {shown.map(o => {
               const rz = o.realization || {};
               const cnt = serviceCounts(o);
               const nd = nextDeadline(o, today);
               const allOk = cnt.total > 0 && cnt.confirmed === cnt.total;
+              const dc = deadlineCounts(o, today);
               return (
                 <div key={o.id} onClick={() => navigate('realization-detail', { offerId: o.id })}
                   style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, padding: '10px 14px', borderTop: `1px solid ${colors.border}`, fontSize: 13, cursor: 'pointer', alignItems: 'center' }}>
@@ -83,6 +100,12 @@ export default function Realization({ navigate, colors }) {
                     <div style={{ fontSize: 12, color: colors.muted }}>{soldSummary(rz.sold)}</div>
                   </div>
                   <div style={{ fontWeight: 700, color: allOk ? '#27500A' : '#c2410c' }}>{cnt.confirmed} / {cnt.total}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {dc.late > 0 && <span style={{ color: '#b91c1c' }} title="po termínu">⛔ {dc.late}</span>}
+                    {dc.warn > 0 && <span style={{ color: '#9a3412' }} title="rezervovat teď">⏳ {dc.warn}</span>}
+                    {dc.nokind > 0 && <span style={{ color: '#c2410c' }} title="bez druhu služby">❓ {dc.nokind}</span>}
+                    {!dc.late && !dc.warn && !dc.nokind && <span style={{ color: '#27500A' }}>✓</span>}
+                  </div>
                   <div style={{ fontSize: 12 }}>
                     {nd ? <><b>{nd.kind} {fmtDate(nd.date)}</b><br /><span style={{ color: colors.muted }}>{nd.label}</span></> : <span style={{ color: colors.muted }}>—</span>}
                   </div>
