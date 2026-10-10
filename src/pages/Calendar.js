@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { PEOPLE } from '../lib/people';
+import { watchOption } from '../lib/hotelAlt';
 import { allDeposits } from '../lib/deposits';
 import { fmtMoney } from '../lib/realization';
 
@@ -27,7 +28,7 @@ const dm = (d) => { const [, m, day] = ymd(d).split('-'); return `${parseInt(day
 const todayYmd = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
 
 // Termíny ze servisních karet a úkolů všech nabídek.
-// Opce: hotel, který není potvrzený ani zrušený (a nabídka není odmítnutá).
+// Opce: zaškrtnutý hotel nebo nabídnutá alternativa, nepotvrzený a nezrušený (nabídka není odmítnutá).
 // Storno lhůta: zaškrtnutý hotel, který není zrušený.
 // Alternativa: potvrzený, nezaškrtnutý a nezrušený hotel — hlídá se i
 // v odmítnutých a převedených nabídkách (stejně jako na Dashboardu).
@@ -48,7 +49,8 @@ export const buildDeadlines = (offers) => {
         return;
       }
       if (offer.declined) return;
-      if (item.optionDate && item.bookingStatus !== 'confirmed') {
+      // Opce jen u zaškrtnutých hotelů a nabídnutých alternativ.
+      if (watchOption(item, offer.items, offer)) {
         list.push({ ...base, kind: 'option', date: ymd(item.optionDate), text: `Opce · ${hotel}`, itemId: item.id });
       }
       if (item.cancellationDeadline && item.enabled !== false) {

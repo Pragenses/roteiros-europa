@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
-import { strayNeedsAction } from '../lib/hotelAlt';
+import { strayNeedsAction, watchOption, watchStorno } from '../lib/hotelAlt';
 import { allDeposits, DEPOSIT_STYLE, SOON_DAYS } from '../lib/deposits';
 import { fmtMoney } from '../lib/realization';
 
@@ -357,11 +357,12 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
             if (!(item.type === 'per_pax' && item.subType === 'hotel')) return;
             // Zrušený hotel už opci ani storno lhůtu hlídat nepotřebuje.
             if (item.cancelled) return;
-            if (item.optionDate && item.bookingStatus !== 'confirmed') {
+            // Opce jen u zaškrtnutých hotelů a nabídnutých alternativ.
+            if (watchOption(item, offer.items, offer)) {
               const diff = Math.round((new Date(item.optionDate) - today) / 86400000);
               if (diff <= 14) hTasks.push({ kind: 'option', offerId: offer.id, offerName: offer.name, hotelName: item.name, date: item.optionDate, diff });
             }
-            if (item.cancellationDeadline) {
+            if (watchStorno(item)) {
               const diff = Math.round((new Date(item.cancellationDeadline) - today) / 86400000);
               if (diff <= 14) hTasks.push({ kind: 'cancellation', offerId: offer.id, offerName: offer.name, hotelName: item.name, date: item.cancellationDeadline, diff });
             }
@@ -617,8 +618,10 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const depSoon = depositTasks.filter(d => d.status === 'soon');
   const DepRow = ({ d }) => {
     const ds = DEPOSIT_STYLE[d.status];
+    const dny = (n) => `${n} ${n === 1 ? 'den' : n < 5 ? 'dny' : 'dní'}`;
     const when = d.diff === null ? 'chybí splatnost'
-      : d.diff < 0 ? `${-d.diff} dní po splatnosti` : d.diff === 0 ? 'splatné DNES' : `splatné za ${d.diff} dní`;
+      : d.diff < 0 ? `${dny(-d.diff)} po splatnosti` : d.diff === 0 ? 'splatné DNES'
+      : d.diff === 1 ? 'splatné zítra' : `splatné za ${dny(d.diff)}`;
     return (
       <div onClick={() => openCard(d.offerId, d.itemId)} title="Otevřít kartu v nabídce"
         style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '7px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13, borderLeft: `4px solid ${ds.color}` }}>
