@@ -33,6 +33,8 @@ import Declined from './pages/Declined';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import Import from './pages/Import';
+import Realization from './pages/Realization';
+import RealizationDetail from './pages/RealizationDetail';
 
 const COLORS = {
   primary: '#1a3a5c',
@@ -65,6 +67,7 @@ const NAV = [
   { id: 'calendar', label: 'Calendar', icon: '◷', ownerOnly: true },
   { id: 'clients', label: 'Clients', icon: '◉', ownerOnly: true },
   { id: 'orders', label: 'Orders', icon: '◧' },
+  { id: 'realization', label: 'Realization – Operations', icon: '🧭', ownerOnly: true },
   { id: 'offers', label: 'Offers', icon: '◫' },
   { id: 'offers-workflow', label: 'Offers workflow', icon: '📌' },
   { id: 'providers', label: 'Providers', icon: '◎' },
@@ -84,7 +87,7 @@ const parseHash = () => {
   if (!raw) return { page: 'dashboard', id: null };
   const [p, id] = raw.split('/');
   const page = p || 'dashboard';
-  const needsId = page === 'offer-detail' || page === 'offer-print' || page === 'order-detail';
+  const needsId = page === 'offer-detail' || page === 'offer-print' || page === 'order-detail' || page === 'realization-detail';
   if (needsId && !id) return { page: 'dashboard', id: null };
   return { page, id: id || null };
 };
@@ -353,6 +356,8 @@ export default function App() {
     if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
     if (page === 'settings')  return <Settings colors={COLORS} />;
     if (page === 'import')    return <Import colors={COLORS} />;
+    if (page === 'realization' && userRole === 'owner') return <Realization navigate={navigate} colors={COLORS} />;
+    if (page === 'realization-detail' && userRole === 'owner') return <RealizationDetail offerId={parseHash().id} navigate={navigate} colors={COLORS} />;
     return <Dashboard navigate={navigate} colors={COLORS} userRole={userRole} userEmail={user.email} />;
   };
 
@@ -374,6 +379,7 @@ export default function App() {
     const titleFor = () => {
       if (page === 'offer-detail' || page === 'offer-print') return 'Nabídka';
       if (page === 'order-detail') return 'Zakázka';
+      if (page === 'realization-detail') return 'Realizace';
       return (NAV.find(n => n.id === page) || NAV[0]).label;
     };
     const barBtn = { background: 'none', border: 'none', color: COLORS.white, fontSize: 20, padding: '6px 8px', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 };
@@ -495,7 +501,7 @@ export default function App() {
         <nav style={{ flex: 1, padding: '1rem 0' }}>
           {visibleNav.map(n => (
             <button key={n.id} onClick={() => navigate(n.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 1.25rem', background: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? 'rgba(200,168,75,0.15)' : 'transparent', border: 'none', borderLeft: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? `3px solid ${COLORS.accent}` : '3px solid transparent', color: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'declined' && page === 'declined')) ? COLORS.accent : 'rgba(255,255,255,0.65)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 1.25rem', background: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'realization' && page === 'realization-detail') || (n.id === 'declined' && page === 'declined')) ? 'rgba(200,168,75,0.15)' : 'transparent', border: 'none', borderLeft: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'realization' && page === 'realization-detail') || (n.id === 'declined' && page === 'declined')) ? `3px solid ${COLORS.accent}` : '3px solid transparent', color: (page === n.id || (n.id === 'offers' && (page === 'offer-detail' || page === 'offer-print')) || (n.id === 'orders' && page === 'order-detail') || (n.id === 'realization' && page === 'realization-detail') || (n.id === 'declined' && page === 'declined')) ? COLORS.accent : 'rgba(255,255,255,0.65)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}>
               <span style={{ fontSize: 16 }}>{n.icon}</span>
               {n.label}
             </button>
