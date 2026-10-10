@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { db } from '../lib/firebase';
-import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
+import { doc, getDoc, collection, getDocs, addDoc, deleteDoc, updateDoc, query, where } from 'firebase/firestore';
+import { evalAmount } from '../lib/offerCalc';
+import { cityTaxForOrder, r4 } from '../lib/cityTax';
+import { codeForEmail } from '../lib/people';
 import { parseServiceText, parseServiceDocument, aiFillProviderFree } from '../lib/ai';
 
 const SERVICE_TYPES = [
@@ -81,6 +84,100 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   }, [orderId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // ── Kontrola city tax u zakázek převedených z nabídky STARÝM převodem ──
+  // Starý převod uložil city tax z nabídky (za POKOJ a noc) jako „za osobu“,
+  // takže částka k zaplacení hotelu vyšla zhruba dvojnásobná; ceny zadané
+  // v nabídce vzorcem („=120*0.05“) se tu navíc četly jako 0. U každého
+  // takového hotelu se ukáže ⚠ s návrhem podle zdrojové nabídky a tlačítko
+  // „Opravit podle nabídky“ — opraví jen ten jeden hotel, po potvrzení.
+  // Ručně upravené hodnoty (liší se od nabídky) se nenavrhují.
+  const [taxFix, setTaxFix] = useState({}); // svcId -> návrh
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!order) return;
+      const m = String(order.notes || '').match(/^Created from offer "([\s\S]*?)"\./);
+      const norm = (v) => String(v || '').trim().toLowerCase();
+      const isFormula = (v) => typeof v === 'string' && v.trim().startsWith('=');
+      const cands = services.filter(sv => sv.type === 'hotel' && !sv.repairLog
+        && !String(sv.notes || '').includes('City tax z nabídky')
+        && ((String(sv.cityTax ?? '').trim() !== '' && (sv.cityTaxType || 'per_person') === 'per_person')
+          || isFormula(sv.pricePerDblRoom) || isFormula(sv.pricePerSnglRoom)));
+      if (!m || cands.length === 0) { if (!cancelled) setTaxFix({}); return; }
+
+      // Zdrojová nabídka: podle čísla, jinak podle přesného názvu (+ začátku).
+      let offer = null;
+      try {
+        if (order.offerNumber) {
+          const q1 = await getDocs(query(collection(db, 'offers'), where('offerNumber', '==', order.offerNumber)));
+          if (q1.docs.length === 1) offer = q1.docs[0].data();
+        }
+        if (!offer) {
+          const q2 = await getDocs(query(collection(db, 'offers'), where('name', '==', m[1])));
+          const list = q2.docs.map(d => d.data());
+          offer = list.length === 1 ? list[0] : (list.filter(o => o.startDate === order.startDate).length === 1 ? list.find(o => o.startDate === order.startDate) : null);
+        }
+      } catch (e) { console.error('City tax check: loading offer failed', e); }
+      const hotels = offer ? (offer.items || []).filter(it => it.subType === 'hotel') : [];
+
+      const out = {};
+      for (const sv of cands) {
+        const fields = {}; const why = [];
+        for (const f of ['pricePerDblRoom', 'pricePerSnglRoom']) {
+          if (isFormula(sv[f])) { fields[f] = r4(evalAmount(sv[f])); why.push(`cena ${f === 'pricePerDblRoom' ? 'DBL' : 'SNGL'} „${sv[f]}“ se četla jako 0 → ${fields[f]}`); }
+        }
+        let flag = '', note = '';
+        const hasTax = String(sv.cityTax ?? '').trim() !== '' && (sv.cityTaxType || 'per_person') === 'per_person';
+        if (hasTax) {
+          const same = (it) => norm(it.name) === norm(sv.name) && norm(it.city) === norm(sv.city);
+          const item = hotels.find(it => same(it) && (it.dateFrom || '') === (sv.dateFrom || ''))
+            || (hotels.filter(same).length === 1 ? hotels.find(same) : null);
+          if (item && String(item.cityTax ?? '').trim() === String(sv.cityTax).trim()) {
+            const p = cityTaxForOrder(item);
+            fields.cityTax = p.cityTax; fields.cityTaxType = p.cityTaxType; note = p.note;
+            why.push(`city tax ${sv.cityTax} „za osobu“ → ${p.cityTax} ${p.cityTaxType === 'per_room' ? 'za pokoj' : p.cityTaxType === 'percent' ? '% z ceny' : 'za osobu'} (podle nabídky)`);
+            if (!p.exact) flag = 'DBL a SNGL v nabídce nesedí na žádné pravidlo — zkontrolujte.';
+          } else if (!item && Math.abs(new Date(sv.createdAt || 0) - new Date(order.createdAt || 0)) < 5 * 60 * 1000) {
+            // jen služby vzniklé při převodu (pár vteřin po zakázce) — později ručně přidané hotely nehlídám
+            flag = offer ? 'Hotel jsem v nabídce nenašla' : 'Zdrojovou nabídku jsem nenašla';
+            flag += ` — city tax ${sv.cityTax} je asi za celý pokoj, ale počítá se za osobu (2×). Zkontrolujte a opravte ručně.`;
+          }
+          // item nalezen, ale hodnota se liší → ručně upraveno, nenavrhuji
+        }
+        if (why.length || flag) out[sv.id] = { fields, why, flag, note };
+      }
+      if (!cancelled) setTaxFix(out);
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [order, services]);
+
+  const applyTaxFix = async (sv) => {
+    const fx = taxFix[sv.id];
+    if (!fx || !Object.keys(fx.fields).length) return;
+    const before = calculateHotelCost(sv);
+    const after = calculateHotelCost({ ...sv, ...fx.fields });
+    const cur = sv.currency || 'EUR';
+    const amt = (c) => c ? `${c.total.toFixed(2)} ${cur}` : 'nelze spočítat (chybí pokoje/noci)';
+    const msg = `Opravit hotel ${[sv.city, sv.name].filter(Boolean).join(' – ')}?\n\n` + fx.why.map(w => '• ' + w).join('\n')
+      + `\n\nCelkem k zaplacení hotelu:\n  teď: ${amt(before)}\n  po opravě: ${amt(after)}` + (fx.flag ? `\n\n⚠ ${fx.flag}` : '');
+    if (!window.confirm(msg)) return;
+    const by = codeForEmail(auth.currentUser?.email) || auth.currentUser?.email || '';
+    const now = new Date();
+    const line = `Opraveno ${now.toLocaleDateString('cs-CZ')}${by ? ' - ' + by : ''}: ${fx.why.join('; ')}.${fx.note ? ' ' + fx.note : ''}`;
+    try {
+      await updateDoc(doc(db, 'orders', orderId, 'services', sv.id), {
+        ...fx.fields,
+        notes: [sv.notes, line].filter(Boolean).join('\n'),
+        repairLog: { at: now.toISOString(), by, what: 'oprava starého převodu (city tax / vzorce)', prev: Object.fromEntries(Object.keys(fx.fields).map(k => [k, sv[k] ?? ''])) },
+        updatedAt: now.toISOString(),
+      });
+      await fetchData();
+    } catch (e) {
+      window.alert('Oprava se nepovedla: ' + (e.message || e));
+    }
+  };
 
   const fetchLiveRates = useCallback(async () => {
     setRatesLoading(true);
@@ -794,6 +891,19 @@ export default function OrderDetail({ orderId, navigate, colors }) {
             </div>
           );
         })()}
+        {s.type === 'hotel' && taxFix[s.id] && (
+          <div onClick={e => e.stopPropagation()} style={{ fontSize: 12, marginTop: 6, padding: '8px 10px', background: '#FFF7ED', border: '1px solid #fdba74', borderRadius: 6, color: '#9a3412', cursor: 'default' }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>⚠ Starý převod z nabídky – zkontrolujte</div>
+            {taxFix[s.id].why.map((w, i) => <div key={i}>{w}</div>)}
+            {taxFix[s.id].flag && <div style={{ fontWeight: 600 }}>{taxFix[s.id].flag}</div>}
+            {Object.keys(taxFix[s.id].fields).length > 0 && (
+              <button onClick={e => { e.stopPropagation(); applyTaxFix(s); }}
+                style={{ marginTop: 6, padding: '4px 10px', background: '#c2410c', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                Opravit podle nabídky
+              </button>
+            )}
+          </div>
+        )}
         {s.type === 'ticket' && s.pricePerPax && (
           <div style={{ fontSize: 12, marginTop: 4, padding: '6px 10px', background: '#f0ede8', borderRadius: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
