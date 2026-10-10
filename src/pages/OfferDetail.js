@@ -3264,11 +3264,15 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     const now = new Date().toISOString();
     const by = codeForEmail(userEmail) || userEmail || '';
     const prev = offer.realization || null;
-    const entry = { at: now, by, versionId: version.id, versionName: version.fileName || `NR${version.versionNo}` };
+    const wasActive = !!(prev && prev.status === 'active');
+    const entry = { at: now, by, action: wasActive ? 'change' : 'confirm', versionId: version.id, versionName: version.fileName || `NR${version.versionNo}` };
     const realization = {
       status: 'active',
-      confirmedAt: (prev && prev.confirmedAt) || now,
-      confirmedBy: (prev && prev.confirmedBy) || by,
+      // Nové potvrzení (i po vrácení z Realizace) = nové datum; změna verze ho drží.
+      confirmedAt: wasActive ? (prev.confirmedAt || now) : now,
+      confirmedBy: wasActive ? (prev.confirmedBy || by) : by,
+      // Stav nabídky před potvrzením — kam se vrátí „Vrátit z Realizace“.
+      statusBefore: wasActive ? (prev.statusBefore || '') : (offer.status && offer.status !== 'won' ? offer.status : 'sent'),
       soldVersionId: version.id,
       soldVersionNo: version.versionNo || null,
       soldVersionName: entry.versionName,
@@ -3282,6 +3286,27 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     if (!ok) throw new Error('nabídku teď upravuje někdo jiný nebo se nepodařilo uložit');
     setOffer(o => ({ ...o, realization, status: 'won' }));
     setRealizationModal(null);
+  };
+
+  // „↩ Vrátit z Realizace“: akce přestane být v Realizaci, nabídka dostane
+  // vybraný stav. Nic se nemaže — zamčená cena i historie zůstávají
+  // v `realization` (status 'returned'), jen se neukazují.
+  const [returnStatus, setReturnStatus] = useState(null); // null = okno zavřené
+  const [returnBusy, setReturnBusy] = useState(false);
+  const returnFromRealization = async () => {
+    const rz = offer.realization || {};
+    const now = new Date().toISOString();
+    const by = codeForEmail(userEmail) || userEmail || '';
+    const realization = {
+      ...rz, status: 'returned', returnedAt: now, returnedBy: by,
+      history: [...(rz.history || []), { at: now, by, action: 'return', toStatus: returnStatus }],
+    };
+    setReturnBusy(true);
+    const ok = await trackedUpdate({ realization, status: returnStatus, updatedAt: now });
+    setReturnBusy(false);
+    if (!ok) { window.alert('Nepodařilo se uložit — nabídku teď možná upravuje někdo jiný.'); return; }
+    setOffer(o => ({ ...o, realization, status: returnStatus }));
+    setReturnStatus(null);
   };
 
   if (loading) return <div style={{ color: colors.muted, fontSize: 14 }}>Loading...</div>;
@@ -3631,6 +3656,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     Změnit prodanou verzi
                   </button>
                 )}
+                {userRole === 'owner' && (
+                  <button onClick={() => setReturnStatus(rz.statusBefore || 'sent')}
+                    style={{ padding: '3px 10px', background: '#fff', color: '#9a3412', border: '1px solid #c2410c', borderRadius: 5, fontSize: 12, fontFamily: 'inherit', cursor: 'pointer' }}>
+                    ↩ Vrátit z Realizace
+                  </button>
+                )}
               </div>
               <div style={{ fontSize: 12, marginTop: 4 }}>
                 Úpravy nabídky už cenu pro klienta nemění — projeví se jen v nákladech a zisku.
@@ -3650,6 +3681,30 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           );
         })()}
       </div>
+
+      {returnStatus !== null && (
+        <div onClick={() => !returnBusy && setReturnStatus(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: colors.white, borderRadius: 12, padding: '1.25rem 1.5rem', width: 'min(480px, 100%)' }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#9a3412', marginBottom: 6 }}>↩ Vrátit z Realizace</div>
+            <div style={{ fontSize: 13, color: colors.muted, lineHeight: 1.5, marginBottom: 12 }}>
+              Akce zmizí z Realizace a zámek prodejní ceny přestane platit. Nic se nesmaže — v historii zůstane,
+              kdo a kdy ji vrátil. Později ji jde znovu potvrdit tlačítkem „Klient potvrdil“.
+            </div>
+            <label style={{ fontSize: 13, display: 'block', marginBottom: 14 }}>
+              Stav nabídky po vrácení:{' '}
+              <select value={returnStatus} onChange={e => setReturnStatus(e.target.value)} style={{ ...iStyle, width: 'auto', display: 'inline-block', marginLeft: 6 }}>
+                {STATUS_OPTS.filter(o => o.value !== 'won').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setReturnStatus(null)} disabled={returnBusy} style={{ padding: '8px 18px', background: '#64748b', color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>Zrušit</button>
+              <button onClick={returnFromRealization} disabled={returnBusy} style={{ padding: '8px 18px', background: '#c2410c', color: '#fff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, opacity: returnBusy ? 0.6 : 1 }}>
+                {returnBusy ? 'Ukládám…' : 'Vrátit z Realizace'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {realizationModal && (
         <RealizationConfirm offer={{ ...offer, id: offerId }} mode={realizationModal} colors={colors}
