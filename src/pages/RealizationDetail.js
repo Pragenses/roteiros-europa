@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { isInRealization, realizationItems, itemStatus, serviceCounts, fmtMoney, fmtDate } from '../lib/realization';
+import { DEFAULT_RATES } from '../lib/offerCalc';
+import { computeOfferRows } from '../lib/offerRows';
 
 // Přehled jedné akce v Realizaci. Všechno se čte ŽIVĚ z nabídky
 // (offers/<id>) — žádná kopie. Upravuje se v nabídce („Otevřít nabídku“);
@@ -25,6 +27,23 @@ const kindOf = (it) => {
 
 export default function RealizationDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(undefined);
+  // Dnešní kurzy — stejný zdroj jako v nabídce (frankfurter.app), jinak výchozí.
+  const [rates, setRates] = useState(DEFAULT_RATES);
+  const [ratesDate, setRatesDate] = useState('');
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await fetch(`https://api.frankfurter.app/latest?from=EUR&to=${Object.keys(DEFAULT_RATES).join(',')}`);
+        const data = await resp.json();
+        if (data && data.rates) {
+          const r = {};
+          Object.entries(data.rates).forEach(([cur, v]) => { if (v > 0) r[cur] = 1 / v; });
+          setRates(prev => ({ ...prev, ...r }));
+          setRatesDate(data.date || '');
+        }
+      } catch (e) { console.error('Kurzy se nepodařilo načíst', e); }
+    })();
+  }, []);
 
   useEffect(() => {
     if (!offerId) return undefined;
@@ -109,6 +128,65 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
         </div>
       </div>
 
+      {(() => {
+        // ── Ceny a zisk pro všechny velikosti skupiny, živě ──
+        // Prodáno = zamčená verze. Náklady = dnešní výpočet nabídky (stejný jako
+        // v nabídce, dnešní kurzy). Finální velikost skupiny se určí až před odjezdem.
+        const live = computeOfferRows(offer, rates);
+        const rowsCmp = (sold.combinedRows || []).map(sr => {
+          const cur = live.rows.find(r => r.pax === sr.pax);
+          const costNow = cur ? cur.totalCostDbl : null;
+          const profitNow = cur ? sr.finalDbl - costNow : null;
+          const profitSold = (sr.costDbl !== undefined && sr.focShare !== undefined) ? sr.finalDbl - (sr.costDbl + sr.focShare) : null;
+          const firmPct = cur && costNow > 0 ? Math.round(cur.confirmedCostDbl / costNow * 100) : null;
+          return { pax: sr.pax, sold: sr.finalDbl, costNow, firm: cur ? cur.confirmedCostDbl : null, firmPct, profitNow, profitSold };
+        });
+        const col = (v) => v === null ? colors.muted : v < 0 ? '#b91c1c' : '#27500A';
+        return (
+          <div style={card}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary, marginBottom: 4 }}>💶 Ceny a zisk — živě</div>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10, lineHeight: 1.5 }}>
+              Prodaná cena je zamčená. Náklady se počítají z nabídky tak, jak je dnes — když upravíte hotel, bus nebo průvodce, zisk se přepočítá.
+              Finální velikost skupiny se určí před odjezdem.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 13, minWidth: 640 }}>
+                <thead><tr>
+                  <th style={{ ...th, textAlign: 'left' }}>Skupina</th>
+                  <th style={th}>Prodáno / os.</th>
+                  <th style={th}>Náklady dnes / os.</th>
+                  <th style={th}>z toho pevné</th>
+                  <th style={th}>Zisk / os.</th>
+                  <th style={th}>Zisk při prodeji / os.</th>
+                  <th style={th}>Zisk celkem</th>
+                </tr></thead>
+                <tbody>
+                  {rowsCmp.map(r => (
+                    <tr key={r.pax}>
+                      <td style={{ ...td, textAlign: 'left' }}>{r.pax} pax</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{fmtMoney(r.sold)} €</td>
+                      <td style={td}>{r.costNow === null ? '—' : `${fmtMoney(r.costNow)} €`}</td>
+                      <td style={{ ...td, color: colors.muted }}>{r.firm === null ? '—' : `${fmtMoney(r.firm)} € (${r.firmPct} %)`}</td>
+                      <td style={{ ...td, fontWeight: 700, color: col(r.profitNow) }}>{r.profitNow === null ? '—' : `${fmtMoney(r.profitNow)} €`}</td>
+                      <td style={{ ...td, color: colors.muted }}>{r.profitSold === null ? '—' : `${fmtMoney(r.profitSold)} €`}</td>
+                      <td style={{ ...td, fontWeight: 700, color: col(r.profitNow) }}>{r.profitNow === null ? '—' : `${fmtMoney(r.profitNow * r.pax)} €`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rowsCmp.some(r => r.costNow === null) && (
+              <div style={{ fontSize: 12, color: '#9a3412', marginTop: 6 }}>⚠ Některé velikosti skupiny z prodané verze nejsou v nabídce v „Pax sizes“ — pro ně se dnešní náklady nepočítají.</div>
+            )}
+            <div style={{ fontSize: 11, color: colors.muted, marginTop: 8, lineHeight: 1.5 }}>
+              Náklady = na platící osobu ve dvoulůžkovém pokoji, včetně podílu na FOC. „Pevné“ = služby ve stavu Potvrzeno, zbytek je zatím odhad.
+              Kurzy {ratesDate ? `z ${fmtDate(ratesDate)}` : 'výchozí (dnešní se nenačetly)'}.
+              Zisk celkem = zisk na osobu × počet platících osob.
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>Služby</div>
@@ -146,7 +224,7 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
       </div>
 
       <div style={{ ...card, background: '#F7F6F3', color: colors.muted, fontSize: 13 }}>
-        Další kroky Realizace (připravujeme): pokoje a finální počet osob · platby dodavatelům · rooming list · vouchery · kontrolní seznam před odjezdem.
+        Další kroky Realizace (připravujeme): finální počet osob a pokoje · platby dodavatelům · rooming list · vouchery · kontrolní seznam před odjezdem.
       </div>
     </div>
   );
