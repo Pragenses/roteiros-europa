@@ -354,7 +354,7 @@ export default function App() {
     if (page === 'bus')       return <Bus navigate={navigate} colors={COLORS} navParams={navParams} />;
     if (page === 'declined')  return <Declined navigate={navigate} colors={COLORS} />;
     if (page === 'history')   return <History navigate={navigate} colors={COLORS} />;
-    if (page === 'settings')  return <Settings colors={COLORS} />;
+    if (page === 'settings')  return <Settings colors={COLORS} userRole={userRole} />;
     if (page === 'import')    return <Import colors={COLORS} />;
     if (page === 'realization' && userRole === 'owner') return <Realization navigate={navigate} colors={COLORS} />;
     if (page === 'realization-detail' && userRole === 'owner') return <RealizationDetail offerId={parseHash().id} navigate={navigate} colors={COLORS} />;
