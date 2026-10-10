@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { isLockableVersion, soldFromVersion, soldSummary, fmtDate } from '../lib/realization';
+import { checkBeforeRealization } from '../lib/realizationCheck';
 
 // Okno „Klient potvrdil → Realizace“ (a „Změnit prodanou verzi“).
 // Ukáže uložené verze nabídky (NR…) s jejich cenami; předvybraná je ta
-// poslední. Nic nezapisuje — vybranou verzi předá do onConfirm(version).
-export default function RealizationConfirm({ offer, mode, onClose, onConfirm, colors }) {
+// poslední. Pod verzemi je kontrola před převodem (verze vs. nabídka, hotely,
+// program, služby) — jen upozorní, nic neblokuje. Nic nezapisuje — vybranou
+// verzi předá do onConfirm(version).
+export default function RealizationConfirm({ offer, mode, onClose, onConfirm, getCurrentSnapshot, colors }) {
   const [versions, setVersions] = useState(null);
   const [pick, setPick] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,6 +35,19 @@ export default function RealizationConfirm({ offer, mode, onClose, onConfirm, co
 
   const chosen = (versions || []).find(v => v.id === pick);
   const currentId = offer.realization && offer.realization.soldVersionId;
+
+  const checks = useMemo(() => {
+    if (!chosen) return [];
+    try {
+      return checkBeforeRealization({ offer, version: chosen, currentSnapshot: getCurrentSnapshot ? getCurrentSnapshot() : null });
+    } catch (e) {
+      console.error('Kontrola před převodem selhala:', e);
+      return [{ level: 'warn', title: 'Kontrolu se nepodařilo provést: ' + (e.message || e), details: [] }];
+    }
+  }, [chosen]);
+  const nStop = checks.filter(c => c.level === 'stop').length;
+  const nWarn = checks.filter(c => c.level === 'warn').length;
+  const [openCheck, setOpenCheck] = useState({});
 
   const go = async () => {
     if (!chosen) return;
@@ -84,14 +100,51 @@ export default function RealizationConfirm({ offer, mode, onClose, onConfirm, co
           </div>
         )}
 
+        {chosen && checks.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 6 }}>
+              Kontrola před převodem{' '}
+              <span style={{ fontSize: 12, fontWeight: 600, color: nStop ? '#b91c1c' : nWarn ? '#c2410c' : '#27500A' }}>
+                {nStop ? `⛔ ${nStop}  ` : ''}{nWarn ? `⚠ ${nWarn}` : ''}{!nStop && !nWarn ? '✅ vše v pořádku' : ''}
+              </span>
+            </div>
+            <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: 'hidden' }}>
+              {checks.map((c, i) => {
+                const icon = c.level === 'stop' ? '⛔' : c.level === 'warn' ? '⚠' : '✅';
+                const col = c.level === 'stop' ? '#b91c1c' : c.level === 'warn' ? '#9a3412' : '#27500A';
+                const bg = c.level === 'stop' ? '#FEF2F2' : c.level === 'warn' ? '#FFF7ED' : 'transparent';
+                const open = openCheck[i] ?? (c.level !== 'ok');
+                return (
+                  <div key={i} style={{ borderTop: i ? `1px solid ${colors.border}` : 'none', background: bg, padding: '7px 12px', fontSize: 13 }}>
+                    <div onClick={() => c.details.length && setOpenCheck(o => ({ ...o, [i]: !open }))}
+                      style={{ color: col, fontWeight: 600, cursor: c.details.length ? 'pointer' : 'default' }}>
+                      {icon} {c.title}{c.details.length ? <span style={{ fontWeight: 400, color: colors.muted }}> {open ? '▾' : '▸'}</span> : null}
+                    </div>
+                    {open && c.details.length > 0 && (
+                      <div style={{ marginTop: 3, paddingLeft: 22, color: colors.text, fontSize: 12, lineHeight: 1.5 }}>
+                        {c.details.map((d, j) => <div key={j}>{d}</div>)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {(nStop > 0 || nWarn > 0) && (
+              <div style={{ fontSize: 12, color: colors.muted, marginTop: 6 }}>
+                Kontrola jen upozorňuje — potvrdit jde i tak, když víte, že je to v pořádku.
+              </div>
+            )}
+          </div>
+        )}
+
         {error && <div style={{ color: '#dc2626', fontSize: 13, marginTop: 10 }}>⚠ {error}</div>}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
           <button onClick={onClose} style={{ ...btn('#64748b', false) }}>Zrušit</button>
           {versions && versions.length > 0 && (
             <button onClick={go} disabled={!chosen || busy || (mode === 'change' && chosen.id === currentId)}
-              style={btn('#27500A', !chosen || busy || (mode === 'change' && chosen && chosen.id === currentId))}>
-              {busy ? 'Ukládám…' : (mode === 'change' ? 'Změnit prodanou verzi' : 'Potvrdit a zamknout cenu')}
+              style={btn(nStop || nWarn ? '#c2410c' : '#27500A', !chosen || busy || (mode === 'change' && chosen && chosen.id === currentId))}>
+              {busy ? 'Ukládám…' : (nStop || nWarn ? 'Přesto potvrdit' : (mode === 'change' ? 'Změnit prodanou verzi' : 'Potvrdit a zamknout cenu'))}
             </button>
           )}
         </div>
