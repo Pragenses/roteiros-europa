@@ -72,6 +72,24 @@ const PAYMENT_METHODS = [
 // návrh, který uživatel v okně odklikne. Peníze jsou v tom okně předem
 // NEZAŠKRTNUTÉ (viz MONEY_KEYS níže).
 
+// Kontrola city tax u hotelu: SNGL = za 1 osobu a noc, DBL = za 2 osoby
+// (celý pokoj) a noc, tedy normálně DBL = 2 × SNGL. Vrací null (v pořádku),
+// 'sngl_missing' (SNGL prázdné → počítá se jako DBL, tj. za celý pokoj) nebo
+// 'mismatch' (DBL není 2 × SNGL — správně jen u hotelů, které účtují za pokoj
+// nebo procentem). Jen upozornění, na výpočet nemá vliv.
+const cityTaxIssue = (it) => {
+  const snglSet = it.cityTaxSngl !== '' && it.cityTaxSngl !== undefined && it.cityTaxSngl !== null;
+  const dbl = evalAmount(it.cityTax);
+  const sngl = snglSet ? evalAmount(it.cityTaxSngl) : 0;
+  if (!dbl && !sngl) return null;
+  if (!snglSet) return 'sngl_missing';
+  return Math.abs(dbl - 2 * sngl) < 0.005 ? null : 'mismatch';
+};
+const CITY_TAX_ISSUE_TEXT = {
+  sngl_missing: 'City tax SNGL není vyplněný — u SNGL se počítá celá částka z DBL (za 2 osoby). Pokud hotel účtuje za osobu, vyplňte SNGL.',
+  mismatch: 'City tax DBL není 2× SNGL — zkontrolujte. Správně je to jen u hotelu, který účtuje za pokoj nebo procentem z ceny.',
+};
+
 // Číslo z textu; prázdný řetězec, když to číslo není nebo je nula.
 // --- E-mailové adresy z vloženého textu ------------------------------------
 // Zadání: do kontaktu na kartě má jít adresa toho, KDO e-mail poslal. Ve
@@ -2486,6 +2504,22 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     else updateItem(it.id, 'bookingStatus', v);
   };
 
+  // City tax SNGL (za 1 osobu) → DBL (za 2 osoby) se doplní samo jako 2×.
+  // Jen když je DBL prázdné nebo dosud odpovídalo 2× SNGL (tj. ho doplnila
+  // aplikace) — ručně zadané jiné číslo se nikdy nepřepíše.
+  const onCityTaxSngl = (it, value) => {
+    const prevDblRaw = String(it.cityTax ?? '').trim();
+    const prevSngl = evalAmount(it.cityTaxSngl);
+    // cityTaxAuto = DBL naposledy vyplnila aplikace (ruční zápis do DBL ho zruší).
+    const follows = !prevDblRaw || it.cityTaxAuto === true || Math.abs(evalAmount(prevDblRaw) - 2 * prevSngl) < 0.005;
+    const sngl = evalAmount(value);
+    if (follows && String(value).trim() !== '' && sngl > 0) {
+      updateItemFields(it.id, { cityTaxSngl: value, cityTax: String(Math.round(sngl * 2 * 10000) / 10000), cityTaxAuto: true });
+    } else {
+      updateItem(it.id, 'cityTaxSngl', value);
+    }
+  };
+
   const updateItemFields = (id, fields) => {
     setItems(prev => {
       const newItems = prev.map(it => it.id === id ? { ...it, ...fields } : it);
@@ -3095,11 +3129,41 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       return t ? `Podmínky záloh: ${t}` : '';
     };
 
+    // Částky v nabídce mohou být vzorce („=120*0.05“). Zakázka vzorce neumí
+    // (četla by je jako 0), proto se převádí jejich spočítaná hodnota.
+    const toNum = (v) => {
+      const s = String(v ?? '').trim();
+      if (!s) return '';
+      return String(Math.round(evalAmount(s) * 10000) / 10000);
+    };
+
+    // City tax: v nabídce je za POKOJ a noc (cityTax = DBL pokoj, cityTaxSngl =
+    // SNGL pokoj, prázdné = stejné jako DBL). Zakázka má jednu hodnotu + typ,
+    // proto se vybere typ, který dá přesně stejné částky.
+    const cityTaxForOrder = (h) => {
+      const dbl = evalAmount(h.cityTax);
+      const snglRaw = (h.cityTaxSngl !== '' && h.cityTaxSngl !== undefined) ? h.cityTaxSngl : h.cityTax;
+      const sngl = evalAmount(snglRaw);
+      const r4 = (n) => String(Math.round(n * 10000) / 10000);
+      if (!dbl && !sngl) return { cityTax: '', cityTaxType: 'per_person', note: '' };
+      const note = `City tax z nabídky: DBL pokoj ${r4(dbl)}, SNGL pokoj ${r4(sngl)} ${h.currency || 'EUR'} za noc.`;
+      const same = (a, b) => Math.abs(a - b) < 0.005;
+      if (same(dbl, sngl)) return { cityTax: r4(dbl), cityTaxType: 'per_room', note };
+      if (same(dbl, 2 * sngl)) return { cityTax: r4(sngl), cityTaxType: 'per_person', note };
+      const pDbl = evalAmount(h.pricePerNightDbl), pSngl = evalAmount(h.pricePerNightSngl);
+      if (pDbl > 0 && pSngl > 0 && same(dbl / pDbl * 100, sngl / pSngl * 100)) {
+        return { cityTax: r4(dbl / pDbl * 100), cityTaxType: 'percent', note };
+      }
+      return { cityTax: r4(dbl), cityTaxType: 'per_room',
+        note: `⚠ ${note} Nejde převést přesně (DBL a SNGL se liší) — převedeno jako ${r4(dbl)} za pokoj, ZKONTROLUJTE.` };
+    };
+
     // Copy hotels as hotel services
     const currentItems = itemsRef.current;
     const hotelItems = currentItems.filter(it => it.enabled !== false && it.subType === 'hotel');
     for (const h of hotelItems) {
       const nights = parseFloat(h.nights) || '';
+      const ct = cityTaxForOrder(h);
       await addDoc(collection(db, 'orders', ref.id, 'services'), {
         type: 'hotel',
         name: h.name || '',
@@ -3113,13 +3177,13 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         currency: h.currency || 'EUR',
         status: 'enquired',
         optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
-        notes: carryTerms(h),
+        notes: [carryTerms(h), ct.note].filter(Boolean).join('\n'),
         dblRooms: '', snglRooms: '', twnRooms: '', trplRooms: '',
-        pricePerDblRoom: h.pricePerNightDbl || '',
-        pricePerSnglRoom: h.pricePerNightSngl || '',
+        pricePerDblRoom: toNum(h.pricePerNightDbl),
+        pricePerSnglRoom: toNum(h.pricePerNightSngl),
         pricePerTwnRoom: '', pricePerTrplRoom: '',
-        cityTax: h.cityTax || '',
-        cityTaxIncluded: 'separate', cityTaxType: 'per_person',
+        cityTax: ct.cityTax,
+        cityTaxIncluded: 'separate', cityTaxType: ct.cityTaxType,
         dinners: '', dinnerPrice: '', lunches: '', lunchPrice: '',
         guideRoom: '', guideRoomPrice: '',
         driverAccom: 'none', driverRoomPrice: '', driverNights: '',
@@ -3143,7 +3207,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         status: 'enquired',
         optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
         notes: carryTerms(t),
-        pricePerPax: t.costDbl || '',
+        pricePerPax: toNum(t.costDbl),
         ticketCount: '',
         totalPrice: '',
         updatedAt: new Date().toISOString(),
@@ -3163,7 +3227,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
         status: 'enquired',
         optionDate: '', depositDate: '', depositAmount: '', depositCurrency: 'EUR', confirmationLink: '',
         notes: carryTerms(g),
-        totalPrice: g.groupCost || '',
+        totalPrice: toNum(g.groupCost),
         updatedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
       });
@@ -3883,7 +3947,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           const marginNum = parseFloat(margin);
           const marginIssue = isNaN(marginNum) || marginNum <= 0;
 
-          const hasAnyWarning = mismatch || hotelsWithEmptyPrices.length > 0 || ticketsWithEmptyPrice.length > 0 || groupCostsWithEmptyPrice.length > 0 || dateGaps.length > 0 || duplicateHotels.length > 0 || marginIssue;
+          const hotelsCityTaxIssue = hotels.filter(h => cityTaxIssue(h));
+          const hasAnyWarning = hotelsCityTaxIssue.length > 0 || mismatch || hotelsWithEmptyPrices.length > 0 || ticketsWithEmptyPrice.length > 0 || groupCostsWithEmptyPrice.length > 0 || dateGaps.length > 0 || duplicateHotels.length > 0 || marginIssue;
 
           return displayNights > 0 || hasAnyWarning ? (
             <div style={{ marginBottom: 10 }}>
@@ -3895,6 +3960,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               {mismatch && (
                 <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginTop: 6, padding: '8px 12px', background: '#FEF2F2', border: '2px solid #dc2626', borderRadius: 7 }}>
                   ⚠️ POZOR: Datum nabídky ukazuje {totalNights} nocí, ale součet nocí u hotelů je {hotelNightsSum}. Zkontrolujte prosím počet nocí u hotelů — chybí nebo přebývá {Math.abs(totalNights - hotelNightsSum)} {Math.abs(totalNights - hotelNightsSum) === 1 ? 'noc' : 'noci'}.
+                </div>
+              )}
+              {hotelsCityTaxIssue.length > 0 && (
+                <div style={{ fontSize: 13, color: '#c2410c', fontWeight: 600, marginTop: 6, padding: '8px 12px', background: '#FFF7ED', border: '1px solid #fdba74', borderRadius: 7 }}>
+                  ⚠ City tax ke kontrole: {hotelsCityTaxIssue.map(h => `${h.city ? `${h.city} (${h.name || 'bez názvu'})` : (h.name || 'bez názvu')} – ${cityTaxIssue(h) === 'sngl_missing' ? 'SNGL nevyplněno' : 'DBL není 2× SNGL'}`).join(', ')}.
                 </div>
               )}
               {hotelsWithEmptyPrices.length > 0 && (
@@ -4137,9 +4207,10 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                           <input type="number" title="Počet nocí" value={it.nights} onChange={e => updateItem(it.id, 'nights', e.target.value)}
                             style={{ ...iStyle, width: 46, padding: '4px 4px', textAlign: 'right' }} />
                           <span style={{ ...sLbl, marginLeft: 4 }}>City tax DBL</span>
-                          <FormulaField width={62} title="City tax DBL za osobu a noc (lze i =199*0.05)" placeholder="0" value={it.cityTax} onChange={e => updateItem(it.id, 'cityTax', e.target.value)} colors={colors} />
+                          <FormulaField width={62} title="City tax DBL – za 2 osoby (celý pokoj) a noc. Vyplní se samo jako 2× SNGL (lze i =vzorec)" placeholder="0" value={it.cityTax} onChange={e => updateItemFields(it.id, { cityTax: e.target.value, cityTaxAuto: false })} colors={colors} />
                           <span style={sLbl}>SNGL</span>
-                          <FormulaField width={62} title="City tax SNGL za osobu a noc (jen když se liší)" placeholder="–" value={it.cityTaxSngl} onChange={e => updateItem(it.id, 'cityTaxSngl', e.target.value)} colors={colors} />
+                          <FormulaField width={62} title="City tax SNGL – za 1 osobu a noc (DBL se doplní samo jako 2×)" placeholder="–" value={it.cityTaxSngl} onChange={e => onCityTaxSngl(it, e.target.value)} colors={colors} />
+                          {cityTaxIssue(it) && <span title={CITY_TAX_ISSUE_TEXT[cityTaxIssue(it)]} style={{ color: '#c2410c', fontSize: 13, cursor: 'help' }}>⚠</span>}
                           <select value={it.currency} onChange={e => updateItem(it.id, 'currency', e.target.value)}
                             style={{ ...iStyle, width: 70, padding: '4px 4px' }}>
                             {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
