@@ -53,19 +53,35 @@ export const sameCity = (a, b) => {
   return Math.min(x.length, y.length) >= 5 && lev(x, y) <= 2;
 };
 
-// Dny programu: „2° DIA – 20/05/2027 – FRANKFURT / LIUBLIANA“ → { day, date, overnight: 'LIUBLIANA' }.
+// Dny programu → { day, date, route, overnight }. Umí oba tvary, které se v nabídkách používají:
+//   „2° DIA – 20/05/2027 – FRANKFURT / LIUBLIANA“
+//   „13° DIA - 31/05/27 (segunda-feira) – TIMISOARA / BUCARESTE – Café da manhã. …“
+// (rok dvě i čtyři číslice, den v týdnu v závorce, popis na stejném řádku).
+// Trasa = úvodní úseky psané VELKÝMI písmeny; nocleh = poslední z nich.
+const isUpperish = (t) => {
+  const letters = [...t].filter(ch => ch.toLowerCase() !== ch.toUpperCase());
+  if (!letters.length || t.length > 40) return false;
+  return letters.filter(ch => ch === ch.toUpperCase()).length / letters.length >= 0.8;
+};
 export function parseProgramDays(html) {
   const text = String(html || '')
     .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(div|p|li|h\d)>/gi, '\n').replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#\d+;/g, ' ');
   const days = [];
   text.split('\n').forEach(line => {
-    const m = line.match(/(\d{1,2})\s*[º°oª]?\s*DIA\s*[–\-—:]?\s*(\d{1,2})[/.](\d{1,2})[/.](\d{4})\s*[–\-—:]?\s*(.*)$/i);
+    const m = line.match(/(\d{1,2})\s*[º°oª]?\s*DIA\s*[–\-—:]?\s*(\d{1,2})[/.](\d{1,2})[/.](\d{4}|\d{2})\b\s*(.*)$/i);
     if (!m) return;
-    const date = `${m[4]}-${m[3].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-    const route = m[5].replace(/\(.*?\)/g, '').trim();
-    const parts = route.split(/\s*[/–—-]\s*|\s+x\s+/i).map(p => p.trim()).filter(Boolean);
-    days.push({ day: parseInt(m[1], 10), date, route, overnight: parts.length ? parts[parts.length - 1] : '' });
+    const year = m[4].length === 2 ? '20' + m[4] : m[4];
+    const date = `${year}-${m[3].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+    const rest = m[5].replace(/\(.*?\)/g, ' ').replace(/^[\s–\-—:]+/, '');
+    const tokens = rest.split(/\s*[/–—]\s*|\s+-\s+|\s+x\s+/i).map(p => p.trim()).filter(Boolean);
+    let cities = [];
+    for (const t of tokens) { if (isUpperish(t)) cities.push(t); else break; }
+    if (!cities.length) {
+      // Program psaný malými písmeny: vezmi úseky před první větou.
+      for (const t of tokens) { if (t.length > 30 || /[.!?]/.test(t)) break; cities.push(t); }
+    }
+    days.push({ day: parseInt(m[1], 10), date, route: cities.join(' / '), overnight: cities.length ? cities[cities.length - 1] : '' });
   });
   return days;
 }
