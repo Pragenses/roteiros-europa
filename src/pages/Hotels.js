@@ -1,9 +1,10 @@
-// force-rebuild-ai-overeni
+// force-rebuild-karty-system
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
 import { nameFromWeb } from '../lib/hotelAi';
+import { collectLinks, cardSummary, newEmailsForCard, groupMaybe } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -580,8 +581,29 @@ const BUILTIN_TEMPLATES = [
   { id: 'cancellation',  name: 'Zrušení / storno', order: 4, subjectSuffix: 'CANCELLATION',    body: TPL_CANCELLATION },
 ];
 
+// Popisky pro detail karty (stejné jako v nabídce a zakázce).
+const LINE_STATUS = {
+  '': 'Stav?', requested: '🟡 Poptáno', negotiating: '🟠 V jednání', preapproved: '🔵 Předschváleno',
+  confirmed: '🟢 Potvrzeno', cancelled: '🔴 Zrušeno',
+};
+const RESULT_LABEL = { realized: '🧭 Realizace', won: '✅ Vyhráno', lost: '❌ Prohráno', open: '⏳ Otevřená' };
+const OFFER_STATUS_LABEL = {
+  draft: 'Draft', check: 'Ke kontrole', sent: 'Odesláno klientovi', returned: 'Vráceno k úpravě',
+  won: 'Won → confirmed', lost: 'Lost / declined',
+};
+const SERVICE_STATUS_LABEL = {
+  enquired: 'Enquired', confirmed: 'Confirmed', option: 'Option', deposit_paid: 'Deposit paid', contract: 'Contract', paid: 'Paid',
+};
+const fmtD = (v) => {
+  if (!v) return '';
+  const s = String(v);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+  return s;
+};
+
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v217-ai-overeni');
+  console.debug('Hotels v218-karty-system');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1330,6 +1352,155 @@ export default function Hotels({ navigate, colors, navParams }) {
     setCardBusy('');
   };
 
+  // ── 📊 KARTY ↔ VÁŠ SYSTÉM (etapa 3, krok 1) ─────────────────────────────────
+  // Data z nabídek, starých zakázek a logu poptávek se načtou při otevření
+  // záložky Karty a propojí s kartami ŽIVĚ (nic se nekopíruje). Zapisuje se
+  // jen: potvrzení / odmítnutí možné shody (`hotelCardLinks`), e-maily přidané
+  // ke kartám a nové karty pro hotely z nabídek — vše jen v kartách, databáze
+  // hotelů beze změny, a každý hromadný krok jde vrátit.
+  const [sysRaw, setSysRaw]       = useState(null);   // { offers, orders, emailLog }
+  const [sysLoading, setSysLoading] = useState(false);
+  const [sysError, setSysError]   = useState('');
+  const [decisions, setDecisions] = useState({});
+  const [detailId, setDetailId]   = useState('');
+  const [onlyUsed, setOnlyUsed]   = useState(false);
+  const [sysPanel, setSysPanel]   = useState('');     // '' | 'maybe' | 'orphans'
+  const [sysBusy, setSysBusy]     = useState('');
+
+  const loadSystemData = useCallback(async () => {
+    setSysLoading(true); setSysError('');
+    try {
+      const [offSnap, ordSnap, logSnap, decSnap] = await Promise.all([
+        getDocs(collection(db, 'offers')),
+        getDocs(collection(db, 'orders')),
+        getDocs(collection(db, 'hotelEmailLog')),
+        getDocs(collection(db, 'hotelCardLinks')),
+      ]);
+      const orders = await Promise.all(ordSnap.docs.map(async d => {
+        const s = await getDocs(collection(db, 'orders', d.id, 'services'));
+        return { id: d.id, ...d.data(), services: s.docs.map(x => ({ id: x.id, ...x.data() })) };
+      }));
+      const dec = {};
+      decSnap.docs.forEach(d => { const v = d.data(); if (v.key) dec[v.key] = v; });
+      setDecisions(dec);
+      setSysRaw({
+        offers: offSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+        orders,
+        emailLog: logSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+      });
+    } catch (e) {
+      setSysError(e.message || 'Data se nepodařilo načíst');
+    }
+    setSysLoading(false);
+  }, []);
+  useEffect(() => { if (tab === 'cards' && !sysRaw && !sysLoading) loadSystemData(); }, [tab, sysRaw, sysLoading, loadSystemData]);
+
+  const sys = React.useMemo(() => {
+    if (!sysRaw || !cards.length) return null;
+    return collectLinks({ cards, hotelRows: hotels, ...sysRaw, decisions });
+  }, [sysRaw, cards, hotels, decisions]);
+
+  const summaryOf = (cardId) => (sys && sys.links.has(cardId) ? cardSummary(sys.links.get(cardId)) : null);
+  const emailsToAdd = React.useMemo(() => {
+    if (!sys) return [];
+    const out = [];
+    for (const [cardId, b] of sys.links) {
+      const card = cards.find(c => c.id === cardId);
+      const list = newEmailsForCard(card, b);
+      if (list.length) out.push({ card, list });
+    }
+    return out;
+  }, [sys, cards]);
+  const emailsToAddCount = emailsToAdd.reduce((n, x) => n + x.list.length, 0);
+
+  const linkDocId = (key) => encodeURIComponent(key).slice(0, 1400);
+  // Rozhodnutí o možné shodě platí pro celou skupinu (stejný název, město
+  // a kandidáti) — všechny výskyty se zapíšou najednou.
+  const saveDecision = async (group, decision, cardId) => {
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const rejected = decision === 'no' ? group.candidates.map(c => c.id) : [];
+    const docs = group.lines.map(line => ({
+      key: line.key, decision, cardId: cardId || '', rejected,
+      label: `${line.name} · ${line.city}`, source: line.source || '', by, at,
+    }));
+    setSysBusy(group.key);
+    try {
+      await commitUnits(docs.map(v => [{ t: 'set', ref: doc(db, 'hotelCardLinks', linkDocId(v.key)), data: v }]), 'Ukládám');
+      setDecisions(prev => { const n = { ...prev }; docs.forEach(v => { n[v.key] = v; }); return n; });
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+    setSysBusy('');
+  };
+  const maybeGroups = React.useMemo(() => (sys ? groupMaybe(sys.maybe) : []), [sys]);
+
+  // E-maily ze servisních karet → karty hotelů. Jen u JISTÝCH vazeb.
+  const emailEntry = (email, src) => ({
+    email, role: '', person: '', main: false, fromService: true,
+    source: { type: src.type, offerId: src.offerId || '', orderId: src.orderId || '', offerNumber: src.offerNumber || '', group: src.group || '' },
+  });
+  const handleAddEmails = async (items) => {
+    const total = items.reduce((n, x) => n + x.list.length, 0);
+    if (!total) return;
+    if (!window.confirm(`Přidat ${total} e-mailů ze servisních karet (nabídky, zakázky) k ${items.length} kartám hotelů?\n\nJen u hotelů, které jsou s kartou propojené jistě. Databáze hotelů se nemění. Jde vrátit.`)) return;
+    setSysBusy('emails');
+    const at = new Date().toISOString();
+    try {
+      const units = [], added = [];
+      for (const { card, list } of items) {
+        const emails = [...(card.emails || []), ...list.map(x => emailEntry(x.email, x.src))];
+        units.push([{ t: 'update', ref: doc(db, 'hotelCards', card.id), data: { emails } }]);
+        added.push({ cardId: card.id, emails: list.map(x => x.email) });
+      }
+      await commitUnits(units, 'Přidávám e-maily');
+      await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+        runId: at, at, by: auth.currentUser?.email || '', kind: 'emails', cardIds: [], added, rowIds: [], undone: false,
+        label: `E-maily ze servisních karet: ${total} adres u ${items.length} karet`,
+        reason: 'Z nabídek a starých zakázek, jen u jistě propojených hotelů',
+      });
+      await Promise.all([fetchCards(), fetchFixLog()]);
+    } catch (e) { alert('Nepodařilo se přidat: ' + e.message); }
+    setSysBusy('');
+  };
+
+  // Hotely z nabídek / zakázek, které nemají kartu → nová karta.
+  const handleCreateOrphans = async (list) => {
+    if (!list.length) return;
+    if (list.length > 1 && !window.confirm(`Založit ${list.length} karet pro hotely z nabídek a zakázek, které kartu nemají?\n\nDatabáze hotelů se nemění. Jde vrátit.`)) return;
+    setSysBusy(list.length > 1 ? 'orphans' : list[0].key);
+    const at = new Date().toISOString();
+    try {
+      const cardIds = [];
+      const units = list.map(o => {
+        const ref = doc(collection(db, 'hotelCards'));
+        cardIds.push(ref.id);
+        const { name, note } = splitNameNote(o.name);
+        // Výskyty v nabídkách / zakázkách se s novou kartou rovnou propojí.
+        const links = o.sources.filter(src => src.key).map(src => ({ t: 'set', ref: doc(db, 'hotelCardLinks', linkDocId(src.key)), data: {
+          key: src.key, decision: 'yes', cardId: ref.id, rejected: [], label: `${o.name} · ${o.city}`,
+          source: src.type, by: auth.currentUser?.email || '', at,
+        } }));
+        return [...links, { t: 'set', ref, data: {
+          name: name || o.name, city: o.city, country: '', aliases: [], domain: '',
+          emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true })),
+          notes: note || '',
+          source: { type: 'services', label: '📄 Z nabídek / zakázek', at },
+          createdAt: serverTimestamp(),
+        } }];
+      });
+      await commitUnits(units, 'Zakládám karty');
+      const decSnap = await getDocs(collection(db, 'hotelCardLinks'));
+      const dec = {};
+      decSnap.docs.forEach(d => { const v = d.data(); if (v.key) dec[v.key] = v; });
+      setDecisions(dec);
+      await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+        runId: at, at, by: auth.currentUser?.email || '', kind: 'orphan-cards', cardIds, added: [], rowIds: [], undone: false,
+        label: `${cardIds.length} karet pro hotely z nabídek / zakázek`,
+        reason: 'Hotely, které byly v nabídkách nebo zakázkách, ale neměly kartu',
+      });
+      await Promise.all([fetchCards(), fetchFixLog()]);
+    } catch (e) { alert('Nepodařilo se založit: ' + e.message); }
+    setSysBusy('');
+  };
+
   // Oprava jedné vadné adresy přímo v databázi hotelů. Mění se jen ten jeden
   // řádek, na kartách ani na rozesílání se nic dalšího nedotýká.
   const handleFixEmail = async (row) => {
@@ -1683,12 +1854,18 @@ export default function Hotels({ navigate, colors, navParams }) {
     return out.sort((a, b) => order[a.kind] - order[b.kind] || (a.row.city || '').localeCompare(b.row.city || ''));
   }, [hotels]);
   const cardsFiltered = cards.filter(c => {
+    if (onlyUsed && !summaryOf(c.id)) return false;
     const q = cardSearch.trim().toLowerCase();
     if (!q) return true;
     return (c.name || '').toLowerCase().includes(q)
       || (c.city || '').toLowerCase().includes(q)
       || (c.emails || []).some(e => (e.email || '').includes(q));
   });
+
+  if (onlyUsed) {
+    const score = (c) => { const s = summaryOf(c.id); return s ? s.offers * 3 + s.requests + s.realized * 5 : 0; };
+    cardsFiltered.sort((a, b) => score(b) - score(a));
+  }
 
   const thS = { padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: `1px solid ${C.border}` };
   const tdS = { padding: '8px 12px', verticalAlign: 'middle', fontSize: 13 };
@@ -2343,12 +2520,115 @@ export default function Hotels({ navigate, colors, navParams }) {
                 </div>
               )}
 
+              {/* 📊 PROPOJENÍ S VAŠÍM SYSTÉMEM */}
+              <div style={{ ...cardS, marginBottom: '1.2rem', borderColor: '#9fc9b0', background: '#f4fbf6' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <strong style={{ fontSize: 15, color: '#2e6b45' }}>📊 Propojení s nabídkami, zakázkami a poptávkami</strong>
+                    <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 0', lineHeight: 1.5 }}>
+                      Karty se živě propojí se vším, kde se hotel v aplikaci objevil — jistě podle e-mailu,
+                      podle názvu jen jako „možná shoda“, kterou potvrdíte. Klikněte na název hotelu v seznamu
+                      a uvidíte jeho historii, ceny, podmínky a poznámky.
+                    </p>
+                  </div>
+                  <button onClick={loadSystemData} disabled={sysLoading}
+                    style={{ ...smallBtn('#2e6b45'), opacity: sysLoading ? 0.5 : 1 }}>
+                    {sysLoading ? '⏳ Načítám…' : '↻ Načíst znovu'}
+                  </button>
+                </div>
+                {sysError && <div style={{ marginTop: 8, fontSize: 12, color: '#b00020' }}>Chyba: {sysError}</div>}
+                {sys && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, fontSize: 12 }}>
+                    <span style={{ padding: '5px 10px', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 6 }}>
+                      🏨 karet s historií: <strong>{sys.links.size}</strong>
+                    </span>
+                    <button onClick={() => handleAddEmails(emailsToAdd)} disabled={!emailsToAddCount || !!sysBusy}
+                      style={{ ...smallBtn('#2e6b45'), opacity: (!emailsToAddCount || sysBusy) ? 0.5 : 1 }}
+                      title="E-maily z nabídek a zakázek, které na kartě hotelu ještě nejsou">
+                      {sysBusy === 'emails' ? '…' : `📇 Přidat e-maily ze servisních karet (${emailsToAddCount})`}
+                    </button>
+                    <button onClick={() => setSysPanel(p => p === 'maybe' ? '' : 'maybe')}
+                      style={smallBtn(maybeGroups.length ? '#c27c0e' : C.muted)}>
+                      🔶 Možné shody k potvrzení ({maybeGroups.length})
+                    </button>
+                    <button onClick={() => setSysPanel(p => p === 'orphans' ? '' : 'orphans')}
+                      style={smallBtn(sys.orphans.length ? '#5b3fa0' : C.muted)}>
+                      ➕ Hotely z nabídek bez karty ({sys.orphans.length})
+                    </button>
+                  </div>
+                )}
+
+                {sys && sysPanel === 'maybe' && (
+                  <div style={{ marginTop: 12, maxHeight: 520, overflowY: 'auto', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, padding: 10 }}>
+                    <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
+                      Hotel z nabídky / zakázky, který má podobný název nebo sdílenou adresu s kartou. Dokud to nepotvrdíte,
+                      nikam se nepočítá. ✅ propojí, ❌ nechá zvlášť (pak se objeví mezi hotely bez karty).
+                    </p>
+                    {maybeGroups.length === 0 ? <p style={{ fontSize: 13, color: C.muted }}>Nic k potvrzení.</p> : maybeGroups.map(g => (
+                      <div key={g.key} style={{ borderBottom: `1px solid ${C.border}`, padding: '8px 0', fontSize: 12 }}>
+                        <div>
+                          <strong>{g.name}</strong> · {g.city || '—'}
+                          <span style={{ color: C.muted }}> — {g.lines.length}× v {[...new Set(g.lines.map(l => `${l.source === 'order' ? 'zakázka ' : ''}${l.offerNumber || l.group}`).filter(Boolean))].slice(0, 5).join(', ')}{g.lines.length > 5 ? '…' : ''}</span>
+                          {g.emails.length > 0 && <div style={{ color: C.muted }}>{g.emails.join(', ')}</div>}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                          {g.candidates.map(c => (
+                            <button key={c.id} onClick={() => saveDecision(g, 'yes', c.id)} disabled={!!sysBusy}
+                              style={{ ...smallBtn('#2e7d32'), opacity: sysBusy ? 0.5 : 1 }}>
+                              ✅ je to „{c.name}“ ({c.city})
+                            </button>
+                          ))}
+                          <button onClick={() => saveDecision(g, 'no')} disabled={!!sysBusy}
+                            style={{ ...smallBtn('#b00020'), opacity: sysBusy ? 0.5 : 1 }}>❌ žádná z nich</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {sys && sysPanel === 'orphans' && (
+                  <div style={{ marginTop: 12, maxHeight: 520, overflowY: 'auto', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, padding: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>
+                        Hotely, které byly v nabídkách nebo zakázkách, ale žádná karta jim neodpovídá.
+                      </p>
+                      {sys.orphans.length > 1 && (
+                        <button onClick={() => handleCreateOrphans(sys.orphans)} disabled={!!sysBusy}
+                          style={{ ...smallBtn('#5b3fa0'), opacity: sysBusy ? 0.5 : 1 }}>
+                          {sysBusy === 'orphans' ? '…' : `Založit karty pro všechny (${sys.orphans.length})`}
+                        </button>
+                      )}
+                    </div>
+                    {sys.orphans.length === 0 ? <p style={{ fontSize: 13, color: C.muted }}>Všechny hotely z nabídek mají kartu.</p> : sys.orphans.map(o => (
+                      <div key={o.key} style={{ borderBottom: `1px solid ${C.border}`, padding: '8px 0', fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <div>
+                          <strong>{o.name}</strong> · {o.city || '—'}
+                          <span style={{ color: C.muted }}> — {o.sources.length}× v {[...new Set(o.sources.map(s => s.offerNumber || s.group).filter(Boolean))].slice(0, 4).join(', ')}</span>
+                          {o.emails.length > 0 && <div style={{ color: C.muted }}>{o.emails.join(', ')}</div>}
+                        </div>
+                        <button onClick={() => handleCreateOrphans([o])} disabled={!!sysBusy}
+                          style={{ ...smallBtn('#5b3fa0'), opacity: sysBusy ? 0.5 : 1, alignSelf: 'center' }}>
+                          {sysBusy === o.key ? '…' : 'Založit kartu'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {sys && <p style={{ fontSize: 11, color: C.muted, margin: '8px 0 0' }}>Přidané e-maily i založené karty jde vrátit v 🧹 Kontrola adres → 🤖 Automatické běhy.</p>}
+              </div>
+
               {/* HOTOVÉ KARTY */}
               <div style={cardS}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🗂 Karty hotelů ({cards.length})</h3>
-                  <input value={cardSearch} onChange={e => setCardSearch(e.target.value)}
-                    placeholder="Hledat kartu…" style={inp({ width: 220 })} />
+                  <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🗂 Karty hotelů ({onlyUsed || cardSearch ? `${cardsFiltered.length} z ${cards.length}` : cards.length})</h3>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: 12, color: C.muted, display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={onlyUsed} onChange={e => setOnlyUsed(e.target.checked)} disabled={!sys} />
+                      Jen hotely, se kterými pracujeme
+                    </label>
+                    <input value={cardSearch} onChange={e => setCardSearch(e.target.value)}
+                      placeholder="Hledat kartu…" style={inp({ width: 220 })} />
+                  </div>
                 </div>
                 {cards.length === 0 ? (
                   <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>Zatím žádné karty. Vytvoř je ze seznamu nahoře.</p>
@@ -2356,13 +2636,14 @@ export default function Hotels({ navigate, colors, navParams }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr>
                       <th style={thS}>Hotel</th><th style={thS}>Město</th>
-                      <th style={thS}>Adresy</th><th style={thS}>Původ</th><th style={thS}></th>
+                      <th style={thS}>Adresy</th><th style={thS}>Historie</th><th style={thS}>Původ</th><th style={thS}></th>
                     </tr></thead>
                     <tbody>
                       {cardsFiltered.map(c => (
                         <tr key={c.id} style={{ borderBottom: `1px solid ${C.border}` }}>
                           <td style={tdS}>
-                            <strong>{c.name}</strong>
+                            <strong onClick={() => setDetailId(c.id)} title="Otevřít detail karty"
+                              style={{ cursor: 'pointer', color: C.primary, textDecoration: 'underline', textDecorationColor: '#c9d3e6' }}>{c.name}</strong>
                             <button onClick={() => handleEditCardName(c)} title="Upravit název na kartě"
                               style={{ marginLeft: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, padding: 0 }}>✏</button>
                             {(c.aliases || []).length > 0 && <div style={{ fontSize: 11, color: C.muted }}>také jako: {c.aliases.join(' · ')}</div>}
@@ -2397,6 +2678,17 @@ export default function Hotels({ navigate, colors, navParams }) {
                               </div>
                             ))}
                           </td>
+                          <td style={{ ...tdS, fontSize: 11, whiteSpace: 'nowrap', cursor: 'pointer' }} onClick={() => setDetailId(c.id)}>
+                            {(() => {
+                              const sm = summaryOf(c.id);
+                              if (!sm) return <span style={{ color: C.muted }}>{sys ? '—' : ''}</span>;
+                              return (
+                                <span title="Poptáno · v nabídkách · potvrzeno · realizováno">
+                                  📨 {sm.requests} · 📄 {sm.offers} · 🟢 {sm.confirmed} · 🧭 {sm.realized}
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td style={{ ...tdS, fontSize: 11, color: C.muted }}
                               title={c.source?.at ? `Zapsáno ${new Date(c.source.at).toLocaleDateString('cs-CZ')}` : ''}>
                             ⓘ {c.source?.label || 'Zdroj neznámý'}
@@ -2413,6 +2705,151 @@ export default function Hotels({ navigate, colors, navParams }) {
                   </table>
                 )}
               </div>
+              {/* 🏨 DETAIL KARTY */}
+              {detailId && (() => {
+                const c = cards.find(x => x.id === detailId);
+                if (!c) return null;
+                const b = sys ? sys.links.get(c.id) : null;
+                const sm = b ? cardSummary(b) : null;
+                const extra = b ? newEmailsForCard(c, b) : [];
+                const allNotes = [];
+                if (c.notes) allNotes.push({ where: 'Karta', text: c.notes });
+                (b?.offerLines || []).forEach(l => l.notes.forEach(n => allNotes.push({ where: `${l.offerNumber || ''} ${l.group}`.trim(), stamp: n.stamp, text: n.text })));
+                (b?.orderLines || []).forEach(l => { if (l.notes) allNotes.push({ where: `zakázka ${l.group}`, text: l.notes }); });
+                const sec = { margin: '18px 0 6px', fontSize: 14, color: C.primary };
+                const th2 = { ...thS, padding: '6px 8px' };
+                const td2 = { ...tdS, padding: '6px 8px', fontSize: 12, verticalAlign: 'top' };
+                return (
+                  <div onClick={() => setDetailId('')}
+                    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '3vh 12px', overflowY: 'auto' }}>
+                    <div onClick={e => e.stopPropagation()}
+                      style={{ background: C.white, borderRadius: 10, padding: '1.2rem 1.4rem', width: '100%', maxWidth: 1100, boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                        <div>
+                          <h2 style={{ margin: 0, fontSize: 20, color: C.primary }}>🏨 {c.name}</h2>
+                          <div style={{ fontSize: 13, color: C.muted }}>{c.city || '—'} · ⓘ {c.source?.label || 'Zdroj neznámý'}</div>
+                        </div>
+                        <button onClick={() => setDetailId('')} style={smallBtn(C.muted)}>✕ Zavřít</button>
+                      </div>
+
+                      {!sys && <p style={{ fontSize: 13, color: C.muted }}>{sysLoading ? '⏳ Načítám data ze systému…' : 'Data ze systému nejsou načtená.'}</p>}
+
+                      {sys && (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                          {[
+                            ['📨 Poptáno', sm?.requests || 0],
+                            ['📄 V nabídkách', sm?.offers || 0],
+                            ['🟢 Potvrzeno', sm?.confirmed || 0],
+                            ['🧭 Realizováno', sm?.realized || 0],
+                            ['🔴 Zrušeno', sm?.cancelled || 0],
+                            ['🕓 Naposledy', sm?.last ? fmtD(sm.last) : '—'],
+                          ].map(([l, v]) => (
+                            <div key={l} style={{ padding: '6px 12px', background: '#f8f9fb', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}>
+                              {l}: <strong>{v}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <h3 style={sec}>📇 Kontakty</h3>
+                      {(c.emails || []).map(e => (
+                        <div key={e.email} style={{ fontSize: 12 }}>
+                          <a href={`mailto:${e.email}`} style={{ color: C.primary }}>{e.email}</a>
+                          {e.main && <span style={{ color: C.muted }}> · hlavní</span>}
+                          {e.fromService && <span style={{ color: C.muted }}> · 📄 ze servisní karty{e.source?.offerNumber ? ` ${e.source.offerNumber}` : ''}{e.source?.group ? ` (${e.source.group})` : ''}</span>}
+                          {e.auto && e.original && <span style={{ color: C.muted }}> · 🤖 opraveno, v databázi: {e.original}</span>}
+                        </div>
+                      ))}
+                      {extra.length > 0 && (
+                        <div style={{ marginTop: 6, padding: 8, background: '#f4fbf6', border: '1px dashed #9fc9b0', borderRadius: 6, fontSize: 12 }}>
+                          Nové ze servisních karet: {extra.map(x => x.email).join(', ')}
+                          <button onClick={() => handleAddEmails([{ card: c, list: extra }])} disabled={!!sysBusy}
+                            style={{ ...smallBtn('#2e6b45'), marginLeft: 8, opacity: sysBusy ? 0.5 : 1 }}>Přidat ke kartě</button>
+                        </div>
+                      )}
+
+                      {sys && (
+                        <>
+                          <h3 style={sec}>📄 V nabídkách ({b?.offerLines.length || 0})</h3>
+                          {!b?.offerLines.length ? <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Hotel zatím nebyl v žádné nabídce (nebo čeká na potvrzení možné shody).</p> : (
+                            <div style={{ overflowX: 'auto' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead><tr>
+                                  <th style={th2}>Nabídka</th><th style={th2}>Termín</th><th style={th2}>Stav hotelu</th><th style={th2}>Výsledek</th>
+                                  <th style={th2}>DBL / SNGL za pokoj a noc</th><th style={th2}>City tax</th><th style={th2}>Podmínky</th>
+                                </tr></thead>
+                                <tbody>
+                                  {b.offerLines.map(l => (
+                                    <tr key={l.key} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                      <td style={td2}>
+                                        <a href={`#offer-detail/${l.offerId}`} target="_blank" rel="noreferrer" style={{ color: C.primary, fontWeight: 600 }}>{l.offerNumber || 'nabídka'}</a>
+                                        <div>{l.group}</div>
+                                        <div style={{ color: C.muted }}>{l.client}</div>
+                                        {l.how === 'confirmed' && <div style={{ color: C.muted, fontSize: 10 }}>✅ potvrzená shoda</div>}
+                                      </td>
+                                      <td style={td2}>{fmtD(l.dateFrom)}{l.dateTo ? ` – ${fmtD(l.dateTo)}` : ''}{l.nights ? <div style={{ color: C.muted }}>{l.nights} nocí</div> : null}</td>
+                                      <td style={td2}>
+                                        {LINE_STATUS[l.bookingStatus] || '—'}
+                                        {!l.inPrice && <div style={{ color: C.muted }}>{l.isAlt ? 'alternativa' : 'mimo kalkulaci'}</div>}
+                                      </td>
+                                      <td style={td2}>{RESULT_LABEL[l.result]}<div style={{ color: C.muted }}>{OFFER_STATUS_LABEL[l.offerStatus] || l.offerStatus}</div></td>
+                                      <td style={td2}>
+                                        {l.priceDbl !== '' ? <>{l.priceDbl}</> : '—'} / {l.priceSngl !== '' ? l.priceSngl : '—'} {l.currency}
+                                        {l.trpl && <div style={{ color: C.muted }}>TRPL: {l.trpl.price} {l.trpl.type}</div>}
+                                      </td>
+                                      <td style={td2}>{l.cityTaxSngl !== '' ? `SNGL ${l.cityTaxSngl} · ` : ''}{l.cityTax !== '' ? `DBL ${l.cityTax}` : '—'}</td>
+                                      <td style={td2}>
+                                        {l.optionDate && <div>Opce do {fmtD(l.optionDate)}</div>}
+                                        {l.cancellationDeadline && <div>Storno zdarma do {fmtD(l.cancellationDeadline)}</div>}
+                                        {l.depositTerms && <div>Zálohy: {l.depositTerms}</div>}
+                                        {l.deposits.length > 0 && <div style={{ color: C.muted }}>{l.deposits.length}× záloha</div>}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          <h3 style={sec}>📨 Poptávky ({b?.requests.length || 0})</h3>
+                          {!b?.requests.length ? <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Z aplikace jsme hotel zatím nepoptali.</p> : (
+                            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                              {b.requests.map(r => (
+                                <div key={r.id} style={{ fontSize: 12, borderBottom: `1px solid ${C.border}`, padding: '3px 0' }}>
+                                  {fmtD(r.at)} · <strong>{r.group || '—'}</strong>{r.offerNumber ? ` · ${r.offerNumber}` : ''}
+                                  {r.checkIn ? ` · ${fmtD(r.checkIn)}–${fmtD(r.checkOut)}` : ''} <span style={{ color: C.muted }}>→ {r.email}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {(b?.orderLines.length || 0) > 0 && (
+                            <>
+                              <h3 style={sec}>🗂 Staré zakázky ({b.orderLines.length})</h3>
+                              {b.orderLines.map(l => (
+                                <div key={l.key} style={{ fontSize: 12, borderBottom: `1px solid ${C.border}`, padding: '4px 0' }}>
+                                  <a href={`#order-detail/${l.orderId}`} target="_blank" rel="noreferrer" style={{ color: C.primary, fontWeight: 600 }}>{l.group || 'zakázka'}</a>
+                                  {' · '}{fmtD(l.dateFrom)}{l.dateTo ? `–${fmtD(l.dateTo)}` : ''} · {SERVICE_STATUS_LABEL[l.serviceStatus] || l.serviceStatus || '—'}
+                                  {' · '}DBL {l.priceDbl || '—'} / SNGL {l.priceSngl || '—'} {l.currency}
+                                  {(l.rooms.dbl || l.rooms.sngl) ? <span style={{ color: C.muted }}> · pokoje DBL {l.rooms.dbl || 0} / SNGL {l.rooms.sngl || 0}{l.rooms.twn ? ` / TWN ${l.rooms.twn}` : ''}{l.rooms.trpl ? ` / TRPL ${l.rooms.trpl}` : ''}</span> : null}
+                                  {l.cancellationDays && <span style={{ color: C.muted }}> · storno {l.cancellationDays} dní</span>}
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          <h3 style={sec}>📝 Poznámky ({allNotes.length})</h3>
+                          {!allNotes.length ? <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Žádné poznámky.</p> : allNotes.map((n, i) => (
+                            <div key={i} style={{ fontSize: 12, borderBottom: `1px solid ${C.border}`, padding: '4px 0', whiteSpace: 'pre-wrap' }}>
+                              <span style={{ color: C.muted }}>{n.where}{n.stamp ? ` · ${n.stamp}` : ''}:</span> {n.text}
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </>
           )}
         </div>
@@ -2614,7 +3051,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         {f.undone && <div style={{ fontSize: 11, color: '#b00020' }}>↩ vráceno</div>}
                       </td>
                       <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {!f.undone && (f.kind === 'cards' || f.kind === 'ai-names') && (
+                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards'].includes(f.kind) && (
                           <button onClick={() => handleUndoFix(f)} disabled={!!autoBusy}
                             style={{ ...smallBtn(C.muted), opacity: autoBusy ? 0.5 : 1 }}>↩ Vrátit</button>
                         )}
