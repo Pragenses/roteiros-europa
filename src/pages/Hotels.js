@@ -631,7 +631,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v226-prekontrola');
+  console.debug('Hotels v226-prekontrola-mapy');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -3670,6 +3670,10 @@ export default function Hotels({ navigate, colors, navParams }) {
                                     {f.deleted ? <span style={{ color: C.muted }}>— smazáno —</span> : webValue(k, f.value)}
                                     {f.manual && !f.deleted && <span style={{ color: '#2e7d32', fontSize: 10 }}> · ✏ ručně</span>}
                                     {f.source && <> · <a href={f.source} target="_blank" rel="noreferrer" style={{ color: '#1f5f8b', fontSize: 11 }}>zdroj</a></>}
+                                    {k === 'address' && !f.deleted && f.value && (
+                                      <> · <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([fieldVal(c, 'name') || c.name, f.value].filter(Boolean).join(', '))}`}
+                                        target="_blank" rel="noreferrer" style={{ color: '#1f5f8b', fontSize: 11, fontWeight: 600 }}>📍 Google Maps</a></>
+                                    )}
                                   </td>
                                   <td style={{ ...td2, textAlign: 'right', whiteSpace: 'nowrap' }}>
                                     <button onClick={() => handleEditWebField(c, k, label)} title="Upravit" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}>✏</button>
