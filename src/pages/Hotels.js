@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES } from '../lib/hotelAi';
+import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES, setAiStatusListener } from '../lib/hotelAi';
 import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
 import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -623,7 +623,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v222-internet-kontrola');
+  console.debug('Hotels v223-ai-limit');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1189,6 +1189,9 @@ export default function Hotels({ navigate, colors, navParams }) {
   // ⏹ Zastavit — běh se dokončí u rozpracované adresy a pak skončí; co je
   // hotové, z toho se rovnou založí karty.
   const aiStopRef = React.useRef(false);
+  // Hlášení „⏸ limit AI účtu — čekám…“ z AI knihovny do lišty průběhu.
+  const [aiWait, setAiWait] = useState('');
+  useEffect(() => { setAiStatusListener(setAiWait); return () => setAiStatusListener(null); }, []);
 
   const aiKey = (email, city) => `${String(email || '').trim().toLowerCase()}|${normCity(city)}`;
   const aiDocId = (k) => encodeURIComponent(k).slice(0, 1400);
@@ -1947,6 +1950,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
     const budget = makeBudget();
     const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0 };
+    const errors = new Map();
     const doneIds = [];
     try {
       let idx = 0, done = 0;
@@ -1964,12 +1968,14 @@ export default function Hotels({ navigate, colors, navParams }) {
           } catch (err) {
             console.error('Internetová kontrola karty selhala:', card.name, err);
             stats.failed++;
+            const msg = String(err && err.message || err).slice(0, 120);
+            errors.set(msg, (errors.get(msg) || 0) + 1);
           }
           done++;
           if (!aiStopRef.current) setAiBusy(`Internetová kontrola: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
         }
       };
-      await Promise.all([1, 2, 3].map(worker));
+      await Promise.all([1, 2].map(worker));
       if (doneIds.length) {
         await setDoc(doc(collection(db, 'hotelAutoFixes')), {
           runId: at, at, by, kind: 'web-check', undone: false, cardIds: [], webCardIds: doneIds, added: [], rowIds: [],
@@ -2015,7 +2021,8 @@ export default function Hotels({ navigate, colors, navParams }) {
         (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🌐 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
         `Zkontrolováno — jisté: ${stats.ok}\n` +
         `Zkontrolováno — nejisté (údaje uložené, zkontrolujte): ${stats.unsure}\n` +
-        (stats.failed ? `Nepodařilo se (zkuste znovu): ${stats.failed}\n` : '') +
+        (stats.failed ? `Nepodařilo se (zůstávají ke kontrole, stačí spustit znovu): ${stats.failed}\n` +
+          [...errors.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, n]) => `   • ${n}× ${m}`).join('\n') + '\n' : '') +
         `\nSloučeno duplicitních karet (jisté): ${stats.merged}\n` +
         `Možné duplicity k vašemu rozhodnutí: ${stats.dupLeft}\n\n` +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
@@ -3099,7 +3106,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                 {sysError && <div style={{ marginTop: 8, fontSize: 12, color: '#b00020' }}>Chyba: {sysError}</div>}
                 {aiBusy && (
                   <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: '#5b3fa0' }}>
-                    ⏳ {aiBusy} <span style={{ color: C.muted, fontSize: 12 }}>— nechte stránku otevřenou</span>
+                    ⏳ {aiBusy}{aiWait ? ` · ${aiWait}` : ''} <span style={{ color: C.muted, fontSize: 12 }}>— nechte stránku otevřenou</span>
                     <button onClick={() => { aiStopRef.current = true; setAiBusy('Zastavuji — dokončuji rozpracované a ukládám…'); }} style={smallBtn('#b00020')}>⏹ Zastavit</button>
                   </div>
                 )}
