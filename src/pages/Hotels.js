@@ -645,7 +645,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v230-centraly');
+  console.debug('Hotels v231-auto-prirazeni');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1623,7 +1623,8 @@ export default function Hotels({ navigate, colors, navParams }) {
         } }));
         return [...links, { t: 'set', ref, data: {
           name: name || o.name, city: cityFromCards(o.city), country: '', aliases: [], domain: '',
-          emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true })),
+          emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true,
+            ...(sys && sys.idx.centralEmails.has(String(e).toLowerCase()) && !isPortalEmail(e) ? { type: 'central' } : {}) })),
           notes: note || '',
           source: { type: 'services', label: '📄 Z nabídek / zakázek', at },
           createdAt: serverTimestamp(),
@@ -1723,21 +1724,25 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   // ➕ Hotely z nabídek bez karty → AI ověří na internetu → karta / propojení.
   const pendingOrphans = React.useMemo(() => (sys ? sys.orphans.filter(o => !orphanChecks[o.key]) : []), [sys, orphanChecks]);
-  const handleAiOrphans = async () => {
+  // auto = součást hromadné kontroly: bez dotazu a hlášení, se společným limitem;
+  // vrací { stats, cardIds, linkedIds }.
+  const handleAiOrphans = async (opts = {}) => {
+    const auto = opts.auto === true;
     const list = pendingOrphans;
-    if (!list.length) return;
-    if (!window.confirm(
+    if (!list.length) return auto ? { stats: { linked: 0, created: 0, notHotel: 0, unsure: 0 }, cardIds: [], linkedIds: [] } : undefined;
+    if (!auto && !window.confirm(
       `🤖 AI ověří ${list.length} hotelů z nabídek, které nemají kartu.\n\n` +
       '• na internetu zjistí, jestli je to opravdu hotel, jeho oficiální název a město\n' +
       '• když už pro něj kartu máme, propojí ho s ní; jinak založí novou kartu — JEN se zdrojem\n' +
       '• lodě, agentury a nesmysly odloží stranou, nejisté nechá na vás\n\n' +
       `Cca 2 Kč za hotel. Limit útraty: ${aiLimit} Kč. Databáze hotelů se nemění. Celý běh jde vrátit.\n\nPokračovat?`)) return;
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
-    const budget = makeBudget();
+    const budget = opts.budget || makeBudget();
     const results = new Map();
+    const pre = auto ? 'Krok 2/3 · ' : '';
     try {
       let idx = 0, done = 0;
-      setAiBusy(`Ověřuji hotely: 0 z ${list.length}`);
+      setAiBusy(`${pre}Ověřuji hotely z nabídek bez karty: 0 z ${list.length}`);
       const worker = async () => {
         while (idx < list.length) {
           if (!budget.ok()) return;
@@ -1750,14 +1755,14 @@ export default function Hotels({ navigate, colors, navParams }) {
           await setDoc(doc(db, 'hotelOrphanChecks', checkDocId(o.key)), check);
           results.set(o.key, check);
           done++;
-          if (!aiStopRef.current) setAiBusy(`Ověřuji hotely: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+          if (!aiStopRef.current) setAiBusy(`${pre}Ověřuji hotely z nabídek bez karty: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
         }
       };
       await Promise.all([1, 2, 3].map(worker));
 
       // Jisté hotely → propojit s existující kartou, nebo založit novou.
       setAiBusy('Zakládám karty a propojuji…');
-      const units = [], cardIds = [], linkKeys = [];
+      const units = [], cardIds = [], linkKeys = [], linkedIds = [];
       const madeNow = new Map();   // stejný hotel z více řádků → jedna karta
       const stats = { linked: 0, created: 0, notHotel: 0, unsure: 0 };
       const linkSources = (o, cardId) => o.sources.filter(s => s.key).forEach(s => {
@@ -1776,14 +1781,15 @@ export default function Hotels({ navigate, colors, navParams }) {
         if (madeNow.has(gk)) { linkSources(o, madeNow.get(gk)); stats.linked++; continue; }
         const existing = [...nameMatches(sys.idx, r.name, city), ...nameMatches(sys.idx, r.name, o.city)];
         const uniq = [...new Map(existing.map(c => [c.id, c])).values()];
-        if (uniq.length === 1) { linkSources(o, uniq[0].id); madeNow.set(gk, uniq[0].id); stats.linked++; continue; }
+        if (uniq.length === 1) { linkSources(o, uniq[0].id); madeNow.set(gk, uniq[0].id); linkedIds.push(uniq[0].id); stats.linked++; continue; }
         if (uniq.length > 1) { stats.unsure++; continue; }
         const ref = doc(collection(db, 'hotelCards'));
         cardIds.push(ref.id); madeNow.set(gk, ref.id); stats.created++;
         units.push([{ t: 'set', ref, data: {
           name: r.name, city: cityFromCards(city), country: r.country || '', aliases: [], domain: '',
           web: r.website || '',
-          emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true })),
+          emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true,
+            ...(sys && sys.idx.centralEmails.has(String(e).toLowerCase()) && !isPortalEmail(e) ? { type: 'central' } : {}) })),
           notes: linkNormName(o.name) !== linkNormName(r.name) ? `V nabídce psáno: ${o.name}` : '',
           source: { type: 'ai', label: '🤖 AI — ověřeno na webu (hotel z nabídek)', at },
           ai: { name: { value: r.name, how: 'web', source: r.source, evidence: r.evidence, model: r.model, at } },
@@ -1801,6 +1807,7 @@ export default function Hotels({ navigate, colors, navParams }) {
         });
       }
       await Promise.all([fetchCards(), fetchFixLog(), fetchAiChecks(), loadSystemData()]);
+      if (auto) return { stats, cardIds, linkedIds };
       setAiBusy('');
       alert(
         (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🤖 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
@@ -1810,6 +1817,7 @@ export default function Hotels({ navigate, colors, navParams }) {
         `Nejisté (zůstávají s návrhem AI): ${stats.unsure}\n\n` +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
     } catch (e) {
+      if (auto) { console.error('AI hotely z nabídek selhaly:', e); return null; }
       setAiBusy('');
       await Promise.all([fetchAiChecks(), loadSystemData()]);
       alert(`AI se přerušila: ${e.message}\n\nUtraceno ${fmtKc(budget.spent())} Kč. Ověřené hotely jsou uložené — příště se za ně neplatí.`);
@@ -1818,22 +1826,23 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   // 🔶 Možné shody → AI rozhodne (bez internetu, porovná názvy, města, adresy).
   const pendingMaybe = React.useMemo(() => maybeGroups.filter(g => !matchChecks[g.key]), [maybeGroups, matchChecks]);
-  const handleAiMaybe = async () => {
+  const handleAiMaybe = async (opts = {}) => {
+    const auto = opts.auto === true;
     const groups = pendingMaybe;
-    if (!groups.length) return;
-    if (!window.confirm(
+    if (!groups.length) return auto ? { stats: { yes: 0, no: 0, unsure: 0, failed: 0 }, linkedIds: [] } : undefined;
+    if (!auto && !window.confirm(
       `🤖 AI posoudí ${groups.length} možných shod (hotel z nabídky ↔ karta).\n\n` +
       'Jisté shody propojí sama, jisté neshody pošle mezi hotely bez karty, nejisté nechá na vás s návrhem.\n' +
       `Cca 0,30 Kč za shodu. Limit útraty: ${aiLimit} Kč. Celý běh jde vrátit.\n\nPokračovat?`)) return;
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
-    const budget = makeBudget();
+    const budget = opts.budget || makeBudget();
     const cardById = new Map(cards.map(c => [c.id, c]));
     const stats = { yes: 0, no: 0, unsure: 0, failed: 0 };
-    const units = [], linkKeys = [];
+    const units = [], linkKeys = [], linkedIds = [];
     try {
       for (let i = 0; i < groups.length; i += 6) {
         if (!budget.ok()) break;
-        if (!aiStopRef.current) setAiBusy(`Posuzuji shody: ${i} z ${groups.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+        if (!aiStopRef.current) setAiBusy(`${auto ? 'Krok 1/3 · ' : ''}Posuzuji možné shody: ${i} z ${groups.length} · utraceno ${fmtKc(budget.spent())} Kč`);
         const chunk = groups.slice(i, i + 6);
         const items = chunk.map((g, j) => ({
           i: j, name: g.name, city: g.city, emails: g.emails.slice(0, 4),
@@ -1853,7 +1862,7 @@ export default function Hotels({ navigate, colors, navParams }) {
           batch.set(doc(db, 'hotelMatchChecks', checkDocId(g.key)), check);
           if (!check.sure) { stats.unsure++; return; }
           const decision = match ? 'yes' : 'no';
-          if (match) stats.yes++; else stats.no++;
+          if (match) { stats.yes++; linkedIds.push(match); } else stats.no++;
           g.lines.forEach(line => {
             linkKeys.push(line.key);
             units.push([{ t: 'set', ref: doc(db, 'hotelCardLinks', linkDocId(line.key)), data: {
@@ -1874,6 +1883,7 @@ export default function Hotels({ navigate, colors, navParams }) {
         });
       }
       await Promise.all([fetchFixLog(), fetchAiChecks(), loadSystemData()]);
+      if (auto) return { stats, linkedIds };
       setAiBusy('');
       alert(
         (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🤖 Hotovo.\n\n') +
@@ -1883,6 +1893,7 @@ export default function Hotels({ navigate, colors, navParams }) {
         (stats.failed ? `Nepodařilo se posoudit (zkuste tlačítko znovu): ${stats.failed}\n` : '') + '\n' +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
     } catch (e) {
+      if (auto) { console.error('AI posouzení shod selhalo:', e); return null; }
       setAiBusy('');
       await Promise.all([fetchAiChecks(), loadSystemData()]);
       alert(`AI se přerušila: ${e.message}\n\nUtraceno ${fmtKc(budget.spent())} Kč.`);
@@ -2125,26 +2136,44 @@ export default function Hotels({ navigate, colors, navParams }) {
     }
   };
 
-  const handleWebCheck = async (list, label) => {
-    if (!list.length) return;
-    if (list.length > 1 && !window.confirm(
+  // prep = hromadná kontrola hotelů z nabídek: nejdřív AI posoudí možné shody
+  // a ověří hotely z nabídek bez karty (založí karty), pak kontrola všech karet.
+  const handleWebCheck = async (list, label, prep) => {
+    const prepCount = prep ? pendingMaybe.length + pendingOrphans.length : 0;
+    if (!list.length && !prepCount) return;
+    if ((list.length > 1 || prep) && !window.confirm(
       `🌐 Internetová kontrola: ${label} (${list.length} karet).\n\n` +
+      (prep ? `Nejdřív AI sama:\n• posoudí možné shody (${pendingMaybe.length}) — jisté přiřadí ke kartám\n• ověří hotely z nabídek bez karty (${pendingOrphans.length}) — jisté hotely založí jako nové karty\n  a ty se pak hned zkontrolují také\nNejisté nechá na vás.\n\nPak u každé karty:\n` : '') +
       '• AI na internetu dohledá adresu, web, telefon, hvězdičky, pokoje, skupiny a hodnocení — každý údaj se zdrojem\n' +
       '• u každého e-mailu určí, jestli je to hotel, skupiny, rezervace, sales nebo 🏢 centrála\n' +
       '• dohledá další zveřejněné e-maily hotelu (skupiny, sales, rezervace) a přidá je ke kartě se zdrojem\n' +
       '• karty se stejnou adresou nebo stránkou hotelu jistě sloučí (🤖, jde vrátit), nejisté nechá na vás\n' +
       '• ručně zadané údaje nepřepíše; databáze hotelů se nemění\n\n' +
       `Cca 5 Kč za kartu. Limit útraty: ${aiLimit} Kč.\n\nPokračovat?`)) return;
-    if (list.length === 1 && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 5 Kč)`)) return;
+    if (list.length === 1 && !prep && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 5 Kč)`)) return;
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
     const budget = makeBudget();
+    const prepStats = { maybe: null, orphans: null };
+    if (prep) {
+      prepStats.maybe = await handleAiMaybe({ auto: true, budget });
+      if (budget.ok()) prepStats.orphans = await handleAiOrphans({ auto: true, budget });
+      // Nové a nově přiřazené karty se zkontrolují také (čerstvě načtené).
+      const extra = new Set([...((prepStats.maybe && prepStats.maybe.linkedIds) || []), ...((prepStats.orphans && prepStats.orphans.linkedIds) || []),
+        ...((prepStats.orphans && prepStats.orphans.cardIds) || [])]);
+      const fresh = (await getDocs(collection(db, 'hotelCards'))).docs.map(d => ({ id: d.id, ...d.data() }));
+      const freshById = new Map(fresh.map(c => [c.id, c]));
+      const inList = new Set(list.map(c => c.id));
+      list = [...list.map(c => freshById.get(c.id)).filter(Boolean),
+        ...[...extra].filter(id => !inList.has(id)).map(id => freshById.get(id)).filter(c => c && needsWeb(c))];
+      if (!budget.ok()) list = [];
+    }
     const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0, moved: 0, found: 0, central: 0 };
     const moves = [];
     const errors = new Map();
     const doneIds = [];
     try {
       let idx = 0, done = 0;
-      setAiBusy(`Internetová kontrola: 0 z ${list.length}`);
+      setAiBusy(`${prep ? 'Krok 3/3 · ' : ''}Internetová kontrola: 0 z ${list.length}`);
       const worker = async () => {
         while (idx < list.length) {
           if (!budget.ok()) return;
@@ -2204,7 +2233,7 @@ export default function Hotels({ navigate, colors, navParams }) {
             errors.set(msg, (errors.get(msg) || 0) + 1);
           }
           done++;
-          if (!aiStopRef.current) setAiBusy(`Internetová kontrola: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+          if (!aiStopRef.current) setAiBusy(`${prep ? 'Krok 3/3 · ' : ''}Internetová kontrola: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
         }
       };
       await Promise.all([1, 2].map(worker));
@@ -2251,6 +2280,9 @@ export default function Hotels({ navigate, colors, navParams }) {
       setAiBusy('');
       alert(
         (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🌐 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
+        (prepStats.maybe ? `Možné shody — přiřazeno AI: ${prepStats.maybe.stats.yes}, odmítnuto: ${prepStats.maybe.stats.no}, nejisté: ${prepStats.maybe.stats.unsure}\n` : '') +
+        (prepStats.orphans ? `Hotely z nabídek bez karty — nové karty: ${prepStats.orphans.stats.created}, přiřazeno k existující: ${prepStats.orphans.stats.linked}, není hotel: ${prepStats.orphans.stats.notHotel}, nejisté: ${prepStats.orphans.stats.unsure}\n` : '') +
+        (prep ? '\n' : '') +
         `Zkontrolováno — jisté: ${stats.ok}\n` +
         `Zkontrolováno — nejisté (údaje uložené, zkontrolujte): ${stats.unsure}\n` +
         (stats.failed ? `Nepodařilo se (zůstávají ke kontrole, stačí spustit znovu): ${stats.failed}\n` +
@@ -3396,9 +3428,9 @@ export default function Hotels({ navigate, colors, navParams }) {
                 {sys && (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 10, padding: 8, background: '#eef5fb', borderRadius: 6, fontSize: 12 }}>
                     <strong style={{ color: '#1f5f8b' }}>🌐 Internetová kontrola:</strong>
-                    <button onClick={() => handleWebCheck(webPendingWork, 'hotely z nabídek a zakázek')} disabled={!!aiBusy || !!sysBusy || !webPendingWork.length}
-                      style={{ ...smallBtn('#1f5f8b'), opacity: (aiBusy || sysBusy || !webPendingWork.length) ? 0.5 : 1 }}>
-                      hotely z nabídek a zakázek ({webPendingWork.length})
+                    <button onClick={() => handleWebCheck(webPendingWork, 'hotely z nabídek a zakázek', true)} disabled={!!aiBusy || !!sysBusy || !(webPendingWork.length + pendingMaybe.length + pendingOrphans.length)}
+                      style={{ ...smallBtn('#1f5f8b'), opacity: (aiBusy || sysBusy || !(webPendingWork.length + pendingMaybe.length + pendingOrphans.length)) ? 0.5 : 1 }}>
+                      hotely z nabídek a zakázek ({webPendingWork.length}{pendingMaybe.length + pendingOrphans.length ? ` + ${pendingMaybe.length + pendingOrphans.length} k přiřazení` : ''})
                     </button>
                     <button onClick={() => handleWebCheck(webPendingAll, 'všechny karty')} disabled={!!aiBusy || !!sysBusy || !webPendingAll.length}
                       style={{ ...smallBtn('#41698a'), opacity: (aiBusy || sysBusy || !webPendingAll.length) ? 0.5 : 1 }}>
@@ -3494,7 +3526,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                     </p>
                     {pendingMaybe.length > 0 && (
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, padding: 8, background: '#f8f5fe', borderRadius: 6 }}>
-                        <button onClick={handleAiMaybe} disabled={!!aiBusy || !!sysBusy}
+                        <button onClick={() => handleAiMaybe()} disabled={!!aiBusy || !!sysBusy}
                           style={{ ...smallBtn('#5b3fa0'), opacity: (aiBusy || sysBusy) ? 0.5 : 1 }}>
                           🤖 Nechat AI posoudit ({pendingMaybe.length})
                         </button>
@@ -3541,7 +3573,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                     </div>
                     {pendingOrphans.length > 0 && (
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '8px 0', padding: 8, background: '#f8f5fe', borderRadius: 6 }}>
-                        <button onClick={handleAiOrphans} disabled={!!aiBusy || !!sysBusy}
+                        <button onClick={() => handleAiOrphans()} disabled={!!aiBusy || !!sysBusy}
                           style={{ ...smallBtn('#5b3fa0'), opacity: (aiBusy || sysBusy) ? 0.5 : 1 }}>
                           🤖 Ověřit AI a založit karty ({pendingOrphans.length})
                         </button>
