@@ -60,11 +60,11 @@ function extractJSON(text) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function callOnce({ model, prompt, web, maxTokens }) {
+async function callOnce({ model, prompt, web, maxTokens, maxSearches }) {
   const apiKey = await getApiKey();
   if (!apiKey) throw new Error('Chybí klíč k AI (Settings → Anthropic API key).');
   const body = { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] };
-  if (web) body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }];
+  if (web) body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxSearches || 3 }];
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -207,4 +207,72 @@ ${JSON.stringify(items)}`;
     arr = pick(r.json); cost += r.cost;
   }
   return { results: arr, cost, model: r.model };
+}
+
+
+// ── 🌐 Internetová kontrola karty hotelu ──────────────────────────────────────
+// Jedno volání (Sonnet + hledání na webu) vrátí údaje o hotelu, KAŽDÝ se zdrojem,
+// a typ každé e-mailové adresy na kartě. Údaj bez odkazu na zdroj se nepoužije.
+export const EMAIL_TYPES = {
+  hotel: 'přímo hotel', groups: 'skupiny', reservations: 'rezervace', sales: 'sales / obchod',
+  events: 'eventy / MICE', central: '🏢 centrální rezervace', agency: 'agentura / jiný', unknown: 'nezjištěno',
+};
+const FIELD_KEYS = ['name', 'address', 'city', 'country', 'website', 'phone', 'stars', 'rooms', 'groups', 'groupPolicy', 'google', 'booking'];
+
+export async function webCheckCard(card) {
+  const emails = (card.emails || []).map(e => e.email).filter(Boolean).slice(0, 12);
+  const prompt =
+`You are checking one hotel record for a tour operator that books GROUPS. Correctness matters more than completeness.
+Hotel name on our card: ${card.name}
+Also known as: ${(card.aliases || []).join(' | ') || '-'}
+City on our card: ${card.city || 'unknown'}
+E-mail addresses on our card: ${emails.join(', ') || 'none'}
+
+Search the web (official hotel website, chain website, Google, Booking.com, TripAdvisor) and return ONLY one JSON object:
+{
+  "sure": true|false,                       // true only if you are certain which real hotel this card is
+  "name":        {"value": "<official name>", "source": "<URL>"},
+  "address":     {"value": "<street address with postcode>", "source": "<URL>"},
+  "city":        {"value": "<city>", "source": "<URL>"},
+  "country":     {"value": "<country in English>", "source": "<URL>"},
+  "website":     {"value": "<official website URL of THIS hotel (on a chain site: this hotel's own page)>", "source": "<URL>"},
+  "phone":       {"value": "<main phone with country code>", "source": "<URL>"},
+  "stars":       {"value": <official star rating number or null>, "source": "<URL>"},
+  "rooms":       {"value": <number of rooms or null>, "source": "<URL>"},
+  "groups":      {"value": true|false|null, "source": "<URL>"},   // does the hotel accept/sell group bookings
+  "groupPolicy": {"value": "<short group conditions if published (min rooms, deposit, cancellation), else empty>", "source": "<URL>"},
+  "google":      {"value": {"score": <number 1-5 or null>, "count": <number or null>}, "source": "<URL>"},
+  "booking":     {"value": {"score": <number 1-10 or null>, "count": <number or null>}, "source": "<URL>"},
+  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|agency|unknown"} ],
+  "evidence": "<one short sentence>"
+}
+Rules:
+- Every value must come from the page in its "source". If you cannot find a value on a real page, use null / "" for the value and "" for the source. Never invent URLs or numbers.
+- "central" = a chain's central/regional reservation office or an address shared by several hotels (e.g. hXXXX@accor.com is a hotel's own address, but "reservations.central@..." or a booking centre for many hotels is central).
+- If the card name, city or e-mails do not clearly point to one hotel, set "sure": false.`;
+  const r = await callAi({ prompt, web: true, maxTokens: 1800, model: MODEL_FALLBACK, maxSearches: 6 });
+  const j = r.json && !Array.isArray(r.json) ? r.json : {};
+  const okUrl = (u) => /^https?:\/\/[^\s]+\.[^\s]+/i.test(String(u || '').trim());
+  const fields = {};
+  for (const k of FIELD_KEYS) {
+    const f = j[k];
+    if (!f || typeof f !== 'object') continue;
+    const v = f.value;
+    const empty = v === null || v === undefined || v === '' ||
+      (typeof v === 'object' && v !== null && !Array.isArray(v) && Object.values(v).every(x => x === null || x === '' || x === undefined));
+    if (empty || !okUrl(f.source)) continue;     // bez zdroje se údaj nepoužije
+    fields[k] = { value: v, source: String(f.source).trim() };
+  }
+  const known = new Set(emails.map(e => e.toLowerCase()));
+  const emailTypes = {};
+  (Array.isArray(j.emails) ? j.emails : []).forEach(e => {
+    const em = String(e && e.email || '').trim().toLowerCase();
+    if (known.has(em) && EMAIL_TYPES[e.type]) emailTypes[em] = e.type;
+  });
+  return {
+    sure: j.sure === true && !!fields.name,
+    fields, emailTypes,
+    evidence: String(j.evidence || '').trim().slice(0, 300),
+    cost: r.cost, model: r.model,
+  };
 }
