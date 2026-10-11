@@ -95,20 +95,45 @@ async function callOnce({ model, prompt, web, maxTokens, maxSearches }) {
 // stejného druhu jdou rovnou na Sonnet (bez zbytečného neúspěšného pokusu).
 const useFallback = { web: false, plain: false, last: false };
 
+// Společná pauza při limitu AI účtu: když jedno volání narazí na limit,
+// počkají všechna (jinak by se navzájem dál zahlcovala).
+let pauseUntil = 0;
+let statusListener = null;
+export const setAiStatusListener = (fn) => { statusListener = fn; };
+const waitForPause = async () => {
+  while (Date.now() < pauseUntil) {
+    const sec = Math.ceil((pauseUntil - Date.now()) / 1000);
+    if (statusListener) statusListener(`⏸ limit AI účtu — čekám ${sec} s`);
+    await sleep(Math.min(5000, pauseUntil - Date.now()));
+  }
+  if (statusListener) statusListener('');
+};
+
 export async function callAi(opts) {
   const kind = opts.web ? 'web' : 'plain';
   let model = opts.model || (useFallback[kind] ? MODEL_FALLBACK : MODEL_FAST);
   if (model === MODEL_FALLBACK && useFallback.last) model = MODEL_LAST;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  let busyTries = 0, netTries = 0;
+  for (let attempt = 0; attempt < 14; attempt++) {
+    await waitForPause();
     try {
       return await callOnce({ ...opts, model });
     } catch (e) {
       const busy = e.status === 429 || e.status === 529 || /overloaded|rate_limit/i.test(e.kind);
-      if (busy) { await sleep(4000 * (attempt + 1)); continue; }
+      if (busy && busyTries < 8) {
+        busyTries++;
+        const wait = Math.min(120, 30 * busyTries) * 1000;
+        pauseUntil = Math.max(pauseUntil, Date.now() + wait);
+        continue;
+      }
+      // Výpadek připojení (prohlížeč hlásí "Failed to fetch") → zkusit znovu.
+      const network = !e.status && (e instanceof TypeError || /fetch|network/i.test(e.message || ''));
+      if (network && netTries < 3) { netTries++; await sleep(10000 * netTries); continue; }
       const unsupported = (e.status === 400 || e.status === 404) && model === MODEL_FAST && /model|tool|support/i.test(e.message);
       if (unsupported) { model = MODEL_FALLBACK; useFallback[kind] = true; continue; }
       const noModel = (e.status === 400 || e.status === 404) && model === MODEL_FALLBACK && /model/i.test(e.message);
       if (noModel) { model = MODEL_LAST; useFallback.last = true; continue; }
+      if (busy) throw new Error('Limit AI účtu je trvale vyčerpaný — zkuste to později.');
       throw e;
     }
   }
