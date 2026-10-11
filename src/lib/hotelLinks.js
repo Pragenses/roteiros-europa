@@ -147,19 +147,31 @@ export const sameName = (a, b) => {
   return pa.includes(pb) || pb.includes(pa);
 };
 
+// Karta, která není hotel, ale centrála / obchodní kancelář řetězce.
+// Ruční označení má přednost před internetovou kontrolou.
+export const isCentralCard = (c) => !!c && (c.kindManual ? c.kindManual === 'central' : !!(c.webInfo && c.webInfo.central));
+
 // Rejstřík karet: e-mail → karty, řádek databáze → karta, název+město → karty.
+// Adresy centrál (typ „centrální rezervace“ nebo jakákoli adresa na kartě
+// centrály) a portálů se zapisují zvlášť — samy o sobě hotel neurčují.
 export function buildCardIndex(cards, hotelRows) {
   const byEmail = new Map();
   const byNameCity = new Map();   // cityKey → [{ card, n }]
   const byId = new Map();
+  const centralEmails = new Set();
+  const centralCards = new Set();
   for (const c of cards || []) {
     byId.set(c.id, c);
+    const central = isCentralCard(c);
+    if (central) centralCards.add(c.id);
     for (const e of (c.emails || [])) {
       const k = cleanEmail(e.email);
       if (!k) continue;
+      if (central || e.type === 'central' || isPortalEmail(k)) centralEmails.add(k);
       if (!byEmail.has(k)) byEmail.set(k, new Set());
       byEmail.get(k).add(c.id);
     }
+    if (central) continue;   // centrála se nehledá podle názvu
     const ck = cityKey(c.city);
     const names = [c.name, ...(c.aliases || [])].map(normName).filter(n => n && n.length >= 3);
     if (!byNameCity.has(ck)) byNameCity.set(ck, []);
@@ -167,7 +179,7 @@ export function buildCardIndex(cards, hotelRows) {
   }
   const rowCard = new Map();
   (hotelRows || []).forEach(r => { if (r.cardId) rowCard.set(r.id, r.cardId); });
-  return { byEmail, byNameCity, byId, rowCard };
+  return { byEmail, byNameCity, byId, rowCard, centralEmails, centralCards };
 }
 
 // Karty, jejichž název odpovídá (ve stejném městě).
@@ -190,6 +202,22 @@ const withoutCity = (n, city) => {
   return String(n || '').split(' ').filter(w => w && !words.has(w)).join(' ');
 };
 
+// Slova značek řetězců: název, který se skládá jen z nich („radisson“,
+// „best western plus“, „novotel“), nesmí odpovídat každému hotelu té značky.
+const BRAND_WORDS = new Set(('radisson blu red park inn collection individuals hilton garden doubletree hampton curio canopy marriott courtyard moxy ' +
+  'sheraton westin renaissance aloft element autograph ac novotel mercure ibis styles budget sofitel pullman mgallery adagio swissotel ' +
+  'fairmont movenpick scandic nh nhow melia sol innside me best western plus premier holiday express crowne plaza intercontinental indigo ' +
+  'kempinski motel one leonardo nyx vienna austria trend maritim steigenberger hyatt regency centric thon clarion quality comfort ramada ' +
+  'wyndham golden tulip kyriad campanile premiere classe barcelo occidental hotusa eurostars exe catalonia iberostar riu h10 axel ' +
+  'group groups leisure sales central reservations reservation office desk').split(/\s+/));
+const brandOnly = (n) => n.split(' ').filter(Boolean).every(w => BRAND_WORDS.has(w));
+const nameOk = (a, b) => {
+  if (!sameName(a, b)) return false;
+  if (a === b) return true;
+  const shorter = a.length <= b.length ? a : b;
+  return !brandOnly(shorter);
+};
+
 export function nameMatches(idx, name, city) {
   const n = withoutCity(normName(name), city);
   if (!n || n.length < 3) return [];
@@ -197,7 +225,7 @@ export function nameMatches(idx, name, city) {
   const out = new Map();
   list.forEach(({ card, n: cn }) => {
     const c = withoutCity(cn, card.city || city);
-    if (c.length >= 3 && sameName(n, c)) out.set(card.id, card);
+    if (c.length >= 3 && nameOk(n, c)) out.set(card.id, card);
   });
   return [...out.values()];
 }
@@ -211,23 +239,30 @@ export function resolveCard(idx, { cardId, emails, name, city, linkKey }, decisi
   const dec = linkKey && decisions ? decisions[linkKey] : null;
   if (dec && dec.decision === 'yes' && idx.byId.has(dec.cardId)) return { cardId: dec.cardId, how: 'confirmed' };
   const rejected = dec && dec.decision === 'no' ? new Set([dec.cardId, ...(dec.rejected || [])]) : new Set();
+  const centralCards = idx.centralCards || new Set();
+  const centralEmails = idx.centralEmails || new Set();
 
-  const byMail = new Set();
+  // Vlastní adresy hotelu (ne centrála, ne portál) → karty hotelů.
+  // Adresy centrály → jen karty HOTELŮ, které tu adresu také mají (rozhodne název).
+  const byMail = new Set(), byCentral = new Set();
   (emails || []).forEach(e => {
     const k = usableEmail(e);
-    if (k && !isPortalEmail(k) && idx.byEmail.has(k)) idx.byEmail.get(k).forEach(id => byMail.add(id));
+    if (!k || !idx.byEmail.has(k)) return;
+    const central = centralEmails.has(k) || isPortalEmail(k);
+    idx.byEmail.get(k).forEach(id => { if (!centralCards.has(id)) (central ? byCentral : byMail).add(id); });
   });
-  rejected.forEach(id => byMail.delete(id));
+  rejected.forEach(id => { byMail.delete(id); byCentral.delete(id); });
   if (byMail.size === 1) return { cardId: [...byMail][0], how: 'email' };
 
-  const byName = nameMatches(idx, name, city).filter(c => !rejected.has(c.id));
-  if (byMail.size > 1) {
+  const byName = nameMatches(idx, name, city).filter(c => !rejected.has(c.id) && !centralCards.has(c.id));
+  const pool = byMail.size > 1 ? byMail : byCentral;
+  if (pool.size) {
     // Sdílená adresa (centrála řetězce) — rozhodne název.
-    const both = byName.filter(c => byMail.has(c.id));
+    const both = byName.filter(c => pool.has(c.id));
     if (both.length === 1) return { cardId: both[0].id, how: 'email' };
     // Jinak vybere člověk z karet, které adresu sdílejí (+ shody podle názvu).
     const cand = new Map();
-    [...byMail].forEach(id => cand.set(id, idx.byId.get(id)));
+    [...pool].forEach(id => cand.set(id, idx.byId.get(id)));
     byName.forEach(c => cand.set(c.id, c));
     return { how: 'maybe', candidates: [...cand.values()].slice(0, 8) };
   }
