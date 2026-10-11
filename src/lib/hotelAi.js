@@ -328,7 +328,7 @@ Search the web (official hotel website, chain website, Google Maps, Booking.com,
   "salesTerms":     {"value": "<IN CZECH, max 5 short points: the hotel's published booking / sales / cancellation terms (general T&C or group terms: deposit, prepayment, cancellation deadlines and fees, release / option, no-show, FOC, payment) — else empty>", "source": "<URL of the page or PDF with the terms>"},
   "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|portal|agency|other|unknown", "belongsTo": {"name": "<hotel the address really belongs to, only for type other>", "city": "<its city>"}} ],
   "foundEmails": [ {"email": "<e-mail address of THIS hotel published on a web page>", "type": "hotel|groups|reservations|sales|events|central", "source": "<URL of the page where it is written>"} ],
-  "suitability": {"rating": "good|caveats|bad", "reasons": "<2-4 short points IN CZECH explaining the rating against OUR criteria, mention what is unknown>"},
+  "suitability": {"rating": "good|caveats|bad", "reasons": "<2-4 short points IN CZECH explaining the rating against OUR criteria, mention what is unknown; max 500 characters>"},
   "evidence": "<one short sentence>"
 }
 Rules:
@@ -398,7 +398,7 @@ Rules:
   return {
     sure: j.sure === true && !!fields.name,
     fields, emailTypes, belongsTo, foundEmails,
-    suitability: sRating ? { rating: sRating, reasons: String(j.suitability.reasons || '').trim().slice(0, 600) } : null,
+    suitability: sRating ? { rating: sRating, reasons: String(j.suitability.reasons || '').trim().slice(0, 1500) } : null,
     evidence: String(j.evidence || '').trim().slice(0, 300),
     cost, model: r.model,
   };
