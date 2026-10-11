@@ -11,7 +11,7 @@ import { itemStatus, fmtDate, fmtMoney } from './realization';
 import { isOfferedAlt, altMainOf } from './hotelAlt';
 import { allDeposits } from './deposits';
 
-const STATUS_LABEL = { '': 'bez stavu', requested: 'Poptáno', negotiating: 'V jednání', preapproved: 'Předschváleno', confirmed: 'Potvrzeno', cancelled: 'Zrušeno' };
+const STATUS_LABEL = { '': 'bez stavu', requested: 'Poptáno', negotiating: 'V jednání', preapproved: 'Předschváleno', ordered: 'Objednáno', confirmed: 'Potvrzeno', cancelled: 'Zrušeno' };
 const label = (it) => [it.city, it.name].filter(Boolean).join(' – ') || it.name || 'bez názvu';
 const isDate = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d);
 const ymd = (d) => String(d).slice(0, 10);
