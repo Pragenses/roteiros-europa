@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, reassessCard, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
+import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, reassessCard, equipCheckCard, EQUIP_KEYS, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
 import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
 import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches, isPortalEmail, isCentralCard } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -590,7 +590,7 @@ const WEB_FIELDS = [
   ['website', 'Web'], ['phone', 'Telefon'], ['stars', 'Hvězdičky'], ['rooms', 'Počet pokojů'],
   ['groups', 'Bere skupiny'], ['groupPolicy', 'Podmínky pro skupiny'], ['google', 'Hodnocení Google'], ['booking', 'Hodnocení Booking'],
   ['distanceCenter', 'Vzdálenost od centra'], ['coachStop', '🚌 Zastavení autobusu'], ['coachParking', '🚌 Parkování autobusu'],
-  ['twinRooms', 'TWIN pokoje'], ['restaurant', 'Restaurace pro skupiny'], ['elevator', 'Výtah'], ['aircon', 'Klimatizace'],
+  ['twinRooms', 'TWIN pokoje'], ['restaurant', 'Restaurace pro skupiny'], ['elevator', 'Výtah'], ['aircon', 'Klimatizace na pokoji'], ['minibar', 'Minibar na pokoji'], ['kettle', 'Varná konvice (čaj / káva)'],
   ['salesTerms', '📜 Obchodní podmínky (web)'],
 ];
 const SUIT = {
@@ -613,7 +613,7 @@ const fieldVal = (c, k) => { const f = c && c.webInfo && c.webInfo.fields && c.w
 const webValue = (k, v) => {
   if (v === null || v === undefined || v === '') return '—';
   if (k === 'website') return <a href={/^https?:/.test(String(v)) ? v : `https://${v}`} target="_blank" rel="noreferrer">{String(v)}</a>;
-  if (k === 'groups' || k === 'elevator' || k === 'aircon') return v === true ? 'ano' : v === false ? 'ne' : String(v);
+  if (['groups', 'elevator', 'aircon', 'minibar', 'kettle'].includes(k)) return v === true ? 'ano' : v === false ? 'ne' : String(v);
   if (k === 'distanceCenter' && typeof v === 'object') return `${v.km ?? '—'} km${v.walkMin ? ` · ${v.walkMin} min pěšky` : ''}${v.to ? ` (${v.to})` : ''}`;
   if (k === 'stars') return `${'★'.repeat(Math.min(5, Math.round(Number(v) || 0)))} (${v})`;
   if (k === 'google' || k === 'booking') {
@@ -645,7 +645,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v231-auto-prirazeni');
+  console.debug('Hotels v232-vybaveni-pokoju');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1098,6 +1098,21 @@ export default function Hotels({ navigate, colors, navParams }) {
   // z řádků. Databáze hotelů je pak přesně jako před během.
   const handleUndoFix = async (f) => {
     if (f.kind === 'merge' || f.kind === 'web-check') return handleUndoSpecial(f);
+    if (f.kind === 'equip') {
+      if (!window.confirm(`Vrátit doplnění vybavení pokojů u ${(f.items || []).length} karet?`)) return;
+      setAutoBusy('Vracím…');
+      try {
+        await commitUnits((f.items || []).map(it => {
+          const data = { 'webInfo.equipCheck': null };
+          EQUIP_KEYS.forEach(k => { if (it.set && it.set.includes(k)) data[`webInfo.fields.${k}`] = (it.prev && it.prev[k]) || null; });
+          return [{ t: 'update', ref: doc(db, 'hotelCards', it.id), data }];
+        }), 'Vracím');
+        await updateDoc(doc(db, 'hotelAutoFixes', f.id), { undone: true, undoneAt: new Date().toISOString(), undoneBy: auth.currentUser?.email || '' });
+        await Promise.all([fetchCards(), fetchFixLog()]);
+      } catch (e) { alert('Vrácení se nepodařilo: ' + e.message); }
+      setAutoBusy('');
+      return;
+    }
     if (f.kind === 'reassess') {
       if (!window.confirm(`Vrátit přehodnocení vhodnosti u ${(f.items || []).length} karet? Vrátí se předchozí hodnocení AI.`)) return;
       setAutoBusy('Vracím…');
@@ -1955,6 +1970,9 @@ export default function Hotels({ navigate, colors, navParams }) {
     || (!c.webInfo.suitability && !c.webInfo.central) || !c.webInfo.emailSearch || !c.webInfo.kindCheck;
   const webPendingWork = cards.filter(c => workSet.has(c.id) && needsWeb(c));
   const webPendingAll = cards.filter(needsWeb);
+  // K doplnění vybavení pokojů: zkontrolované hotely bez údaje o minibaru i konvici.
+  const equipList = cards.filter(c => c.webInfo && c.webInfo.checkedAt && Object.keys(c.webInfo.fields || {}).length
+    && !isCentralCard(c) && !c.webInfo.equipCheck && !(c.webInfo.fields || {}).minibar && !(c.webInfo.fields || {}).kettle);
   // K přehodnocení: karty s údaji z internetu, bez ručního hodnocení.
   const reassessList = cards.filter(c => c.webInfo && c.webInfo.checkedAt && Object.keys(c.webInfo.fields || {}).length
     && !isCentralCard(c) && !c.suitManual && !(c.webInfo.suitability && c.webInfo.suitability.manual));
@@ -2079,6 +2097,72 @@ export default function Hotels({ navigate, colors, navParams }) {
       await Promise.all([fetchCards(), fetchHotels(), fetchFixLog(), fetchMergeNo(), loadSystemData()]);
     } catch (e) { alert('Nepodařilo se: ' + e.message); }
     setSysBusy('');
+  };
+
+  // 🛏 Doplnění vybavení pokojů (klimatizace, minibar, konvice) u karet, které
+  // už prošly internetovou kontrolou. Ruční údaje se nepřepisují; jde vrátit.
+  const handleEquip = async (list) => {
+    if (!list.length) return;
+    if (!window.confirm(
+      `🛏 Doplnit vybavení pokojů u ${list.length} zkontrolovaných karet?\n\n` +
+      'AI na webu hotelu / Booking.com dohledá jen: klimatizaci, minibar a varnou konvici na pokoji — každý údaj se zdrojem.\n' +
+      'Ručně zadané údaje nepřepíše. Jde vrátit.\n\n' +
+      `Cca 1–2 Kč za kartu. Limit útraty: ${aiLimit} Kč.\n\nPokračovat?`)) return;
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const budget = makeBudget();
+    const items = [];
+    const stats = { done: 0, found: 0, failed: 0 };
+    try {
+      let idx = 0, n = 0;
+      setAiBusy(`Doplňuji vybavení pokojů: 0 z ${list.length}`);
+      const worker = async () => {
+        while (idx < list.length) {
+          if (!budget.ok()) return;
+          const card = list[idx++];
+          try {
+            const old = (card.webInfo && card.webInfo.fields) || {};
+            const prev = {};
+            EQUIP_KEYS.forEach(k => { if (old[k]) prev[k] = JSON.parse(JSON.stringify(old[k])); });
+            const r = await equipCheckCard(card);
+            budget.add(r.cost);
+            const data = { 'webInfo.equipCheck': new Date().toISOString() };
+            const set = [];
+            EQUIP_KEYS.forEach(k => {
+              if (!r.fields[k] || (old[k] && old[k].manual)) return;
+              data[`webInfo.fields.${k}`] = { ...r.fields[k], ai: true };
+              set.push(k);
+            });
+            await updateDoc(doc(db, 'hotelCards', card.id), data);
+            items.push({ id: card.id, set, prev });
+            stats.done++; stats.found += set.length;
+          } catch (err) {
+            console.error('Doplnění vybavení selhalo:', card.name, err);
+            if (err && err.cost) budget.add(err.cost);
+            stats.failed++;
+          }
+          n++;
+          if (!aiStopRef.current) setAiBusy(`Doplňuji vybavení pokojů: ${n} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+        }
+      };
+      await Promise.all([1, 2, 3].map(worker));
+      if (items.length) {
+        await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+          runId: at, at, by, kind: 'equip', undone: false, cardIds: [], added: [], rowIds: [], items,
+          costCzk: Math.round(budget.spent() * 100) / 100,
+          label: `🛏 Vybavení pokojů: ${items.length} karet`,
+          reason: `Doplněno údajů: ${stats.found} · chyba: ${stats.failed} · útrata ${fmtKc(budget.spent())} Kč`,
+        });
+      }
+      await Promise.all([fetchCards(), fetchFixLog()]);
+      setAiBusy('');
+      alert(
+        (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🛏 Hotovo.\n\n') +
+        `Prověřeno karet: ${stats.done}\nDoplněno údajů (klimatizace / minibar / konvice): ${stats.found}\n` +
+        (stats.failed ? `Nepodařilo se: ${stats.failed} (stačí spustit znovu)\n` : '') + `\nÚtrata: ${fmtKc(budget.spent())} Kč`);
+    } catch (e) {
+      setAiBusy('');
+      alert(`Doplnění se přerušilo: ${e.message}`);
+    }
   };
 
   // 🔄 Přehodnocení vhodnosti z údajů na kartě podle aktuálních kritérií
@@ -3443,6 +3527,9 @@ export default function Hotels({ navigate, colors, navParams }) {
                     <button onClick={() => handleReassess(reassessList, 'všechny zkontrolované karty')} disabled={!!aiBusy || !!sysBusy || !reassessList.length}
                       title="Znovu posoudit vhodnost podle aktuálních kritérií z údajů na kartách (bez hledání na internetu)"
                       style={{ ...smallBtn('#5b3fa0'), opacity: (aiBusy || sysBusy || !reassessList.length) ? 0.5 : 1 }}>🔄 Přehodnotit vhodnost ({reassessList.length})</button>
+                    <button onClick={() => handleEquip(equipList)} disabled={!!aiBusy || !!sysBusy || !equipList.length}
+                      title="U zkontrolovaných karet doplnit klimatizaci, minibar a varnou konvici na pokoji (levné hledání)"
+                      style={{ ...smallBtn('#2e6b45'), opacity: (aiBusy || sysBusy || !equipList.length) ? 0.5 : 1 }}>🛏 Doplnit vybavení pokojů ({equipList.length})</button>
                     <button onClick={() => setShowDup(v => !v)}
                       style={smallBtn(mergeCandidates.length ? '#8a4b1f' : C.muted)}>
                       🔗 Možné duplicitní karty ({mergeCandidates.length})
@@ -4261,7 +4348,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         {f.undone && <div style={{ fontSize: 11, color: '#b00020' }}>↩ vráceno</div>}
                       </td>
                       <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links', 'merge', 'web-check', 'reassess'].includes(f.kind) && (
+                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links', 'merge', 'web-check', 'reassess', 'equip'].includes(f.kind) && (
                           <button onClick={() => handleUndoFix(f)} disabled={!!autoBusy}
                             style={{ ...smallBtn(C.muted), opacity: autoBusy ? 0.5 : 1 }}>↩ Vrátit</button>
                         )}
