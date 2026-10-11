@@ -328,7 +328,7 @@ Search the web (official hotel website, chain website, Google Maps, Booking.com,
   "salesTerms":     {"value": "<IN CZECH, max 5 short points: the hotel's published booking / sales / cancellation terms (general T&C or group terms: deposit, prepayment, cancellation deadlines and fees, release / option, no-show, FOC, payment) — else empty>", "source": "<URL of the page or PDF with the terms>"},
   "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|portal|agency|other|unknown", "belongsTo": {"name": "<hotel the address really belongs to, only for type other>", "city": "<its city>"}} ],
   "foundEmails": [ {"email": "<e-mail address of THIS hotel published on a web page>", "type": "hotel|groups|reservations|sales|events|central", "source": "<URL of the page where it is written>"} ],
-  "suitability": {"rating": "good|caveats|bad", "reasons": "<2-4 short points IN CZECH explaining the rating against OUR criteria, mention what is unknown; max 500 characters>"},
+  "suitability": {"rating": "good|caveats|bad", "summary": "<one short sentence IN CZECH>", "issues": ["<each REAL problem found against our criteria, IN CZECH, one short line>"], "pros": ["<what fits our criteria, IN CZECH, one short line>"], "unknown": ["<what could not be verified, IN CZECH, one short line>"]},
   "evidence": "<one short sentence>"
 }
 Rules:
@@ -339,7 +339,7 @@ Rules:
 - "portal" = an address of an e-signature, proposal or booking platform that sends contracts / offers / confirmations on behalf of hotels (e.g. noreply@scrive.com, sender@proposales.com, app@oneflow.com, no-reply@email.backyou.io, DocuSign, Cvent). Such an address belongs to the hotel's communication — NEVER mark it "other" or "central".
 - "salesTerms": look for the hotel's or chain's published terms and conditions / group booking terms (often a PDF or a page "AGB", "Terms & Conditions", "Condizioni", "Conditions générales"). Summarise only what is written there.
 - "foundEmails": look on the hotel's own contact / groups / MICE / meetings / imprint pages and on the chain's page of this hotel for PUBLISHED e-mail addresses of THIS hotel — above all the groups, sales, MICE/events and reservations departments, plus the general hotel address. Only addresses written literally on the "source" page; never guess or construct an address (no "groups@domain" unless it is printed). No newsletter, privacy, job, press, noreply or other-hotel addresses. A chain's central reservation address serving this hotel = type "central". At most 8.
-- "suitability" is your judgement against OUR criteria (no source needed). "good" = fits well, "caveats" = usable with drawbacks, "bad" = clearly unsuitable.
+- "suitability" is your judgement against OUR criteria (no source needed). "good" = fits well, "caveats" = usable with drawbacks, "bad" = clearly unsuitable. Put only problems you actually found into "issues"; things you could not verify go into "unknown", not into "issues". Max 5 lines in each list.
 - Output the JSON object only — no text before or after it, no citation markers inside values.`;
   let r = await callAi({ prompt, web: true, maxTokens: 8000, model: MODEL_FALLBACK, maxSearches: 8 });
   let cost = r.cost;
@@ -394,12 +394,60 @@ Rules:
     e.cost = cost;
     throw e;
   }
+  const lines = (a) => (Array.isArray(a) ? a : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 6).map(x => x.slice(0, 300));
   const sRating = j.suitability && ['good', 'caveats', 'bad'].includes(j.suitability.rating) ? j.suitability.rating : '';
   return {
     sure: j.sure === true && !!fields.name,
     fields, emailTypes, belongsTo, foundEmails,
-    suitability: sRating ? { rating: sRating, reasons: String(j.suitability.reasons || '').trim().slice(0, 1500) } : null,
+    suitability: sRating ? {
+      rating: sRating,
+      reasons: String(j.suitability.summary || j.suitability.reasons || '').trim().slice(0, 1500),
+      issues: lines(j.suitability.issues), pros: lines(j.suitability.pros), unknown: lines(j.suitability.unknown),
+    } : null,
     evidence: String(j.evidence || '').trim().slice(0, 300),
+    cost, model: r.model,
+  };
+}
+
+// ── Přehodnocení vhodnosti bez hledání na internetu ─────────────────────────
+// Z údajů, které už karta má (z internetu i ručně opravené), a z naší historie
+// znovu posoudí vhodnost podle aktuálních kritérií. Levné (bez hledání).
+export async function reassessCard(card, ctx = {}) {
+  const fields = (card.webInfo && card.webInfo.fields) || {};
+  const facts = Object.entries(fields)
+    .filter(([, f]) => f && !f.deleted && f.value !== null && f.value !== undefined && f.value !== '')
+    .map(([k, f]) => `${k}: ${typeof f.value === 'object' ? JSON.stringify(f.value) : String(f.value)}${f.manual ? ' (entered by us)' : ''}`)
+    .join('\n');
+  const prompt =
+`You are judging whether one hotel suits a Czech DMC that books GROUP TOURS (coach tours for Brazilian tour operators).
+Use ONLY the facts below — do not search, do not invent facts.
+
+Hotel: ${card.name} (${card.city || 'city unknown'})
+Facts collected earlier (from the web with sources, or entered by us):
+${facts || 'none'}
+Our own history with this hotel: ${ctx.history || 'none recorded'}
+
+OUR SUITABILITY CRITERIA (written by the company, in Czech):
+${ctx.criteria || DEFAULT_CRITERIA}
+
+Return ONLY one JSON object:
+{"rating": "good|caveats|bad", "summary": "<one short sentence IN CZECH>", "issues": ["<each REAL problem found against our criteria, IN CZECH, one short line>"], "pros": ["<what fits our criteria, IN CZECH, one short line>"], "unknown": ["<what the facts do not say, IN CZECH, one short line>"]}
+Rules: "good" = fits well, "caveats" = usable with drawbacks, "bad" = clearly unsuitable. Put only problems actually shown by the facts into "issues"; missing facts go into "unknown". Max 5 lines in each list.`;
+  let r = await callAi({ prompt, web: false, maxTokens: 1500, model: MODEL_FALLBACK });
+  let cost = r.cost;
+  if (!r.json || Array.isArray(r.json) || !['good', 'caveats', 'bad'].includes(r.json.rating)) {
+    r = await callAi({ prompt, web: false, maxTokens: 2500, model: MODEL_FALLBACK });
+    cost += r.cost;
+  }
+  const j = r.json;
+  if (!j || Array.isArray(j) || !['good', 'caveats', 'bad'].includes(j.rating)) {
+    const e = new Error('Odpověď AI se nepodařilo přečíst');
+    e.cost = cost;
+    throw e;
+  }
+  const lines = (a) => (Array.isArray(a) ? a : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 6).map(x => x.slice(0, 300));
+  return {
+    suitability: { rating: j.rating, reasons: String(j.summary || '').trim().slice(0, 1500), issues: lines(j.issues), pros: lines(j.pros), unknown: lines(j.unknown) },
     cost, model: r.model,
   };
 }
