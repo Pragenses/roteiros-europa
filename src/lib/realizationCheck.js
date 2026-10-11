@@ -186,8 +186,8 @@ export function checkBeforeRealization({ offer, version, currentSnapshot, today 
   }
 
   // ── 3b. Zálohy dodavatelům ──
-  const deps = allDeposits(items.filter(it => it.enabled !== false && !it.cancelled), today);
-  const dl = (d) => `${label(d.item)} — ${Math.round(d.amount * 100) / 100} ${d.currency}${d.row.due ? `, splatnost ${fmtDate(d.row.due)}` : ''}`;
+  const deps = allDeposits(items.filter(it => it.enabled !== false && !it.cancelled), today, offer.startDate);
+  const dl = (d) => `${label(d.item)} — ${d.known ? `${Math.round(d.amount * 100) / 100} ${d.currency}` : `${d.condition} (částka se určí)`}${d.due ? `, splatnost ${fmtDate(d.due)}` : ''}`;
   const over = deps.filter(d => d.status === 'overdue');
   if (over.length) add('stop', `Zálohy po splatnosti, nezaplacené (${over.length})`, over.map(dl));
   const soon = deps.filter(d => d.status === 'soon');
