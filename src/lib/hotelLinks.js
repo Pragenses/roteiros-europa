@@ -16,6 +16,7 @@
 //      (potvrzuje člověk, do té doby se nikam nepočítá)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { effectiveDeposits } from './deposits';
 export const OWN_EMAIL_RE = [
   /@tour-pragenses\.com$/i,
   /^helena\.maria\.brito@gmail\.com$/i,
@@ -276,7 +277,7 @@ export function collectLinks({ cards, hotelRows, offers, orders, emailLog, decis
         cityTax: it.cityTax ?? '', cityTaxSngl: it.cityTaxSngl ?? '', currency: it.currency || '',
         trpl: it.trplOffer ? { type: it.trplType || '', price: it.trplPrice ?? '' } : null,
         optionDate: it.optionDate || '', cancellationDeadline: it.cancellationDeadline || '',
-        depositTerms: it.depositTerms || '', deposits: Array.isArray(it.deposits) ? it.deposits : [],
+        depositTerms: it.depositTerms || '', deposits: effectiveDeposits(o, it),
         notes: noteList(it.noteEntries, it.note),
         emails, updatedAt: o.updatedAt || o.createdAt || '',
       };
