@@ -5,7 +5,7 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverT
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
 import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, reassessCard, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
 import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
-import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches, isPortalEmail } from '../lib/hotelLinks';
+import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches, isPortalEmail, isCentralCard } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -645,7 +645,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v229-vyhrady');
+  console.debug('Hotels v230-centraly');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1577,6 +1577,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   // E-maily ze servisních karet → karty hotelů. Jen u JISTÝCH vazeb.
   const emailEntry = (email, src) => ({
     email, role: '', person: '', main: false, fromService: true,
+    ...(sys && sys.idx.centralEmails.has(String(email).toLowerCase()) && !isPortalEmail(email) ? { type: 'central' } : {}),
     source: { type: src.type, offerId: src.offerId || '', orderId: src.orderId || '', offerNumber: src.offerNumber || '', group: src.group || '' },
   });
   const handleAddEmails = async (items) => {
@@ -1927,19 +1928,25 @@ export default function Hotels({ navigate, colors, navParams }) {
         if (domains(o).some(d => ds.has(d)) || (bn.length >= 4 && baseName(o.name) === bn)) out.add(o.id);
       });
     });
+    // Možné centrály: karty s adresou centrály (po opravě přiřazování mohly
+    // přijít o nabídky, ale kontrolu potřebují, aby se poznalo, co jsou zač).
+    if (sys) cards.forEach(c => {
+      if (out.has(c.id)) return;
+      if (isCentralCard(c) || (c.emails || []).some(e => e.type === 'central')) out.add(c.id);
+    });
     return out;
-  }, [workingIds, cards]);
+  }, [workingIds, cards, sys]);
   // Ke kontrole: karta bez kontroly, nebo s kontrolou, která nepřinesla žádný
   // údaj (stará verze nedokázala přečíst delší odpověď AI).
   // Ke kontrole: bez internetové kontroly, s prázdným výsledkem, nebo zkontrolované
   // starší verzí (bez hodnocení vhodnosti, nových údajů a hledání e-mailů).
   const needsWeb = (c) => !(c.webInfo && c.webInfo.checkedAt) || !Object.keys((c.webInfo && c.webInfo.fields) || {}).length
-    || !c.webInfo.suitability || !c.webInfo.emailSearch;
+    || (!c.webInfo.suitability && !c.webInfo.central) || !c.webInfo.emailSearch || !c.webInfo.kindCheck;
   const webPendingWork = cards.filter(c => workSet.has(c.id) && needsWeb(c));
   const webPendingAll = cards.filter(needsWeb);
   // K přehodnocení: karty s údaji z internetu, bez ručního hodnocení.
   const reassessList = cards.filter(c => c.webInfo && c.webInfo.checkedAt && Object.keys(c.webInfo.fields || {}).length
-    && !c.suitManual && !(c.webInfo.suitability && c.webInfo.suitability.manual));
+    && !isCentralCard(c) && !c.suitManual && !(c.webInfo.suitability && c.webInfo.suitability.manual));
 
   // Kolik karet sdílí stejnou adresu — sdílená adresa = nejspíš centrála.
   const emailShare = React.useMemo(() => {
@@ -1980,6 +1987,13 @@ export default function Hotels({ navigate, colors, navParams }) {
   };
 
   // Krátké shrnutí naší historie s hotelem — AI ho bere v úvahu při hodnocení.
+  // Názvy hotelů ze servisních karet propojených s kartou (pozná se z nich centrála).
+  const itemNamesFor = (card) => {
+    const b = sys && sys.links.get(card.id);
+    if (!b) return '';
+    const names = [...new Set([...b.offerLines, ...b.orderLines].map(l => `${l.name}${l.city ? ` (${l.city})` : ''}`).filter(Boolean))];
+    return names.slice(0, 12).join(' | ');
+  };
   const historyFor = (card) => {
     const b = sys && sys.links.get(card.id);
     const sm = b ? cardSummary(b) : null;
@@ -1994,8 +2008,9 @@ export default function Hotels({ navigate, colors, navParams }) {
     const oldFields = (old && old.fields) || {};
     Object.entries(oldFields).forEach(([k, f]) => { if (f && f.manual) fields[k] = f; });
     Object.entries(r.fields).forEach(([k, f]) => { if (!fields[k]) fields[k] = { ...f, ai: true }; });
-    // Údaj z dřívější kontroly (se zdrojem), který nová kontrola nenašla, zůstává.
-    Object.entries(oldFields).forEach(([k, f]) => { if (!fields[k] && f && !f.deleted && f.source) fields[k] = f; });
+    // Údaj z dřívější kontroly (se zdrojem), který nová kontrola nenašla, zůstává
+    // — ne u centrály (staré údaje by mohly patřit některému z jejích hotelů).
+    if (!r.central) Object.entries(oldFields).forEach(([k, f]) => { if (!fields[k] && f && !f.deleted && f.source) fields[k] = f; });
     const prev = old ? { ...old } : null;
     if (prev) delete prev.prev;
     const moved = new Set(Object.keys(r.movedEmails || {}));
@@ -2009,9 +2024,9 @@ export default function Hotels({ navigate, colors, navParams }) {
       if (emails.some(e => String(e.email || '').toLowerCase() === f.email)) return;
       emails.push({ email: f.email, type: f.type, role: '', person: '', main: emails.length === 0, fromWeb: true, webSource: f.source, webRun: runId || '' });
     });
-    const suitability = old && old.suitability && old.suitability.manual ? old.suitability : (r.suitability ? { ...r.suitability, ai: true, at: new Date().toISOString() } : null);
+    const suitability = r.central ? null : (old && old.suitability && old.suitability.manual ? old.suitability : (r.suitability ? { ...r.suitability, ai: true, at: new Date().toISOString() } : null));
     return {
-      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, suitability, prev, emailSearch: true },
+      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, suitability, prev, emailSearch: true, kindCheck: true, central: !!r.central },
       emails,
     };
   };
@@ -2123,7 +2138,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (list.length === 1 && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 5 Kč)`)) return;
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
     const budget = makeBudget();
-    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0, moved: 0, found: 0 };
+    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0, moved: 0, found: 0, central: 0 };
     const moves = [];
     const errors = new Map();
     const doneIds = [];
@@ -2135,7 +2150,8 @@ export default function Hotels({ navigate, colors, navParams }) {
           if (!budget.ok()) return;
           const card = list[idx++];
           try {
-            const r = await webCheckCard(card, { criteria, history: historyFor(card) });
+            const r = await webCheckCard(card, { criteria, history: historyFor(card), itemNames: itemNamesFor(card), kindManual: card.kindManual || '' });
+            if (r.central) stats.central++;
             budget.add(r.cost);
             // Cizí e-mail → ke správnému hotelu: existující karta, jinak nová karta
             // (ta se rovnou přidá do fronty ke kontrole). Ruční typ se nepřesouvá.
@@ -2241,6 +2257,7 @@ export default function Hotels({ navigate, colors, navParams }) {
           [...errors.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, n]) => `   • ${n}× ${m}`).join('\n') + '\n' : '') +
         `Cizí e-maily přesunuté ke správnému hotelu: ${stats.moved}\n` +
         `Nové e-maily hotelů z internetu: ${stats.found}\n` +
+        (stats.central ? `🏢 Rozpoznané centrály řetězců (ne hotely): ${stats.central}\n` : '') +
         `\nSloučeno duplicitních karet (jisté): ${stats.merged}\n` +
         `Možné duplicity k vašemu rozhodnutí: ${stats.dupLeft}\n\n` +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
@@ -2275,6 +2292,20 @@ export default function Hotels({ navigate, colors, navParams }) {
       await fetchCards();
     } catch (e) { alert('Nepodařilo se smazat: ' + e.message); }
   };
+  // Ruční označení: centrála řetězce / hotel ('' = rozhodne internetová kontrola).
+  const handleSetKind = async (card, kind) => {
+    const msg = kind === 'central'
+      ? `Označit „${card.name}“ jako centrálu řetězce (obchodní / rezervační kancelář, ne hotel)?\n\nNabídky se k ní podle jejích adres přestanou přiřazovat a půjdou ke skutečným hotelům podle názvu. Jde kdykoli změnit zpět.`
+      : kind === 'hotel' ? `Označit „${card.name}“ jako hotel (ne centrálu)?` : 'Zrušit ruční označení? O typu karty pak rozhodne internetová kontrola.';
+    if (!window.confirm(msg)) return;
+    setSysBusy('kind');
+    try {
+      await updateDoc(doc(db, 'hotelCards', card.id), { kindManual: kind || null, kindBy: auth.currentUser?.email || '', kindAt: new Date().toISOString() });
+      await fetchCards();
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+    setSysBusy('');
+  };
+
   // Ruční hodnocení vhodnosti — uložené zvlášť (suitManual), takže ho
   // internetová kontrola ani její vrácení nepřepíše.
   const saveSuitability = async (clear) => {
@@ -2655,7 +2686,8 @@ export default function Hotels({ navigate, colors, navParams }) {
   }, [hotels]);
   const cardsFiltered = cards.filter(c => {
     if (onlyUsed) { const sm = summaryOf(c.id); if (!sm || !(sm.offers || sm.orders)) return false; }
-    if (suitFilter) { const r = suitOf(c)?.rating || 'none'; if (r !== suitFilter) return false; }
+    if (suitFilter === 'central') { if (!isCentralCard(c)) return false; }
+    else if (suitFilter) { const r = isCentralCard(c) ? 'central' : (suitOf(c)?.rating || 'none'); if (r !== suitFilter) return false; }
     if (statusFilter) {
       const b = sys && sys.links.get(c.id);
       const ok = !!b && (b.offerLines.some(l => ['confirmed', 'preapproved'].includes(l.bookingStatus))
@@ -3607,6 +3639,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                       <option value="caveats">⚠ s výhradami</option>
                       <option value="bad">❌ nevhodné</option>
                       <option value="none">bez hodnocení</option>
+                      <option value="central">🏢 centrály řetězců</option>
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} disabled={!sys} style={inp({ width: 210, fontSize: 12 })}>
                       <option value="">Stav u nás: vše</option>
@@ -3646,14 +3679,15 @@ export default function Hotels({ navigate, colors, navParams }) {
                               </div>
                             )}
                             {c.notes && <div style={{ fontSize: 11, color: '#7a5c00' }}>📝 {c.notes}</div>}
-                            {!c.webInfo?.checkedAt && suitOf(c) && (
+                            {isCentralCard(c) && <div style={{ fontSize: 11, color: '#8a4b1f', fontWeight: 700 }}>🏢 centrála řetězce (ne hotel)</div>}
+                            {!c.webInfo?.checkedAt && suitOf(c) && !isCentralCard(c) && (
                               <div style={{ fontSize: 11, color: SUIT[suitOf(c).rating].color, fontWeight: 700 }} title={suitTip(c)}>
                                 {SUIT[suitOf(c).rating].icon} {SUIT[suitOf(c).rating].label} ✏
                               </div>
                             )}
                             {c.webInfo?.checkedAt && (
                               <div style={{ fontSize: 11, color: '#1f5f8b' }}>
-                                {suitOf(c) && (
+                                {suitOf(c) && !isCentralCard(c) && (
                                   <span title={suitTip(c)} style={{ color: SUIT[suitOf(c).rating].color, fontWeight: 700 }}>
                                     {SUIT[suitOf(c).rating].icon} {SUIT[suitOf(c).rating].label}{suitOf(c).manual ? ' ✏' : ''} ·{' '}
                                   </span>
@@ -3827,11 +3861,29 @@ export default function Hotels({ navigate, colors, navParams }) {
                       <h3 style={sec}>🌐 Z internetu {c.webInfo?.checkedAt ? <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>· zkontrolováno {fmtD(c.webInfo.checkedAt)}{c.webInfo.sure ? '' : ' · ⚠ AI si nebyla jistá, zkontrolujte'}</span> : null}</h3>
                       {!c.webInfo?.checkedAt && <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Karta zatím nebyla zkontrolovaná na internetu.</p>}
                       {(() => {
+                        const central = isCentralCard(c);
+                        const kindBtn = (kind, label) => (
+                          <button onClick={() => handleSetKind(c, kind)} disabled={!!sysBusy} style={{ ...smallBtn(C.muted), marginLeft: 6, padding: '1px 8px' }}>{label}</button>
+                        );
+                        if (central) return (
+                          <div style={{ margin: '6px 0 10px', padding: '8px 10px', borderRadius: 6, background: '#fbf3ea', border: '1px solid #c98a4b', fontSize: 12 }}>
+                            <strong style={{ color: '#8a4b1f' }}>🏢 Centrála řetězce — obchodní / rezervační kancelář, ne hotel</strong>
+                            <span style={{ fontSize: 11, color: C.muted }}> · {c.kindManual ? '✏ označeno ručně' : '🤖 rozpoznala internetová kontrola'}</span>
+                            {kindBtn('hotel', 'Není centrála — je to hotel')}
+                            {c.kindManual && kindBtn('', 'Zrušit ruční označení')}
+                            <div style={{ marginTop: 4, color: C.muted }}>
+                              Nabídky se k centrále podle jejích adres nepřiřazují — přiřadí se ke skutečným hotelům podle názvu ze servisní karty
+                              (nejisté najdete v „Možné shody k potvrzení“). Adresy centrály se u hotelů ukazují jako „🏢 centrální rezervace“.
+                            </div>
+                          </div>
+                        );
                         const su = suitOf(c);
+                        const markCentral = <span style={{ marginLeft: 6 }}>{kindBtn('central', '🏢 Je to centrála řetězce')}{c.kindManual === 'hotel' && kindBtn('', 'Zrušit ruční označení')}</span>;
                         if (!su) return (
                           <div style={{ margin: '6px 0 10px', fontSize: 12, color: C.muted }}>
                             Pro naše skupiny: nehodnoceno{' '}
                             <button onClick={() => setSuitEdit({ cardId: c.id, name: c.name, rating: '', reasons: '' })} style={smallBtn('#41698a')}>✏ Ohodnotit</button>
+                            {markCentral}
                           </div>
                         );
                         const aiSu = c.webInfo && c.webInfo.suitability && SUIT[c.webInfo.suitability.rating] ? c.webInfo.suitability : null;
@@ -3846,6 +3898,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                                 style={{ ...smallBtn('#5b3fa0'), marginLeft: 6, padding: '1px 8px', opacity: aiBusy ? 0.5 : 1 }}>🔄 Přehodnotit</button>
                             )}
                             {aiSu && aiSu.reassessed && <span style={{ fontSize: 11, color: C.muted }}> · přehodnoceno {fmtD(aiSu.at)}</span>}
+                            {markCentral}
                             <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 4 }}>{su.reasons}</div>
                             {su.manual && aiSu && aiSu !== su && (
                               <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
