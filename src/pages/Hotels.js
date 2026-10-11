@@ -623,7 +623,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v223-ai-limit');
+  console.debug('Hotels v224-web-cteni');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1857,8 +1857,11 @@ export default function Hotels({ navigate, colors, navParams }) {
     });
     return out;
   }, [workingIds, cards]);
-  const webPendingWork = cards.filter(c => workSet.has(c.id) && !(c.webInfo && c.webInfo.checkedAt));
-  const webPendingAll = cards.filter(c => !(c.webInfo && c.webInfo.checkedAt));
+  // Ke kontrole: karta bez kontroly, nebo s kontrolou, která nepřinesla žádný
+  // údaj (stará verze nedokázala přečíst delší odpověď AI).
+  const needsWeb = (c) => !(c.webInfo && c.webInfo.checkedAt) || !Object.keys((c.webInfo && c.webInfo.fields) || {}).length;
+  const webPendingWork = cards.filter(c => workSet.has(c.id) && needsWeb(c));
+  const webPendingAll = cards.filter(needsWeb);
 
   // Kolik karet sdílí stejnou adresu — sdílená adresa = nejspíš centrála.
   const emailShare = React.useMemo(() => {
@@ -1967,6 +1970,7 @@ export default function Hotels({ navigate, colors, navParams }) {
             if (r.sure) stats.ok++; else stats.unsure++;
           } catch (err) {
             console.error('Internetová kontrola karty selhala:', card.name, err);
+            if (err && err.cost) budget.add(err.cost);   // zaplacený, ale nepoužitelný pokus
             stats.failed++;
             const msg = String(err && err.message || err).slice(0, 120);
             errors.set(msg, (errors.get(msg) || 0) + 1);
