@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
+import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, reassessCard, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
 import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
 import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches, isPortalEmail } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -601,6 +601,14 @@ const SUIT = {
 // Vhodnost karty: ruční hodnocení má přednost před hodnocením AI.
 const suitOf = (c) => (c && c.suitManual && SUIT[c.suitManual.rating] ? c.suitManual
   : (c && c.webInfo && c.webInfo.suitability && SUIT[c.webInfo.suitability.rating] ? c.webInfo.suitability : null));
+// Text po najetí myší: shrnutí + výhrady na samostatných řádcích.
+const suitTip = (c) => {
+  const su = suitOf(c);
+  if (!su) return '';
+  const ai = c.webInfo && c.webInfo.suitability;
+  const iss = ai && Array.isArray(ai.issues) && ai.issues.length ? '\n\n⚠ Výhrady:\n' + ai.issues.map(x => '• ' + x).join('\n') : '';
+  return (su.reasons || '') + iss;
+};
 const fieldVal = (c, k) => { const f = c && c.webInfo && c.webInfo.fields && c.webInfo.fields[k]; return f && !f.deleted ? f.value : null; };
 const webValue = (k, v) => {
   if (v === null || v === undefined || v === '') return '—';
@@ -637,7 +645,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v228-portaly-vhodnost');
+  console.debug('Hotels v229-vyhrady');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1090,6 +1098,17 @@ export default function Hotels({ navigate, colors, navParams }) {
   // z řádků. Databáze hotelů je pak přesně jako před během.
   const handleUndoFix = async (f) => {
     if (f.kind === 'merge' || f.kind === 'web-check') return handleUndoSpecial(f);
+    if (f.kind === 'reassess') {
+      if (!window.confirm(`Vrátit přehodnocení vhodnosti u ${(f.items || []).length} karet? Vrátí se předchozí hodnocení AI.`)) return;
+      setAutoBusy('Vracím…');
+      try {
+        await commitUnits((f.items || []).map(it => [{ t: 'update', ref: doc(db, 'hotelCards', it.id), data: { 'webInfo.suitability': it.prev || null } }]), 'Vracím');
+        await updateDoc(doc(db, 'hotelAutoFixes', f.id), { undone: true, undoneAt: new Date().toISOString(), undoneBy: auth.currentUser?.email || '' });
+        await Promise.all([fetchCards(), fetchFixLog()]);
+      } catch (e) { alert('Vrácení se nepodařilo: ' + e.message); }
+      setAutoBusy('');
+      return;
+    }
     const n = (f.cardIds || []).length;
     const m = (f.added || []).length;
     const l = (f.linkKeys || []).length;
@@ -1918,6 +1937,9 @@ export default function Hotels({ navigate, colors, navParams }) {
     || !c.webInfo.suitability || !c.webInfo.emailSearch;
   const webPendingWork = cards.filter(c => workSet.has(c.id) && needsWeb(c));
   const webPendingAll = cards.filter(needsWeb);
+  // K přehodnocení: karty s údaji z internetu, bez ručního hodnocení.
+  const reassessList = cards.filter(c => c.webInfo && c.webInfo.checkedAt && Object.keys(c.webInfo.fields || {}).length
+    && !c.suitManual && !(c.webInfo.suitability && c.webInfo.suitability.manual));
 
   // Kolik karet sdílí stejnou adresu — sdílená adresa = nejspíš centrála.
   const emailShare = React.useMemo(() => {
@@ -2031,6 +2053,61 @@ export default function Hotels({ navigate, colors, navParams }) {
       await Promise.all([fetchCards(), fetchHotels(), fetchFixLog(), fetchMergeNo(), loadSystemData()]);
     } catch (e) { alert('Nepodařilo se: ' + e.message); }
     setSysBusy('');
+  };
+
+  // 🔄 Přehodnocení vhodnosti z údajů na kartě podle aktuálních kritérií
+  // (bez hledání na internetu). Ruční hodnocení se nemění; jde vrátit.
+  const handleReassess = async (list, label) => {
+    if (!list.length) return;
+    if (!window.confirm(list.length === 1
+      ? `🔄 Přehodnotit vhodnost „${list[0].name}“ podle aktuálních kritérií? (cca 0,3 Kč, bez hledání na internetu)`
+      : `🔄 Přehodnotit vhodnost: ${label} (${list.length} karet).\n\nAI znovu posoudí každou kartu podle aktuálních ⚙ kritérií z údajů, které už na kartě jsou (bez hledání na internetu).\nRuční hodnocení se nemění. Jde vrátit.\n\nCca 0,3 Kč za kartu. Limit útraty: ${aiLimit} Kč.\n\nPokračovat?`)) return;
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const budget = makeBudget();
+    const items = [];
+    const stats = { good: 0, caveats: 0, bad: 0, failed: 0 };
+    try {
+      let idx = 0, done = 0;
+      setAiBusy(`Přehodnocuji vhodnost: 0 z ${list.length}`);
+      const worker = async () => {
+        while (idx < list.length) {
+          if (!budget.ok()) return;
+          const card = list[idx++];
+          try {
+            const prev = card.webInfo && card.webInfo.suitability ? JSON.parse(JSON.stringify(card.webInfo.suitability)) : null;
+            const r = await reassessCard(card, { criteria, history: historyFor(card) });
+            budget.add(r.cost);
+            await updateDoc(doc(db, 'hotelCards', card.id), { 'webInfo.suitability': { ...r.suitability, ai: true, reassessed: true, at: new Date().toISOString() } });
+            items.push({ id: card.id, prev });
+            stats[r.suitability.rating]++;
+          } catch (err) {
+            console.error('Přehodnocení selhalo:', card.name, err);
+            if (err && err.cost) budget.add(err.cost);
+            stats.failed++;
+          }
+          done++;
+          if (!aiStopRef.current) setAiBusy(`Přehodnocuji vhodnost: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+        }
+      };
+      await Promise.all([1, 2, 3].map(worker));
+      if (items.length) {
+        await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+          runId: at, at, by, kind: 'reassess', undone: false, cardIds: [], added: [], rowIds: [], items,
+          costCzk: Math.round(budget.spent() * 100) / 100,
+          label: `🔄 Přehodnocení vhodnosti: ${items.length} karet`,
+          reason: `✅ ${stats.good} · ⚠ ${stats.caveats} · ❌ ${stats.bad} · chyba: ${stats.failed} · útrata ${fmtKc(budget.spent())} Kč`,
+        });
+      }
+      await Promise.all([fetchCards(), fetchFixLog()]);
+      setAiBusy('');
+      if (list.length > 1 || stats.failed) alert(
+        (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🔄 Hotovo.\n\n') +
+        `✅ vhodné: ${stats.good}\n⚠ s výhradami: ${stats.caveats}\n❌ nevhodné: ${stats.bad}\n` +
+        (stats.failed ? `Nepodařilo se: ${stats.failed}\n` : '') + `\nÚtrata: ${fmtKc(budget.spent())} Kč`);
+    } catch (e) {
+      setAiBusy('');
+      alert(`Přehodnocení se přerušilo: ${e.message}`);
+    }
   };
 
   const handleWebCheck = async (list, label) => {
@@ -3299,6 +3376,9 @@ export default function Hotels({ navigate, colors, navParams }) {
                     <input value={aiLimit} onChange={e => setAiLimit(e.target.value)} disabled={!!aiBusy}
                       style={inp({ width: 70, fontSize: 12, padding: '2px 6px' })} /> <span style={{ color: C.muted }}>Kč</span>
                     <button onClick={() => setCritEdit(criteria)} style={smallBtn('#41698a')} title="Podle těchto kritérií AI hodnotí vhodnost hotelů">⚙ Kritéria vhodnosti</button>
+                    <button onClick={() => handleReassess(reassessList, 'všechny zkontrolované karty')} disabled={!!aiBusy || !!sysBusy || !reassessList.length}
+                      title="Znovu posoudit vhodnost podle aktuálních kritérií z údajů na kartách (bez hledání na internetu)"
+                      style={{ ...smallBtn('#5b3fa0'), opacity: (aiBusy || sysBusy || !reassessList.length) ? 0.5 : 1 }}>🔄 Přehodnotit vhodnost ({reassessList.length})</button>
                     <button onClick={() => setShowDup(v => !v)}
                       style={smallBtn(mergeCandidates.length ? '#8a4b1f' : C.muted)}>
                       🔗 Možné duplicitní karty ({mergeCandidates.length})
@@ -3567,14 +3647,14 @@ export default function Hotels({ navigate, colors, navParams }) {
                             )}
                             {c.notes && <div style={{ fontSize: 11, color: '#7a5c00' }}>📝 {c.notes}</div>}
                             {!c.webInfo?.checkedAt && suitOf(c) && (
-                              <div style={{ fontSize: 11, color: SUIT[suitOf(c).rating].color, fontWeight: 700 }} title={suitOf(c).reasons}>
+                              <div style={{ fontSize: 11, color: SUIT[suitOf(c).rating].color, fontWeight: 700 }} title={suitTip(c)}>
                                 {SUIT[suitOf(c).rating].icon} {SUIT[suitOf(c).rating].label} ✏
                               </div>
                             )}
                             {c.webInfo?.checkedAt && (
                               <div style={{ fontSize: 11, color: '#1f5f8b' }}>
                                 {suitOf(c) && (
-                                  <span title={suitOf(c).reasons} style={{ color: SUIT[suitOf(c).rating].color, fontWeight: 700 }}>
+                                  <span title={suitTip(c)} style={{ color: SUIT[suitOf(c).rating].color, fontWeight: 700 }}>
                                     {SUIT[suitOf(c).rating].icon} {SUIT[suitOf(c).rating].label}{suitOf(c).manual ? ' ✏' : ''} ·{' '}
                                   </span>
                                 )}
@@ -3761,12 +3841,25 @@ export default function Hotels({ navigate, colors, navParams }) {
                             <span style={{ fontSize: 11, color: C.muted }}> · {su.manual ? `✏ hodnoceno ručně${su.by ? ` (${su.by}${su.at ? `, ${fmtD(su.at)}` : ''})` : ''}` : '🤖 hodnocení AI podle kritérií'}</span>
                             <button onClick={() => setSuitEdit({ cardId: c.id, name: c.name, rating: su.rating, reasons: su.reasons || '' })} title="Upravit hodnocení ručně"
                               style={{ ...smallBtn('#41698a'), marginLeft: 8, padding: '1px 8px' }}>✏ Upravit</button>
+                            {!su.manual && c.webInfo?.checkedAt && (
+                              <button onClick={() => handleReassess([c], c.name)} disabled={!!aiBusy} title="Znovu posoudit podle aktuálních kritérií (bez hledání na internetu)"
+                                style={{ ...smallBtn('#5b3fa0'), marginLeft: 6, padding: '1px 8px', opacity: aiBusy ? 0.5 : 1 }}>🔄 Přehodnotit</button>
+                            )}
+                            {aiSu && aiSu.reassessed && <span style={{ fontSize: 11, color: C.muted }}> · přehodnoceno {fmtD(aiSu.at)}</span>}
                             <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 4 }}>{su.reasons}</div>
                             {su.manual && aiSu && aiSu !== su && (
                               <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
                                 🤖 AI hodnotila: {SUIT[aiSu.rating].icon} {SUIT[aiSu.rating].label} — {aiSu.reasons}
                               </div>
                             )}
+                            {aiSu && [['issues', '⚠ Výhrady', '#b26a00'], ['pros', '✅ Plusy', '#2e7d32'], ['unknown', '❓ Neověřeno', C.muted]].map(([k, label, color]) => (
+                              (aiSu[k] || []).length > 0 && (
+                                <div key={k} style={{ marginTop: 6, fontSize: 12 }}>
+                                  <strong style={{ color }}>{label}:</strong>
+                                  {aiSu[k].map((x, i) => <div key={i} style={{ paddingLeft: 14, color: k === 'unknown' ? C.muted : undefined }}>• {x}</div>)}
+                                </div>
+                              )
+                            ))}
                           </div>
                         );
                       })()}
@@ -4083,7 +4176,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         {f.undone && <div style={{ fontSize: 11, color: '#b00020' }}>↩ vráceno</div>}
                       </td>
                       <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links', 'merge', 'web-check'].includes(f.kind) && (
+                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links', 'merge', 'web-check', 'reassess'].includes(f.kind) && (
                           <button onClick={() => handleUndoFix(f)} disabled={!!autoBusy}
                             style={{ ...smallBtn(C.muted), opacity: autoBusy ? 0.5 : 1 }}>↩ Vrátit</button>
                         )}
