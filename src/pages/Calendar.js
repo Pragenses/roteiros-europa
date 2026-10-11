@@ -59,10 +59,11 @@ export const buildDeadlines = (offers) => {
     });
     if (offer.declined) return;
     // Nezaplacené zálohy dodavatelům v den splatnosti (zaškrtnuté, nezrušené karty).
-    allDeposits((offer.items || []).filter(it => it.enabled !== false && !it.cancelled)).forEach(d => {
+    allDeposits((offer.items || []).filter(it => it.enabled !== false && !it.cancelled), undefined, offer.startDate).forEach(d => {
       if (d.status === 'paid' || d.status === 'nodue') return;
       const card = [d.item.city, d.item.name].filter(Boolean).join(' – ') || 'služba';
-      list.push({ ...base, kind: 'deposit', date: ymd(d.row.due), text: `Záloha ${fmtMoney(d.amount)} ${d.currency} · ${card}`, itemId: d.item.id });
+      const what = d.known ? `${fmtMoney(d.amount)} ${d.currency}` : d.condition;
+      list.push({ ...base, kind: 'deposit', date: d.due, text: `Záloha ${what} · ${card}`, itemId: d.item.id });
     });
     (offer.todos || []).forEach(t => {
       if (t.done || !t.due) return;

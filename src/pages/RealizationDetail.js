@@ -338,14 +338,15 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
 // aby se nic nepřepsalo souběžnou úpravou. Tlačítko otevře nabídku.
 function DepositsBlock({ offer, offerId, navigate, colors, card }) {
   const today = new Date().toISOString().slice(0, 10);
-  const list = allDeposits(offer.items, today);
+  const list = allDeposits((offer.items || []).filter(it => it.enabled !== false && !it.cancelled), today, offer.startDate);
   const order = { overdue: 0, soon: 1, nodue: 2, planned: 3, paid: 4 };
-  list.sort((a, b) => (order[a.status] - order[b.status]) || String(a.row.due || a.row.date || '').localeCompare(String(b.row.due || b.row.date || '')));
+  list.sort((a, b) => (order[a.status] - order[b.status]) || String(a.due || a.row.date || '').localeCompare(String(b.due || b.row.date || '')));
   const byCur = {};
   list.forEach(d => {
     const c = byCur[d.currency] = byCur[d.currency] || { total: 0, paid: 0, open: 0 };
     c.total += d.amount; if (d.status === 'paid') c.paid += d.amount; else c.open += d.amount;
   });
+  const unknownN = list.filter(d => !d.known && d.status !== 'paid').length;
   const n = (s) => list.filter(d => d.status === s).length;
   const fmtN = (v) => (Math.round(v * 100) / 100).toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const label = (it) => [it.city, it.name].filter(Boolean).join(' – ') || '(bez názvu)';
@@ -373,8 +374,10 @@ function DepositsBlock({ offer, offerId, navigate, colors, card }) {
               return (
                 <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 10px', fontSize: 13, borderTop: i ? `1px solid ${colors.border}` : 'none', borderLeft: `4px solid ${ds.color}`, background: d.status === 'paid' ? 'transparent' : ds.bg }}>
                   <span style={{ fontWeight: 600, flex: '1 1 220px' }}>{label(d.item)}</span>
-                  <span style={{ minWidth: 110, textAlign: 'right', fontWeight: 700 }}>{fmtN(d.amount)} {d.currency}</span>
-                  <span style={{ minWidth: 140, fontSize: 12 }}>{d.row.due ? `splatnost ${fmtDate(d.row.due)}` : 'splatnost ?'}</span>
+                  <span style={{ minWidth: 110, textAlign: 'right', fontWeight: 700 }}>
+                    {d.known ? `${fmtN(d.amount)} ${d.currency}` : <span title="Částka se určí podle konečných počtů">{d.condition} · ?</span>}
+                  </span>
+                  <span style={{ minWidth: 140, fontSize: 12 }}>{d.due ? `splatnost ${fmtDate(d.due)}` : 'splatnost ?'}{d.row.dueMode === 'before' && d.row.dueDays ? ` (${d.row.dueDays} dní před příjezdem)` : ''}</span>
                   <span style={{ minWidth: 190, fontSize: 12, fontWeight: 700, color: ds.color }}>
                     {ds.icon} {ds.label}{d.status === 'paid' && d.row.date ? ` ${fmtDate(d.row.date)}` : ''}
                   </span>
@@ -386,6 +389,7 @@ function DepositsBlock({ offer, offerId, navigate, colors, card }) {
             {Object.entries(byCur).map(([c, v]) => (
               <span key={c}><b>{c}</b>: celkem {fmtN(v.total)} · zaplaceno {fmtN(v.paid)} · <b style={{ color: v.open > 0 ? '#9a3412' : '#27500A' }}>zbývá {fmtN(v.open)}</b></span>
             ))}
+            {unknownN > 0 && <span style={{ color: '#9a3412' }}>+ {unknownN}× záloha podle podmínky — částka se určí</span>}
           </div>
         </>
       )}

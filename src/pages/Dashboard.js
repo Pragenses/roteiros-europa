@@ -380,15 +380,15 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           .filter(o => userRole !== 'limited' || (o.allowedUsers || []).includes(userEmail))
           .forEach(offer => {
             const items = (offer.items || []).filter(it => it.enabled !== false && !it.cancelled);
-            allDeposits(items, todayStr).forEach(d => {
+            allDeposits(items, todayStr, offer.startDate).forEach(d => {
               if (!['overdue', 'soon', 'nodue'].includes(d.status)) return;
-              const due = String(d.row.due || '').slice(0, 10);
+              const due = d.due;
               const t = {
                 key: offer.id + '-' + d.item.id + '-' + (d.row.id || due), offerId: offer.id, itemId: d.item.id,
                 offerLabel: [offer.offerNumber, offer.name].filter(Boolean).join(' · ') || '(bez názvu)',
                 clientName: offer.clientName || '',
                 cardLabel: [d.item.city, d.item.name].filter(Boolean).join(' – ') || 'služba bez názvu',
-                amount: d.amount, currency: d.currency, due, status: d.status,
+                amount: d.amount, known: d.known, condition: d.condition, currency: d.currency, due, status: d.status,
                 diff: due.length === 10 ? Math.round((new Date(due + 'T12:00:00') - new Date(todayStr + 'T12:00:00')) / 86400000) : null,
               };
               (d.status === 'nodue' ? dNoDue : dTasks).push(t);
@@ -611,8 +611,11 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   };
   const depTotals = (list) => {
     const t = {};
-    list.forEach(d => { t[d.currency] = (t[d.currency] || 0) + d.amount; });
-    return Object.entries(t).map(([c, a]) => `${fmtMoney(a)} ${c}`).join(' · ');
+    let unknown = 0;
+    list.forEach(d => { if (d.known) t[d.currency] = (t[d.currency] || 0) + d.amount; else unknown++; });
+    const parts = Object.entries(t).map(([c, a]) => `${fmtMoney(a)} ${c}`);
+    if (unknown) parts.push(`${unknown}× částka se určí`);
+    return parts.join(' · ');
   };
   const depOverdue = depositTasks.filter(d => d.status === 'overdue');
   const depSoon = depositTasks.filter(d => d.status === 'soon');
@@ -628,7 +631,9 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
         <span style={{ fontSize: 12, fontWeight: 700, color: ds.color, width: 150, flexShrink: 0 }}>
           {ds.icon} {when}
         </span>
-        <span style={{ fontWeight: 700, color: colors.text, whiteSpace: 'nowrap' }}>{fmtMoney(d.amount)} {d.currency}</span>
+        <span style={{ fontWeight: 700, color: colors.text, whiteSpace: 'nowrap' }}>
+          {d.known ? `${fmtMoney(d.amount)} ${d.currency}` : <>{d.condition} <span style={{ fontWeight: 400, color: colors.muted }}>· částka se určí</span></>}
+        </span>
         <span style={{ fontWeight: 600, color: colors.text }}>{d.cardLabel}</span>
         <span style={{ color: colors.muted, fontSize: 12, marginLeft: 'auto' }}>
           {d.due ? `do ${d.due.split('-').reverse().join('.')} · ` : ''}{d.offerLabel}{d.clientName ? ` · ${d.clientName}` : ''}

@@ -12,7 +12,7 @@ import { isHotelItem, altMainOf, isOfferedAlt, offerIsClosed, strayNeedsAction, 
 import { computeAltDiffs } from '../lib/altPricing';
 import { codeForEmail } from '../lib/people';
 import { loadRatesDoc, effectiveRates, ratesState, refreshFromEcb } from '../lib/rates';
-import { isPaid, depositStatus, depositSummary, DEPOSIT_STYLE } from '../lib/deposits';
+import { isPaid, depositStatus, depositSummary, DEPOSIT_STYLE, DEPOSIT_KINDS, depositKind, rowDue } from '../lib/deposits';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -295,7 +295,7 @@ const fillDisplayValue = (key, value) => {
 
 // Čtení částek (mezery, desetinná čárka) je ve sdíleném lib/deposits.js.
 
-const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
+const DepositRows = ({ item, onChange, colors, rowsOnly, arrival }) => {
   // Zálohy dodavateli: plán i zaplacené (11. 10. 2026). Každá splátka má
   // splatnost (do kdy zaplatit) a stav ⏳ k zaplacení / ✅ zaplaceno.
   // Starší řádky bez stavu s vyplněným datem jsou zaplacené (viz lib/deposits).
@@ -305,7 +305,7 @@ const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
   const add = () => set([...rows, { id: Date.now() + Math.random(), amount: '', due: '', paid: false, date: '', method: '' }]);
   const upd = (id, patch) => set(rows.map(r => (r.id === id ? { ...r, ...patch } : r)));
   const del = (id) => set(rows.filter(r => r.id !== id));
-  const sum = depositSummary(item);
+  const sum = depositSummary(item, undefined, arrival);
   const termsFilled = String(item.depositTerms || '').trim() !== '';
   const today = new Date().toISOString().slice(0, 10);
 
@@ -321,21 +321,65 @@ const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
     <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
       {rows.map((r, i) => {
         const paid = isPaid(r);
-        const st = depositStatus(r, today);
+        const st = depositStatus(r, today, item, arrival);
         const ds = DEPOSIT_STYLE[st];
+        const kind = depositKind(r);
+        const before = r.dueMode === 'before';
+        const due = rowDue(r, item, arrival);
+        const fmtD = (d) => (d && d.length === 10 ? `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}` : '');
         return (
           <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
                                    padding: '1px 5px', borderRadius: 4, background: ds.bg,
                                    borderLeft: st === 'empty' ? 'none' : `3px solid ${ds.color}` }}>
             <span style={{ ...lbl, width: 46 }}>{i === 0 ? 'Zálohy:' : ''}</span>
-            <input type="text" inputMode="decimal" placeholder="0" value={r.amount || ''}
+            {/* Podmínka: pevná částka / % z ceny / za pokoj / za osobu */}
+            <select value={kind} onChange={e => upd(r.id, { kind: e.target.value })} title="Jak se záloha počítá" style={small}>
+              {DEPOSIT_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
+            {kind === 'percent' && (
+              <>
+                <input type="text" inputMode="decimal" placeholder="30" value={r.pct || ''} onInput={decimalInput}
+                  onChange={e => upd(r.id, { pct: e.target.value })} style={{ ...small, width: 34, textAlign: 'right' }} />
+                <span style={lbl}>%</span>
+                <select value={r.basis || 'all'} onChange={e => upd(r.id, { basis: e.target.value })} title="Z čeho se procento počítá" style={small}>
+                  <option value="all">z celé ceny</option>
+                  <option value="no_tax">z ubytování bez city tax</option>
+                </select>
+              </>
+            )}
+            {(kind === 'per_room' || kind === 'per_pax') && (
+              <>
+                <input type="text" inputMode="decimal" placeholder="0" value={r.unit || ''} onInput={decimalInput}
+                  onChange={e => upd(r.id, { unit: e.target.value })} style={{ ...small, width: 50, textAlign: 'right' }} />
+                <span style={lbl}>{cur}/{kind === 'per_room' ? 'pokoj' : 'osobu'}</span>
+              </>
+            )}
+            {kind !== 'fixed' && <span style={{ ...lbl, marginLeft: 2 }}>částka:</span>}
+            <input type="text" inputMode="decimal" placeholder={kind === 'fixed' ? '0' : 'určí se'} value={r.amount || ''}
               onInput={decimalInput}
+              title={kind === 'fixed' ? 'Částka zálohy' : 'Skutečná částka — vyplní se podle konečných počtů (v Realizaci), nebo ručně'}
               onChange={e => upd(r.id, { amount: e.target.value })}
               style={{ ...small, width: 64, textAlign: 'right' }} />
             <span style={lbl}>{cur}</span>
             <span style={{ ...lbl, marginLeft: 2 }}>splatnost:</span>
-            <DateDMY dateKey={`due-${item.id}-${r.id}`} value={r.due || ''} colors={colors}
-              onChange={v => upd(r.id, { due: v })} />
+            <select value={before ? 'before' : 'date'} title="Splatnost datem, nebo počtem dní před příjezdem do hotelu"
+              onChange={e => upd(r.id, e.target.value === 'before' ? { dueMode: 'before' } : { dueMode: 'date', due: r.due || due })} style={small}>
+              <option value="date">datum</option>
+              <option value="before">dní před příjezdem</option>
+            </select>
+            {before ? (
+              <>
+                <input type="text" inputMode="numeric" placeholder="30" value={r.dueDays || ''}
+                  onChange={e => upd(r.id, { dueDays: e.target.value.replace(/[^0-9]/g, '') })}
+                  style={{ ...small, width: 34, textAlign: 'right' }} />
+                <span style={{ ...lbl, color: due ? colors.text : '#c2410c' }}>
+                  {due ? `= ${fmtD(due)}` : (item.dateFrom || arrival ? 'zadejte počet dní' : 'chybí datum příjezdu')}
+                </span>
+              </>
+            ) : (
+              <DateDMY dateKey={`due-${item.id}-${r.id}`} value={r.due || ''} colors={colors}
+                onChange={v => upd(r.id, { due: v })} />
+            )}
             {paid ? (
               <>
                 <button type="button" onClick={() => upd(r.id, { paid: false })} title="Kliknutím vrátit na „k zaplacení“"
@@ -367,6 +411,9 @@ const DepositRows = ({ item, onChange, colors, rowsOnly }) => {
           <span style={{ fontSize: 10, color: colors.text, fontWeight: 600 }}>
             celkem {r2(sum.total)} · zaplaceno {r2(sum.paid)} · <span style={{ color: sum.open > 0 ? '#9a3412' : '#27500A' }}>zbývá {r2(sum.open)}</span> {cur}
           </span>
+        )}
+        {sum.unknown > 0 && (
+          <span style={{ fontSize: 10, color: '#9a3412' }}>+ {sum.unknown}× podle podmínky, částka se určí</span>
         )}
       </div>
       {/* Co dodavatel požaduje — vlastními slovy, jedno pole na celou kartu.
@@ -1526,10 +1573,12 @@ const HotelSummaryRow = ({ it, colors }) => {
             {it.optionDate && <span>Option do <b style={{ color: '#c2410c' }}>{fmtDateBR(it.optionDate)}</b></span>}
             {it.cancellationDeadline && <span>Storno zdarma do <b style={{ color: '#dc2626' }}>{fmtDateBR(it.cancellationDeadline)}</b></span>}
             {it.focRatio && <span>FOC {it.focRatio}{it.focRoomType ? ` (${it.focRoomType.toUpperCase()})` : ''}</span>}
-            {deposits.length > 0 && depSum.total > 0 && (
+            {deposits.length > 0 && (depSum.total > 0 || depSum.unknown > 0) && (
               <span>
                 Zálohy: zaplaceno <b>{fmtMoney(depSum.paid)}</b> / {fmtMoney(depSum.total)} {cur}
-                {depSum.open > 0 && <> · <b style={{ color: DEPOSIT_STYLE[depSum.worst === 'paid' ? 'planned' : depSum.worst].color }}>zbývá {fmtMoney(depSum.open)}{depSum.next ? ` (splatnost ${fmtDateBR(depSum.next.due)})` : ''}</b></>}
+                {depSum.open > 0 && <> · <b style={{ color: DEPOSIT_STYLE[depSum.worst === 'paid' ? 'planned' : depSum.worst].color }}>zbývá {fmtMoney(depSum.open)}</b></>}
+                {depSum.unknown > 0 && <> · <b style={{ color: '#9a3412' }}>+ {depSum.unknown}× podle podmínky</b></>}
+                {depSum.next && depSum.worst !== 'paid' ? ` (nejbližší splatnost ${fmtDateBR(depSum.next.due)})` : ''}
               </span>
             )}
             {it.trplOffer === 'yes' && <span>TRPL ✓{it.trplType === 'extrabed' ? ' DBL+přistýlka' : it.trplType === '3beds' ? ' 3 lůžka' : ''}{String(it.trplPrice || '').trim() ? ` ${it.trplPrice} ${cur}/pokoj/noc` : ''}</span>}
@@ -4482,7 +4531,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
                       {/* ŘÁDEK 3 – podmínky (dlouhý řádek, rozbalovací) a zaplacené zálohy */}
                       <TermsField value={it.depositTerms} onChange={v => updateItem(it.id, 'depositTerms', v)} colors={colors} />
-                      <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly />
+                      <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly arrival={offer.startDate} />
 
                       {/* ŘÁDEK 4 – e-maily a akce */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -4662,7 +4711,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     </div>
 
                     {/* ŘÁDEK 3 – zaplacené zálohy (jen když nějaká je) */}
-                    <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly />
+                    <DepositRows item={it} onChange={(f, v) => updateItem(it.id, f, v)} colors={colors} rowsOnly arrival={offer.startDate} />
 
                     {/* ŘÁDEK 4 – e-maily a akce */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
