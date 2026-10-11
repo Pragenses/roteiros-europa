@@ -245,47 +245,73 @@ export const EMAIL_TYPES = {
   events: 'eventy / MICE', central: '🏢 centrální rezervace', agency: 'agentura',
   other: '⚠ jiný hotel — nepatří sem', unknown: 'nezjištěno',
 };
-const FIELD_KEYS = ['name', 'address', 'city', 'country', 'website', 'phone', 'stars', 'rooms', 'groups', 'groupPolicy', 'google', 'booking'];
+const FIELD_KEYS = ['name', 'address', 'city', 'country', 'website', 'phone', 'stars', 'rooms', 'groups', 'groupPolicy',
+  'google', 'booking', 'distanceCenter', 'coachStop', 'coachParking', 'twinRooms', 'restaurant', 'elevator', 'aircon'];
 
-export async function webCheckCard(card) {
+// Výchozí kritéria vhodnosti (upravují se v aplikaci, uložená v settings/hotelCriteria).
+export const DEFAULT_CRITERIA =
+`Klienti: skupiny brazilských cestovních kanceláří na okružních cestách po Evropě autobusem (12–18 dní).
+Typická skupina: 16 TWIN + 2 SNGL (cca 34 osob) + průvodce a řidič.
+
+1. Kategorie: hlavně 4★. 5★ výborné, ale většinou drahé. 3★ jen výjimečně (výborná poloha nebo kvalita).
+2. Kapacita: hotel musí zvládnout cca 18–20 pokojů v jedné noci, ideálně má oddělení pro skupiny a zveřejněné skupinové podmínky.
+3. Autobus: autobus by měl zastavit přímo u hotelu nebo do 100–200 m (ne pěší zóna / ZTL), parkování autobusu poblíž. Když to nejde, hotel to nevylučuje, ale je méně vhodný — komplikace, vyšší náklady, klientům se to nelíbí.
+4. Poloha: pěšky do centra / historické části (do cca 2 km / 20 min), nebo dobré spojení. Daleko od centra = méně vhodný.
+5. Pokoje: dostatek TWIN pokojů (oddělená lůžka), SNGL; TRPL jen výjimečně. Výtah, klimatizace.
+6. Jídlo: snídaně pro celou skupinu najednou; vlastní restaurace pro skupinové večeře (polopenze, set menu).
+7. Pověst: u 4★ hodnocení Booking aspoň 8,0 nebo Google aspoň 4,2; žádné opakované stížnosti na čistotu, hluk, personál.
+8. Naše zkušenost: dřívější spolupráce, potvrzení a realizace jsou plus; problémy v poznámkách jsou minus.`;
+
+export async function webCheckCard(card, ctx = {}) {
   const emails = (card.emails || []).map(e => e.email).filter(Boolean).slice(0, 12);
   const prompt =
-`You are checking one hotel record for a tour operator that books GROUPS. Correctness matters more than completeness.
+`You are checking one hotel record for a Czech DMC that books GROUP TOURS (coach tours for Brazilian tour operators). Correctness matters more than completeness.
 Hotel name on our card: ${card.name}
 Also known as: ${(card.aliases || []).join(' | ') || '-'}
 City on our card: ${card.city || 'unknown'}
 E-mail addresses on our card: ${emails.join(', ') || 'none'}
+Our own history with this hotel: ${ctx.history || 'none recorded'}
 
-Search the web (official hotel website, chain website, Google, Booking.com, TripAdvisor) and return ONLY one JSON object:
+OUR SUITABILITY CRITERIA (written by the company, in Czech):
+${ctx.criteria || DEFAULT_CRITERIA}
+
+Search the web (official hotel website, chain website, Google Maps, Booking.com, TripAdvisor, city coach-parking information) and return ONLY one JSON object:
 {
-  "sure": true|false,                       // true only if you are certain which real hotel this card is
-  "name":        {"value": "<official name>", "source": "<URL>"},
-  "address":     {"value": "<street address with postcode>", "source": "<URL>"},
-  "city":        {"value": "<city>", "source": "<URL>"},
-  "country":     {"value": "<country in English>", "source": "<URL>"},
-  "website":     {"value": "<official website URL of THIS hotel (on a chain site: this hotel's own page)>", "source": "<URL>"},
-  "phone":       {"value": "<main phone with country code>", "source": "<URL>"},
-  "stars":       {"value": <official star rating number or null>, "source": "<URL>"},
-  "rooms":       {"value": <number of rooms or null>, "source": "<URL>"},
-  "groups":      {"value": true|false|null, "source": "<URL>"},   // does the hotel accept/sell group bookings
-  "groupPolicy": {"value": "<short group conditions if published (min rooms, deposit, cancellation), else empty>", "source": "<URL>"},
-  "google":      {"value": {"score": <number 1-5 or null>, "count": <number or null>}, "source": "<URL>"},
-  "booking":     {"value": {"score": <number 1-10 or null>, "count": <number or null>}, "source": "<URL>"},
-  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|agency|other|unknown"} ],
+  "sure": true|false,
+  "name":           {"value": "<official name>", "source": "<URL>"},
+  "address":        {"value": "<street address with postcode>", "source": "<URL>"},
+  "city":           {"value": "<city>", "source": "<URL>"},
+  "country":        {"value": "<country in English>", "source": "<URL>"},
+  "website":        {"value": "<official website of THIS hotel (on a chain site: this hotel's own page)>", "source": "<URL>"},
+  "phone":          {"value": "<main phone with country code>", "source": "<URL>"},
+  "stars":          {"value": <official star rating or null>, "source": "<URL>"},
+  "rooms":          {"value": <number of rooms or null>, "source": "<URL>"},
+  "groups":         {"value": true|false|null, "source": "<URL>"},
+  "groupPolicy":    {"value": "<published group conditions: min rooms, deposit, cancellation, FOC — else empty>", "source": "<URL>"},
+  "google":         {"value": {"score": <1-5 or null>, "count": <number or null>}, "source": "<URL>"},
+  "booking":        {"value": {"score": <1-10 or null>, "count": <number or null>}, "source": "<URL>"},
+  "distanceCenter": {"value": {"km": <number>, "walkMin": <number or null>, "to": "<what centre: old town / main square / station>"}, "source": "<URL>"},
+  "coachStop":      {"value": "<can a tour coach stop at the entrance? any pedestrian zone / ZTL / restrictions? nearest coach stop>", "source": "<URL>"},
+  "coachParking":   {"value": "<coach parking at or near the hotel, price if known>", "source": "<URL>"},
+  "twinRooms":      {"value": "<are twin (two separate beds) rooms available / how many>", "source": "<URL>"},
+  "restaurant":     {"value": "<own restaurant suitable for group dinners / half board? capacity?>", "source": "<URL>"},
+  "elevator":       {"value": true|false|null, "source": "<URL>"},
+  "aircon":         {"value": true|false|null, "source": "<URL>"},
+  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|agency|other|unknown", "belongsTo": {"name": "<hotel the address really belongs to, only for type other>", "city": "<its city>"}} ],
+  "suitability": {"rating": "good|caveats|bad", "reasons": "<2-4 short points IN CZECH explaining the rating against OUR criteria, mention what is unknown>"},
   "evidence": "<one short sentence>"
 }
 Rules:
-- Every value must come from the page in its "source". If you cannot find a value on a real page, use null / "" for the value and "" for the source. Never invent URLs or numbers.
-- Our card may by mistake contain e-mail addresses of OTHER hotels (collected from offers). Mark an address "other" when it clearly belongs to a different hotel (different hotel name in the domain or address, e.g. another brand or property).
-- Fill every field you can find — the address, website, phone, stars, rooms and ratings of a well-known hotel are usually easy to find. Use "sure": false only for the identity question, still fill the fields you found for the most likely hotel.
-- "central" = a chain's central/regional reservation office or an address shared by several hotels (e.g. hXXXX@accor.com is a hotel's own address, but "reservations.central@..." or a booking centre for many hotels is central).
-- If the card name, city or e-mails do not clearly point to one hotel, set "sure": false.
+- Every factual value must come from the page in its "source". If you cannot find it on a real page, use null / "" and source "". Never invent URLs or numbers.
+- Fill every field you can find — well-known hotels have address, website, phone, stars, rooms and ratings easy to find. Use "sure": false only for the identity question; still fill fields for the most likely hotel.
+- Our card may by mistake contain e-mail addresses of OTHER hotels (collected from offers). Mark such an address "other" and say in "belongsTo" which hotel it belongs to.
+- "central" = a chain's central/regional reservation office or an address shared by several hotels.
+- "suitability" is your judgement against OUR criteria (no source needed). "good" = fits well, "caveats" = usable with drawbacks, "bad" = clearly unsuitable.
 - Output the JSON object only — no text before or after it, no citation markers inside values.`;
-  let r = await callAi({ prompt, web: true, maxTokens: 4000, model: MODEL_FALLBACK, maxSearches: 6 });
+  let r = await callAi({ prompt, web: true, maxTokens: 5000, model: MODEL_FALLBACK, maxSearches: 8 });
   let cost = r.cost;
   if (!r.json || Array.isArray(r.json)) {
-    // Nečitelná odpověď → jeden další pokus.
-    r = await callAi({ prompt, web: true, maxTokens: 6000, model: MODEL_FALLBACK, maxSearches: 6 });
+    r = await callAi({ prompt, web: true, maxTokens: 7000, model: MODEL_FALLBACK, maxSearches: 8 });
     cost += r.cost;
   }
   if (!r.json || Array.isArray(r.json)) {
@@ -306,19 +332,25 @@ Rules:
     fields[k] = { value: v, source: String(f.source).trim() };
   }
   const known = new Set(emails.map(e => e.toLowerCase()));
-  const emailTypes = {};
+  const emailTypes = {}, belongsTo = {};
   (Array.isArray(j.emails) ? j.emails : []).forEach(e => {
     const em = String(e && e.email || '').trim().toLowerCase();
-    if (known.has(em) && EMAIL_TYPES[e.type]) emailTypes[em] = e.type;
+    if (!known.has(em) || !EMAIL_TYPES[e.type]) return;
+    emailTypes[em] = e.type;
+    if (e.type === 'other' && e.belongsTo && String(e.belongsTo.name || '').trim()) {
+      belongsTo[em] = { name: String(e.belongsTo.name).trim(), city: String(e.belongsTo.city || '').trim() };
+    }
   });
   if (!Object.keys(fields).length) {
     const e = new Error('AI nenašla žádný údaj s ověřitelným zdrojem');
     e.cost = cost;
     throw e;
   }
+  const sRating = j.suitability && ['good', 'caveats', 'bad'].includes(j.suitability.rating) ? j.suitability.rating : '';
   return {
     sure: j.sure === true && !!fields.name,
-    fields, emailTypes,
+    fields, emailTypes, belongsTo,
+    suitability: sRating ? { rating: sRating, reasons: String(j.suitability.reasons || '').trim().slice(0, 600) } : null,
     evidence: String(j.evidence || '').trim().slice(0, 300),
     cost, model: r.model,
   };
