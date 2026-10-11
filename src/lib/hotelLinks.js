@@ -26,6 +26,19 @@ export const isOwnEmail = (e) => OWN_EMAIL_RE.some(re => re.test(String(e || '')
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 export const cleanEmail = (e) => String(e || '').trim().toLowerCase().replace(/^mailto:/, '');
+// Adresy systémů a portálů, přes které hotely posílají smlouvy, nabídky
+// a potvrzení (elektronický podpis, nabídkové a rezervační systémy). Sdílí je
+// mnoho hotelů, takže se podle nich nehledá karta a nikdy se nepřesouvají.
+export const PORTAL_DOMAINS = [
+  'scrive.com', 'proposales.com', 'oneflow.com', 'backyou.io', 'docusign.net', 'docusign.com', 'echosign.com',
+  'adobesign.com', 'hellosign.com', 'dropboxsign.com', 'pandadoc.net', 'pandadoc.com', 'signrequest.com', 'signnow.com',
+  'yousign.com', 'yousign.fr', 'zohosign.com', 'cvent.com', 'cvent-planner.com', 'groups360.com', 'synxis.com',
+  'mews.com', 'mews.li', 'protel.net', 'hotelkit.net', 'salesforce.com', 'hubspot.com', 'hs-email.com',
+];
+export const isPortalEmail = (e) => {
+  const d = String(e || '').trim().toLowerCase().split('@')[1] || '';
+  return !!d && PORTAL_DOMAINS.some(p => d === p || d.endsWith('.' + p));
+};
 export const usableEmail = (e) => { const c = cleanEmail(e); return EMAIL_OK.test(c) && !isOwnEmail(c) ? c : ''; };
 
 const stripDia = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -202,7 +215,7 @@ export function resolveCard(idx, { cardId, emails, name, city, linkKey }, decisi
   const byMail = new Set();
   (emails || []).forEach(e => {
     const k = usableEmail(e);
-    if (k && idx.byEmail.has(k)) idx.byEmail.get(k).forEach(id => byMail.add(id));
+    if (k && !isPortalEmail(k) && idx.byEmail.has(k)) idx.byEmail.get(k).forEach(id => byMail.add(id));
   });
   rejected.forEach(id => byMail.delete(id));
   if (byMail.size === 1) return { cardId: [...byMail][0], how: 'email' };
