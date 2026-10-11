@@ -380,7 +380,7 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
           .filter(o => userRole !== 'limited' || (o.allowedUsers || []).includes(userEmail))
           .forEach(offer => {
             const items = (offer.items || []).filter(it => it.enabled !== false && !it.cancelled);
-            allDeposits(items, todayStr, offer.startDate).forEach(d => {
+            allDeposits(items, todayStr, offer.startDate, offer).forEach(d => {
               if (!['overdue', 'soon', 'nodue'].includes(d.status)) return;
               const due = d.due;
               const t = {

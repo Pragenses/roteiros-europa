@@ -8,7 +8,10 @@ import { isInRealization, realizationItems, itemStatus, serviceCounts, fmtMoney,
 import { DEFAULT_RATES } from '../lib/offerCalc';
 import { computeOfferRows } from '../lib/offerRows';
 import { loadRatesDoc, effectiveRates } from '../lib/rates';
-import { allDeposits, DEPOSIT_STYLE } from '../lib/deposits';
+import { allDeposits, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposits';
+import { FINAL_FIELDS, finalFor, hotelTotal, mealCandidates } from '../lib/depositCalc';
+import { saveFinalGroup, saveFinalHotel, addDepositRow } from '../lib/depositStore';
+import DepositRows from '../components/DepositRows';
 
 // Přehled jedné akce v Realizaci. Všechno se čte ŽIVĚ z nabídky
 // (offers/<id>) — žádná kopie. Upravuje se v nabídce („Otevřít nabídku“);
@@ -196,10 +199,12 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
       <ServicesByKind offerId={offerId} colors={colors} card={card} cnt={cnt} itemsCount={items.length}
         byKind={byKind} kindOrder={kindOrder} nLate={nLate} nWarn={nWarn} nNoKind={nNoKind} nSuggest={nSuggest} rowsK={rowsK} />
 
+      <FinalCountsBlock offer={offer} offerId={offerId} colors={colors} card={card} />
+
       <DepositsBlock offer={offer} offerId={offerId} navigate={navigate} colors={colors} card={card} />
 
       <div style={{ ...card, background: '#F7F6F3', color: colors.muted, fontSize: 13 }}>
-        Další kroky Realizace (připravujeme): finální počet osob a pokoje · kontrola faktur hotelů · rooming list · vouchery · kontrolní seznam před odjezdem.
+        Další kroky Realizace (připravujeme): platby od klienta · kontrola faktur hotelů · rooming list · vouchery · kontrolní seznam před odjezdem.
       </div>
     </div>
   );
@@ -333,65 +338,241 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
   );
 }
 
-// ── Zálohy dodavatelům: co je po splatnosti, co se blíží, co je zaplaceno ──
-// Jen přehled — data jsou na kartách v nabídce (jedno místo), upravují se tam,
-// aby se nic nepřepsalo souběžnou úpravou. Tlačítko otevře nabídku.
+// ── Konečné počty: společné pro akci + výjimky u hotelů + nastavení výpočtu ──
+// Ukládá se do offers/<id>.rzFinal po částech (lib/depositStore.js). Z těchto
+// počtů se počítají zálohy (a později kontrola faktur hotelů).
+function CountInput({ value, onCommit, disabled, colors, width = 48 }) {
+  const [v, setV] = useState(value ?? '');
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setV(value ?? ''); }, [value, focus]);
+  return (
+    <input type="text" inputMode="numeric" value={v} disabled={disabled}
+      onFocus={() => setFocus(true)}
+      onChange={e => setV(e.target.value.replace(/[^0-9]/g, ''))}
+      onBlur={() => { setFocus(false); if (String(v) !== String(value ?? '')) onCommit(v); }}
+      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+      style={{ width, padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 13, textAlign: 'right',
+               fontFamily: 'inherit', background: disabled ? '#f4f4f2' : '#fff', color: disabled ? colors.muted : colors.text }} />
+  );
+}
+
+function FinalCountsBlock({ offer, offerId, colors, card }) {
+  const [err, setErr] = useState('');
+  const [showLog, setShowLog] = useState(false);
+  const [openCalc, setOpenCalc] = useState({});
+  const f = offer.rzFinal || {};
+  const g = f.group || {};
+  const hotels = (offer.items || [])
+    .filter(it => it.subType === 'hotel' && it.enabled !== false && !it.cancelled)
+    .sort((a, b) => String(a.dateFrom || '').localeCompare(String(b.dateFrom || '')));
+  const meals = mealCandidates(offer);
+  const run = async (fn) => { setErr(''); try { await fn(); } catch (e) { console.error(e); setErr('Uložení se nepovedlo: ' + (e.message || e)); } };
+  const fmtAt = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const log = Array.isArray(f.log) ? [...f.log].reverse() : [];
+  const lbl = { fontSize: 11, color: colors.muted };
+  const countsLine = (c) => FINAL_FIELDS.filter(x => String(c[x.key] ?? '').trim() !== '' && String(c[x.key]) !== '0')
+    .map(x => `${c[x.key]} ${x.short}`).join(' · ') || '—';
+
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>🛏 Konečné počty</div>
+        {g.setAt && <span style={lbl}>změněno {fmtAt(g.setAt)}{g.setBy ? ` – ${g.setBy}` : ''}</span>}
+        <button onClick={() => setShowLog(v => !v)} style={{ marginLeft: 'auto', padding: '2px 9px', background: '#fff', color: colors.primary, border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+          {showLog ? '▾' : '▸'} Historie změn ({log.length})
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
+        Skutečně prodaná místa a pokoje. Vyplňte, až je znáte, a měňte podle skutečnosti — z těchto čísel se počítají zálohy.
+      </div>
+      {showLog && (
+        <div style={{ maxHeight: 200, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: 8, marginBottom: 10 }}>
+          {log.length === 0 && <div style={{ padding: 8, fontSize: 12, color: colors.muted }}>Zatím žádné změny.</div>}
+          {log.map((h, i) => (
+            <div key={i} style={{ padding: '4px 10px', fontSize: 12, borderTop: i ? `1px solid ${colors.border}` : 'none' }}>
+              {fmtAt(h.at)} · {h.by} · <b>{h.where}</b> · {h.text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end', background: '#F7F6F3', borderRadius: 8, padding: '10px 12px', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, alignSelf: 'center', minWidth: 120 }}>Celá akce</div>
+        {FINAL_FIELDS.map(x => (
+          <label key={x.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={lbl}>{x.label}</span>
+            <CountInput colors={colors} value={g[x.key]} width={x.key === 'pax' ? 56 : 48}
+              onCommit={v => run(() => saveFinalGroup(offerId, offer, { [x.key]: v }))} />
+          </label>
+        ))}
+      </div>
+
+      {hotels.length === 0 && <div style={{ fontSize: 13, color: colors.muted }}>V nabídce nejsou zaškrtnuté hotely.</div>}
+      {hotels.map(it => {
+        const ff = finalFor(offer, it.id);
+        const h = ff.hotel;
+        const calc = h.calc || {};
+        const tot = hotelTotal(it, offer);
+        const cur = it.currency || 'EUR';
+        const isOpen = !!openCalc[it.id];
+        const setCalc = (patch, text) => run(() => saveFinalHotel(offerId, offer, it, { calc: { ...calc, ...patch } }, text));
+        const mealIds = (calc.meals || []).map(String);
+        const foc = calc.foc || {};
+        return (
+          <div key={it.id} style={{ border: `1px solid ${ff.exception ? '#f59e0b' : colors.border}`, background: ff.exception ? '#fffbeb' : '#fff', borderRadius: 8, padding: '8px 12px', marginBottom: 6 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 700, fontSize: 13, minWidth: 200 }}>🏨 {[it.city, it.name].filter(Boolean).join(' – ') || '(bez názvu)'}</span>
+              <span style={lbl}>{fmtDate(it.dateFrom)}{it.nights ? ` · ${it.nights} nocí` : ''}</span>
+              {!ff.exception && <span style={{ fontSize: 12 }}>{countsLine(ff.counts)}</span>}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', color: ff.exception ? '#b45309' : colors.muted, fontWeight: ff.exception ? 700 : 400 }}>
+                <input type="checkbox" checked={ff.exception}
+                  onChange={e => run(() => saveFinalHotel(offerId, offer, it,
+                    e.target.checked
+                      ? { exception: true, ...Object.fromEntries(FINAL_FIELDS.map(x => [x.key, h[x.key] !== undefined && h.exception ? h[x.key] : (g[x.key] ?? '')])) }
+                      : { exception: false },
+                    e.target.checked ? 'výjimka zapnuta (vlastní počty)' : 'výjimka zrušena (počty celé akce)'))} />
+                ✎ výjimka (jiné počty než celá akce)
+              </label>
+              <span style={{ marginLeft: 'auto', fontSize: 12 }}>
+                celá cena: <b>{tot.any && tot.total > 0 ? `${fmtMoney(tot.total)} ${cur}` : '—'}</b>
+              </span>
+              <button onClick={() => setOpenCalc(o => ({ ...o, [it.id]: !o[it.id] }))} title="Výpočet celé ceny a nastavení (strava, FOC)"
+                style={{ padding: '2px 8px', background: isOpen ? '#e0f2fe' : '#fff', color: '#0369a1', border: '1px solid #7dd3fc', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>ℹ</button>
+            </div>
+            {ff.exception && (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 6 }}>
+                {FINAL_FIELDS.map(x => (
+                  <label key={x.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={lbl}>{x.label}</span>
+                    <CountInput colors={colors} value={h[x.key]} width={x.key === 'pax' ? 56 : 48}
+                      onCommit={v => run(() => saveFinalHotel(offerId, offer, it, { [x.key]: v }))} />
+                  </label>
+                ))}
+              </div>
+            )}
+            {isOpen && (
+              <div style={{ marginTop: 8, fontSize: 12, background: '#f8fafc', border: '1px solid #bae6fd', borderRadius: 6, padding: '8px 10px', lineHeight: 1.6 }}>
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {meals.length > 0 ? meals.map(m => (
+                    <label key={m.id} style={{ display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={mealIds.includes(String(m.id))}
+                        onChange={e => setCalc({ meals: e.target.checked ? [...mealIds, String(m.id)] : mealIds.filter(x => x !== String(m.id)) },
+                          `${e.target.checked ? 'započítat' : 'nezapočítat'} stravu: ${m.name || ''}`)} />
+                      započítat stravu: {[m.city, m.name].filter(Boolean).join(' – ')}
+                    </label>
+                  )) : <span style={{ color: colors.muted }}>Strava: v nabídce není karta polopenze / jídla v hotelu.</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+                  <label style={{ display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!foc.on}
+                      onChange={e => setCalc({ foc: { n: foc.n || '1', type: foc.type || 'sgl', on: e.target.checked } }, e.target.checked ? 'odečíst FOC: ano' : 'odečíst FOC: ne')} />
+                    odečíst FOC
+                  </label>
+                  {foc.on && (
+                    <>
+                      <CountInput colors={colors} value={foc.n || '1'} width={36} onCommit={v => setCalc({ foc: { ...foc, n: v } }, `FOC počet: ${v}`)} />
+                      <select value={foc.type || 'sgl'} onChange={e => setCalc({ foc: { ...foc, type: e.target.value } }, `FOC pokoj: ${e.target.value.toUpperCase()}`)}
+                        style={{ padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+                        <option value="sgl">SGL</option><option value="dbl">DBL</option>
+                      </select>
+                      <span style={{ color: colors.muted }}>pokoj zdarma (city tax se platí dál)</span>
+                    </>
+                  )}
+                  {it.focRatio && <span style={{ color: colors.muted }}>· na kartě: FOC {it.focRatio}{it.focRoomType ? ` (${String(it.focRoomType).toUpperCase()})` : ''}</span>}
+                </div>
+                {tot.lines.map((l, k) => (
+                  <div key={k} style={{ display: 'flex', gap: 12, color: l.amount < 0 ? '#9a3412' : colors.text }}>
+                    <span style={{ flex: 1 }}>{l.label}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(l.amount)}</span>
+                  </div>
+                ))}
+                <div style={{ borderTop: `1px solid ${colors.border}`, marginTop: 3, paddingTop: 3, fontWeight: 700, display: 'flex' }}>
+                  <span style={{ flex: 1 }}>celá cena hotelu</span><span>{fmtMoney(tot.total)} {cur}</span>
+                </div>
+                {tot.warnings.map((w, k) => <div key={k} style={{ color: '#b45309' }}>⚠ {w}</div>)}
+                <div style={{ marginTop: 4 }}><b>Podmínky z karty:</b> {String(it.depositTerms || '').trim() || <span style={{ color: colors.muted }}>nevyplněno</span>}</div>
+                <div style={{ color: colors.muted, marginTop: 2 }}>Ceny jsou z karty hotelu v nabídce. FOC se odečítá jen když je zaškrtnuto.</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {err && <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 6 }}>❌ {err}</div>}
+    </div>
+  );
+}
+
+// ── Zálohy dodavatelům: upravují se tady i na kartě v nabídce (jedno společné
+// místo, změna se hned ukáže na obou stranách). ──
 function DepositsBlock({ offer, offerId, navigate, colors, card }) {
   const today = new Date().toISOString().slice(0, 10);
-  const list = allDeposits((offer.items || []).filter(it => it.enabled !== false && !it.cancelled), today, offer.startDate);
-  const order = { overdue: 0, soon: 1, nodue: 2, planned: 3, paid: 4 };
-  list.sort((a, b) => (order[a.status] - order[b.status]) || String(a.due || a.row.date || '').localeCompare(String(b.due || b.row.date || '')));
+  const [addFor, setAddFor] = useState('');
+  const [err, setErr] = useState('');
+  const active = (offer.items || []).filter(it => it.enabled !== false && !it.cancelled
+    && it.subType !== 'guide_hotel' && it.subType !== 'driver_hotel');
+  const list = allDeposits(active, today, offer.startDate, offer);
   const byCur = {};
   list.forEach(d => {
     const c = byCur[d.currency] = byCur[d.currency] || { total: 0, paid: 0, open: 0 };
+    if (!d.known) return;
     c.total += d.amount; if (d.status === 'paid') c.paid += d.amount; else c.open += d.amount;
   });
   const unknownN = list.filter(d => !d.known && d.status !== 'paid').length;
   const n = (s) => list.filter(d => d.status === s).length;
-  const fmtN = (v) => (Math.round(v * 100) / 100).toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const label = (it) => [it.city, it.name].filter(Boolean).join(' – ') || '(bez názvu)';
+  // Hotely vždy, ostatní služby jen když už mají zálohu.
+  const shown = active.filter(it => it.subType === 'hotel' || effectiveDeposits(offer, it).length > 0)
+    .sort((a, b) => (a.subType === 'hotel' ? 0 : 1) - (b.subType === 'hotel' ? 0 : 1) || String(a.dateFrom || '').localeCompare(String(b.dateFrom || '')));
+  const others = active.filter(it => !shown.includes(it));
+  const addOther = async () => {
+    const it = active.find(x => String(x.id) === String(addFor));
+    if (!it) return;
+    setErr('');
+    try { await addDepositRow(offerId, offer, it, 'Realizace'); setAddFor(''); }
+    catch (e) { setErr('Zálohu se nepodařilo přidat: ' + (e.message || e)); }
+  };
+  const chip = (st, text) => <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE[st].color, background: DEPOSIT_STYLE[st].bg, borderRadius: 6, padding: '2px 8px' }}>{text}</span>;
   return (
     <div style={card}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>💸 Zálohy dodavatelům</div>
-        {n('overdue') > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE.overdue.color, background: DEPOSIT_STYLE.overdue.bg, borderRadius: 6, padding: '2px 8px' }}>⛔ {n('overdue')} po splatnosti</span>}
-        {n('soon') > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE.soon.color, background: DEPOSIT_STYLE.soon.bg, borderRadius: 6, padding: '2px 8px' }}>⏳ {n('soon')} splatné do 14 dní</span>}
-        {n('nodue') > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: DEPOSIT_STYLE.nodue.color, background: DEPOSIT_STYLE.nodue.bg, borderRadius: 6, padding: '2px 8px' }}>❓ {n('nodue')} bez splatnosti</span>}
+        {n('overdue') > 0 && chip('overdue', `⛔ ${n('overdue')} po splatnosti`)}
+        {n('soon') > 0 && chip('soon', `⏳ ${n('soon')} splatné do 14 dní`)}
+        {n('nodue') > 0 && chip('nodue', `❓ ${n('nodue')} bez splatnosti`)}
         <button onClick={() => navigate('offer-detail', { offerId })} style={{ marginLeft: 'auto', padding: '3px 10px', background: '#fff', color: colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
-          Upravit v nabídce
+          Otevřít nabídku
         </button>
       </div>
-      <div style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
-        Zálohy se zapisují na kartách v nabídce („+ záloha“ → částka, splatnost, ✓ zaplaceno). Tady je přehled celé akce.
+      <div style={{ fontSize: 12, color: colors.muted, marginBottom: 8, lineHeight: 1.5 }}>
+        Zálohy jde upravovat tady i na kartě v nabídce — je to stejné místo, změna se hned ukáže na obou stranách.
+        Prázdná částka se vypočte z konečných počtů (zeleně); napsaná částka má přednost (✎). „✓ zaplaceno“ vypočtenou částku zafixuje.
       </div>
-      {list.length === 0 ? (
-        <div style={{ fontSize: 13, color: colors.muted }}>Zatím nejsou zapsané žádné zálohy.</div>
-      ) : (
-        <>
-          <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, overflow: 'hidden' }}>
-            {list.map((d, i) => {
-              const ds = DEPOSIT_STYLE[d.status];
-              return (
-                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 10px', fontSize: 13, borderTop: i ? `1px solid ${colors.border}` : 'none', borderLeft: `4px solid ${ds.color}`, background: d.status === 'paid' ? 'transparent' : ds.bg }}>
-                  <span style={{ fontWeight: 600, flex: '1 1 220px' }}>{label(d.item)}</span>
-                  <span style={{ minWidth: 110, textAlign: 'right', fontWeight: 700 }}>
-                    {d.known ? `${fmtN(d.amount)} ${d.currency}` : <span title="Částka se určí podle konečných počtů">{d.condition} · ?</span>}
-                  </span>
-                  <span style={{ minWidth: 140, fontSize: 12 }}>{d.due ? `splatnost ${fmtDate(d.due)}` : 'splatnost ?'}{d.row.dueMode === 'before' && d.row.dueDays ? ` (${d.row.dueDays} dní před příjezdem)` : ''}</span>
-                  <span style={{ minWidth: 190, fontSize: 12, fontWeight: 700, color: ds.color }}>
-                    {ds.icon} {ds.label}{d.status === 'paid' && d.row.date ? ` ${fmtDate(d.row.date)}` : ''}
-                  </span>
-                </div>
-              );
-            })}
+      {shown.map(it => (
+        <div key={it.id} style={{ borderTop: `1px solid ${colors.border}`, padding: '8px 0' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>
+            {it.subType === 'hotel' ? '🏨' : '•'} {label(it)}
+            <span style={{ fontWeight: 400, color: colors.muted, fontSize: 12 }}> · {it.currency || 'EUR'}{it.dateFrom ? ` · příjezd ${fmtDate(it.dateFrom)}` : ''}</span>
           </div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12 }}>
-            {Object.entries(byCur).map(([c, v]) => (
-              <span key={c}><b>{c}</b>: celkem {fmtN(v.total)} · zaplaceno {fmtN(v.paid)} · <b style={{ color: v.open > 0 ? '#9a3412' : '#27500A' }}>zbývá {fmtN(v.open)}</b></span>
-            ))}
-            {unknownN > 0 && <span style={{ color: '#9a3412' }}>+ {unknownN}× záloha podle podmínky — částka se určí</span>}
-          </div>
-        </>
+          <DepositRows offerId={offerId} offer={offer} item={it} from="Realizace" colors={colors} arrival={offer.startDate} big />
+        </div>
+      ))}
+      {others.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${colors.border}`, paddingTop: 8 }}>
+          <span style={{ fontSize: 12, color: colors.muted }}>Záloha k jiné službě:</span>
+          <select value={addFor} onChange={e => setAddFor(e.target.value)} style={{ padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+            <option value="">— vyberte službu —</option>
+            {others.map(it => <option key={it.id} value={it.id}>{label(it)}</option>)}
+          </select>
+          <button disabled={!addFor} onClick={addOther} style={{ padding: '3px 10px', background: addFor ? colors.primary : '#ccc', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: addFor ? 'pointer' : 'default' }}>+ záloha</button>
+        </div>
+      )}
+      {err && <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 6 }}>❌ {err}</div>}
+      {list.length > 0 && (
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 10, fontSize: 12, borderTop: `1px solid ${colors.border}`, paddingTop: 8 }}>
+          {Object.entries(byCur).map(([c, v]) => (
+            <span key={c}><b>{c}</b>: celkem {fmtMoney(v.total)} · zaplaceno {fmtMoney(v.paid)} · <b style={{ color: v.open > 0 ? '#9a3412' : '#27500A' }}>zbývá {fmtMoney(v.open)}</b></span>
+          ))}
+          {unknownN > 0 && <span style={{ color: '#9a3412' }}>+ {unknownN}× částka se určí (chybí počty nebo procento)</span>}
+        </div>
       )}
     </div>
   );
