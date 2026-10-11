@@ -603,7 +603,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v219-ai-propojeni');
+  console.debug('Hotels v220-ai-shody-spolehlive');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1663,23 +1663,26 @@ export default function Hotels({ navigate, colors, navParams }) {
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
     const budget = makeBudget();
     const cardById = new Map(cards.map(c => [c.id, c]));
-    const stats = { yes: 0, no: 0, unsure: 0 };
+    const stats = { yes: 0, no: 0, unsure: 0, failed: 0 };
     const units = [], linkKeys = [];
     try {
-      for (let i = 0; i < groups.length; i += 12) {
+      for (let i = 0; i < groups.length; i += 6) {
         if (!budget.ok()) break;
         if (!aiStopRef.current) setAiBusy(`Posuzuji shody: ${i} z ${groups.length} · utraceno ${fmtKc(budget.spent())} Kč`);
-        const chunk = groups.slice(i, i + 12);
+        const chunk = groups.slice(i, i + 6);
         const items = chunk.map((g, j) => ({
           i: j, name: g.name, city: g.city, emails: g.emails.slice(0, 4),
           candidates: g.candidates.map(c => ({ id: c.id, name: c.name, city: c.city, emails: ((cardById.get(c.id) || {}).emails || []).slice(0, 4).map(e => e.email) })),
         }));
-        const r = await judgeMatches(items);
+        let r;
+        try { r = await judgeMatches(items); }
+        catch (err) { console.error('AI posouzení dávky selhalo:', err); stats.failed += chunk.length; continue; }
         budget.add(r.cost);
-        if (!r.results.length) continue;
+        if (!r.results.length) { stats.failed += chunk.length; continue; }
         const batch = writeBatch(db);
         chunk.forEach((g, j) => {
-          const res = r.results.find(x => Number(x.i) === j) || {};
+          const res = r.results.find(x => Number(x.i) === j);
+          if (!res) { stats.failed++; return; }
           const match = g.candidates.some(c => c.id === res.match) ? res.match : '';
           const check = { key: g.key, match, sure: res.sure === true, model: r.model, at: new Date().toISOString(), by };
           batch.set(doc(db, 'hotelMatchChecks', checkDocId(g.key)), check);
@@ -1711,7 +1714,8 @@ export default function Hotels({ navigate, colors, navParams }) {
         (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🤖 Hotovo.\n\n') +
         `Propojeno (jistá shoda): ${stats.yes}\n` +
         `Odmítnuto (jistě jiný hotel → mezi hotely bez karty): ${stats.no}\n` +
-        `Nejisté (zůstávají s návrhem AI): ${stats.unsure}\n\n` +
+        `Nejisté (zůstávají s návrhem AI): ${stats.unsure}\n` +
+        (stats.failed ? `Nepodařilo se posoudit (zkuste tlačítko znovu): ${stats.failed}\n` : '') + '\n' +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
     } catch (e) {
       setAiBusy('');
