@@ -7,6 +7,8 @@
 // s konkrétní cestou. Ostatní shody jdou člověku k rozhodnutí.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { isCentralCard } from './hotelLinks';
+
 const stripDia = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 // Webová adresa → porovnatelný klíč: bez https, www, jazyka, index.html,
@@ -42,7 +44,8 @@ const fv = (card, k) => {
 // Skupiny duplicit z karet, které mají internetovou kontrolu.
 // → [{ key, ids: [...], sure, reason }]
 export function findDuplicateGroups(cards) {
-  const checked = (cards || []).filter(c => c.webInfo && c.webInfo.checkedAt);
+  // Centrály řetězců se se žádnou kartou neslučují.
+  const checked = (cards || []).filter(c => c.webInfo && c.webInfo.checkedAt && !isCentralCard(c));
   // Homepage řetězce (bez cesty) sdílí mnoho hotelů — takový klíč nic nespojuje.
   const urlCount = new Map();
   checked.forEach(c => { const u = normUrl(fv(c, 'website')); if (u) urlCount.set(u, (urlCount.get(u) || 0) + 1); });
