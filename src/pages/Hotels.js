@@ -3,7 +3,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { nameFromWeb, verifyOfferHotel, judgeMatches } from '../lib/hotelAi';
+import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES } from '../lib/hotelAi';
+import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
 import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
 
@@ -581,6 +582,25 @@ const BUILTIN_TEMPLATES = [
   { id: 'cancellation',  name: 'Zrušení / storno', order: 4, subjectSuffix: 'CANCELLATION',    body: TPL_CANCELLATION },
 ];
 
+// Internetové údaje na kartě (pořadí a popisky v detailu).
+const WEB_FIELDS = [
+  ['name', 'Oficiální název'], ['address', 'Adresa'], ['city', 'Město'], ['country', 'Země'],
+  ['website', 'Web'], ['phone', 'Telefon'], ['stars', 'Hvězdičky'], ['rooms', 'Počet pokojů'],
+  ['groups', 'Bere skupiny'], ['groupPolicy', 'Podmínky pro skupiny'], ['google', 'Hodnocení Google'], ['booking', 'Hodnocení Booking'],
+];
+const fieldVal = (c, k) => { const f = c && c.webInfo && c.webInfo.fields && c.webInfo.fields[k]; return f && !f.deleted ? f.value : null; };
+const webValue = (k, v) => {
+  if (v === null || v === undefined || v === '') return '—';
+  if (k === 'website') return <a href={/^https?:/.test(String(v)) ? v : `https://${v}`} target="_blank" rel="noreferrer">{String(v)}</a>;
+  if (k === 'groups') return v === true ? 'ano' : v === false ? 'ne' : String(v);
+  if (k === 'stars') return `${'★'.repeat(Math.min(5, Math.round(Number(v) || 0)))} (${v})`;
+  if (k === 'google' || k === 'booking') {
+    if (typeof v !== 'object') return String(v);
+    return `${v.score ?? '—'}${k === 'google' ? ' / 5' : ' / 10'}${v.count ? ` · ${Number(v.count).toLocaleString('cs-CZ')} recenzí` : ''}`;
+  }
+  return String(v);
+};
+
 // Popisky pro detail karty (stejné jako v nabídce a zakázce).
 const LINE_STATUS = {
   '': 'Stav?', requested: '🟡 Poptáno', negotiating: '🟠 V jednání', preapproved: '🔵 Předschváleno',
@@ -603,7 +623,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v221-patri-ke-karte');
+  console.debug('Hotels v222-internet-kontrola');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1055,6 +1075,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   // ↩ Vrátit celý běh: smaže karty, které běh založil, a odebere štítky
   // z řádků. Databáze hotelů je pak přesně jako před během.
   const handleUndoFix = async (f) => {
+    if (f.kind === 'merge' || f.kind === 'web-check') return handleUndoSpecial(f);
     const n = (f.cardIds || []).length;
     const m = (f.added || []).length;
     const l = (f.linkKeys || []).length;
@@ -1083,6 +1104,38 @@ export default function Hotels({ navigate, colors, navParams }) {
       await updateDoc(doc(db, 'hotelAutoFixes', f.id), { undone: true, undoneAt: new Date().toISOString(), undoneBy: auth.currentUser?.email || '' });
       await Promise.all([fetchHotels(), fetchCards(), fetchFixLog()]);
       if ((f.linkKeys || []).length || f.kind === 'orphan-cards') loadSystemData();
+    } catch (e) {
+      alert('Nepodařilo se vrátit: ' + e.message);
+    }
+    setAutoBusy('');
+  };
+
+  // ↩ Vrátit sloučení / internetovou kontrolu.
+  const handleUndoSpecial = async (f) => {
+    const what = f.kind === 'merge' ? 'sloučení karet (karty se obnoví tak, jak byly)' : `internetovou kontrolu ${(f.webCardIds || []).length} karet (údaje z internetu se vrátí na předchozí stav)`;
+    if (!window.confirm(`Vrátit ${what}?`)) return;
+    setAutoBusy('Vracím…');
+    try {
+      const units = [];
+      if (f.kind === 'merge') {
+        const m = f.merge || {};
+        units.push([{ t: 'set', ref: doc(db, 'hotelCards', m.primaryId), data: m.primaryBefore }]);
+        (m.others || []).forEach(o => units.push([{ t: 'set', ref: doc(db, 'hotelCards', o.id), data: o.data }]));
+        (m.rows || []).forEach(r => units.push([{ t: 'update', ref: doc(db, 'hotels', r.id), data: { cardId: r.from } }]));
+        (m.links || []).forEach(l => units.push([{ t: 'update', ref: doc(db, 'hotelCardLinks', encodeURIComponent(l.key).slice(0, 1400)), data: { cardId: l.from } }]));
+      } else {
+        for (const id of (f.webCardIds || [])) {
+          const cs = await getDoc(doc(db, 'hotelCards', id));
+          if (!cs.exists()) continue;
+          const c = cs.data();
+          const emails = (c.emails || []).map(e => (e.typeManual || e.typePrev === undefined) ? e : { ...e, type: e.typePrev || '' });
+          units.push([{ t: 'update', ref: cs.ref, data: { webInfo: (c.webInfo && c.webInfo.prev) || null, emails } }]);
+        }
+      }
+      await commitUnits(units, 'Vracím');
+      await updateDoc(doc(db, 'hotelAutoFixes', f.id), { undone: true, undoneAt: new Date().toISOString(), undoneBy: auth.currentUser?.email || '' });
+      await Promise.all([fetchHotels(), fetchCards(), fetchFixLog()]);
+      loadSystemData();
     } catch (e) {
       alert('Nepodařilo se vrátit: ' + e.message);
     }
@@ -1758,6 +1811,254 @@ export default function Hotels({ navigate, colors, navParams }) {
       await Promise.all([fetchAiChecks(), loadSystemData()]);
       alert(`AI se přerušila: ${e.message}\n\nUtraceno ${fmtKc(budget.spent())} Kč.`);
     }
+  };
+
+  // ── 🌐 INTERNETOVÁ KONTROLA KARET + SLUČOVÁNÍ DUPLICIT ──────────────────────
+  // Údaje se ukládají jen na kartu do `webInfo` (každý se zdrojem). Ručně
+  // upravené nebo smazané údaje (`manual`) AI nikdy nepřepíše. Předchozí stav
+  // se uloží do `webInfo.prev`, takže celý běh jde vrátit.
+  const [mergeNo, setMergeNo] = useState({});
+  const [showDup, setShowDup] = useState(false);
+  const fetchMergeNo = useCallback(async () => {
+    try {
+      const snap = await getDocs(collection(db, 'hotelMergeDecisions'));
+      const m = {}; snap.docs.forEach(d => { const v = d.data(); if (v.key) m[v.key] = v; });
+      setMergeNo(m);
+    } catch (e) { console.error(e); }
+  }, []);
+  useEffect(() => { if (tab === 'cards') fetchMergeNo(); }, [tab, fetchMergeNo]);
+
+  const workingIds = React.useMemo(() => {
+    const s = new Set();
+    if (sys) for (const [id, b] of sys.links) if (b.offerLines.length || b.orderLines.length) s.add(id);
+    return s;
+  }, [sys]);
+  // K hotelům z nabídek se přiberou i jejich pravděpodobné duplicity (stejné
+  // město a stejná vlastní doména e-mailu, nebo stejný název bez slov jako
+  // Groups / Reservations) — jinak by se karty jednoho hotelu nemohly sloučit.
+  const workSet = React.useMemo(() => {
+    const out = new Set(workingIds);
+    if (!workingIds.size) return out;
+    const DEPT = /\b(groups?|grupos?|reservations?|reservas?|booking|conference|events?|mice|sales|leisure|meetings?|front ?desk|info)\b/g;
+    const baseName = (n) => linkNormName(String(n || '').toLowerCase().replace(DEPT, ' '));
+    const domains = (c) => (c.emails || []).map(e => String(e.email || '').toLowerCase().split('@')[1]).filter(d => d && !FREEMAIL.has(d));
+    const byCity = new Map();
+    cards.forEach(c => { const k = cityKey(c.city); if (!byCity.has(k)) byCity.set(k, []); byCity.get(k).push(c); });
+    cards.filter(c => workingIds.has(c.id)).forEach(w => {
+      const ds = new Set(domains(w));
+      const bn = baseName(w.name);
+      (byCity.get(cityKey(w.city)) || []).forEach(o => {
+        if (out.has(o.id)) return;
+        if (domains(o).some(d => ds.has(d)) || (bn.length >= 4 && baseName(o.name) === bn)) out.add(o.id);
+      });
+    });
+    return out;
+  }, [workingIds, cards]);
+  const webPendingWork = cards.filter(c => workSet.has(c.id) && !(c.webInfo && c.webInfo.checkedAt));
+  const webPendingAll = cards.filter(c => !(c.webInfo && c.webInfo.checkedAt));
+
+  // Kolik karet sdílí stejnou adresu — sdílená adresa = nejspíš centrála.
+  const emailShare = React.useMemo(() => {
+    const m = new Map();
+    cards.forEach(c => (c.emails || []).forEach(e => {
+      const k = String(e.email || '').toLowerCase();
+      if (k) m.set(k, (m.get(k) || 0) + 1);
+    }));
+    return m;
+  }, [cards]);
+  const emailBadge = (e) => {
+    const k = String(e.email || '').toLowerCase();
+    if (e.type) return { text: EMAIL_TYPES[e.type] || e.type, central: e.type === 'central', ai: !e.typeManual };
+    const n = emailShare.get(k) || 0;
+    if (n >= 2) return { text: `🏢 sdílená (${n} karet) — nejspíš centrála`, central: true, ai: false };
+    return null;
+  };
+
+  const mergeCandidates = React.useMemo(() => findDuplicateGroups(cards).filter(g => !mergeNo[g.key]), [cards, mergeNo]);
+
+  const applyWebResult = (card, r) => {
+    const old = card.webInfo || null;
+    const fields = {};
+    const oldFields = (old && old.fields) || {};
+    Object.entries(oldFields).forEach(([k, f]) => { if (f && f.manual) fields[k] = f; });
+    Object.entries(r.fields).forEach(([k, f]) => { if (!fields[k]) fields[k] = { ...f, ai: true }; });
+    const prev = old ? { ...old } : null;
+    if (prev) delete prev.prev;
+    const emails = (card.emails || []).map(e => {
+      const t = r.emailTypes[String(e.email || '').toLowerCase()];
+      if (!t || e.typeManual) return e;
+      return { ...e, typePrev: e.type || '', type: t };
+    });
+    return {
+      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, prev },
+      emails,
+    };
+  };
+
+  const runMerge = async (group, by, auto) => {
+    const list = group.ids.map(id => cards.find(c => c.id === id)).filter(Boolean);
+    if (list.length < 2) return false;
+    const { primary, others, data } = buildMerged(list);
+    const otherIds = new Set(others.map(c => c.id));
+    const rows = hotels.filter(h => otherIds.has(h.cardId)).map(h => ({ id: h.id, from: h.cardId }));
+    const links = Object.values(decisions).filter(v => v.decision === 'yes' && otherIds.has(v.cardId)).map(v => ({ key: v.key, from: v.cardId }));
+    const strip = ({ id, ...rest }) => rest;
+    const units = [
+      [{ t: 'set', ref: doc(db, 'hotelCards', primary.id), data: { ...strip(primary), ...data } }],
+      ...others.map(c => [{ t: 'delete', ref: doc(db, 'hotelCards', c.id) }]),
+      ...rows.map(r => [{ t: 'update', ref: doc(db, 'hotels', r.id), data: { cardId: primary.id } }]),
+      ...links.map(l => [{ t: 'update', ref: doc(db, 'hotelCardLinks', linkDocId(l.key)), data: { cardId: primary.id } }]),
+    ];
+    await commitUnits(units, 'Slučuji');
+    const at = new Date().toISOString();
+    await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+      runId: at, at, by, kind: 'merge', undone: false, cardIds: [], added: [], rowIds: [],
+      label: `${auto ? '🤖 ' : ''}Sloučeno: ${data.name} (${list.length} karty → 1)`,
+      reason: `${group.reason} · ${list.map(c => c.name).join(' + ')}`,
+      merge: { primaryId: primary.id, primaryBefore: strip(primary), others: others.map(c => ({ id: c.id, data: strip(c) })), rows, links },
+    });
+    return true;
+  };
+
+  const handleMergeDecision = async (group, merge) => {
+    setSysBusy(group.key);
+    try {
+      if (merge) {
+        await runMerge(group, auth.currentUser?.email || '', false);
+      } else {
+        const v = { key: group.key, decision: 'no', by: auth.currentUser?.email || '', at: new Date().toISOString() };
+        await setDoc(doc(db, 'hotelMergeDecisions', encodeURIComponent(group.key).slice(0, 1400)), v);
+      }
+      await Promise.all([fetchCards(), fetchHotels(), fetchFixLog(), fetchMergeNo(), loadSystemData()]);
+    } catch (e) { alert('Nepodařilo se: ' + e.message); }
+    setSysBusy('');
+  };
+
+  const handleWebCheck = async (list, label) => {
+    if (!list.length) return;
+    if (list.length > 1 && !window.confirm(
+      `🌐 Internetová kontrola: ${label} (${list.length} karet).\n\n` +
+      '• AI na internetu dohledá adresu, web, telefon, hvězdičky, pokoje, skupiny a hodnocení — každý údaj se zdrojem\n' +
+      '• u každého e-mailu určí, jestli je to hotel, skupiny, rezervace, sales nebo 🏢 centrála\n' +
+      '• karty se stejnou adresou nebo stránkou hotelu jistě sloučí (🤖, jde vrátit), nejisté nechá na vás\n' +
+      '• ručně zadané údaje nepřepíše; databáze hotelů se nemění\n\n' +
+      `Cca 3 Kč za kartu. Limit útraty: ${aiLimit} Kč.\n\nPokračovat?`)) return;
+    if (list.length === 1 && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 3 Kč)`)) return;
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const budget = makeBudget();
+    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0 };
+    const doneIds = [];
+    try {
+      let idx = 0, done = 0;
+      setAiBusy(`Internetová kontrola: 0 z ${list.length}`);
+      const worker = async () => {
+        while (idx < list.length) {
+          if (!budget.ok()) return;
+          const card = list[idx++];
+          try {
+            const r = await webCheckCard(card);
+            budget.add(r.cost);
+            await updateDoc(doc(db, 'hotelCards', card.id), applyWebResult(card, r));
+            doneIds.push(card.id);
+            if (r.sure) stats.ok++; else stats.unsure++;
+          } catch (err) {
+            console.error('Internetová kontrola karty selhala:', card.name, err);
+            stats.failed++;
+          }
+          done++;
+          if (!aiStopRef.current) setAiBusy(`Internetová kontrola: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+        }
+      };
+      await Promise.all([1, 2, 3].map(worker));
+      if (doneIds.length) {
+        await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+          runId: at, at, by, kind: 'web-check', undone: false, cardIds: [], webCardIds: doneIds, added: [], rowIds: [],
+          costCzk: Math.round(budget.spent() * 100) / 100,
+          label: `🌐 Internetová kontrola: ${doneIds.length} karet`,
+          reason: `Jisté: ${stats.ok} · nejisté: ${stats.unsure} · chyba: ${stats.failed} · útrata ${fmtKc(budget.spent())} Kč`,
+        });
+      }
+      // Sloučení jistých duplicit — z čerstvých karet.
+      setAiBusy('Hledám duplicitní karty…');
+      const fresh = (await getDocs(collection(db, 'hotelCards'))).docs.map(d => ({ id: d.id, ...d.data() }));
+      setCards(fresh);
+      const groups = findDuplicateGroups(fresh).filter(g => !mergeNo[g.key]);
+      const touched = new Set(doneIds);
+      for (const g of groups) {
+        if (!g.ids.some(id => touched.has(id))) continue;
+        if (!g.sure) { stats.dupLeft++; continue; }
+        // runMerge pracuje se stavem `cards` — vezmeme karty z čerstvého načtení.
+        const list2 = g.ids.map(id => fresh.find(c => c.id === id)).filter(Boolean);
+        const { primary, others, data } = buildMerged(list2);
+        const otherIds = new Set(others.map(c => c.id));
+        const rows = hotels.filter(h => otherIds.has(h.cardId)).map(h => ({ id: h.id, from: h.cardId }));
+        const links = Object.values(decisions).filter(v => v.decision === 'yes' && otherIds.has(v.cardId)).map(v => ({ key: v.key, from: v.cardId }));
+        const strip = ({ id, ...rest }) => rest;
+        await commitUnits([
+          [{ t: 'set', ref: doc(db, 'hotelCards', primary.id), data: { ...strip(primary), ...data } }],
+          ...others.map(c => [{ t: 'delete', ref: doc(db, 'hotelCards', c.id) }]),
+          ...rows.map(r => [{ t: 'update', ref: doc(db, 'hotels', r.id), data: { cardId: primary.id } }]),
+          ...links.map(l => [{ t: 'update', ref: doc(db, 'hotelCardLinks', linkDocId(l.key)), data: { cardId: primary.id } }]),
+        ], 'Slučuji');
+        const at2 = new Date().toISOString();
+        await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+          runId: at2, at: at2, by, kind: 'merge', undone: false, cardIds: [], added: [], rowIds: [],
+          label: `🤖 Sloučeno: ${data.name} (${list2.length} karty → 1)`,
+          reason: `${g.reason} · ${list2.map(c => c.name).join(' + ')}`,
+          merge: { primaryId: primary.id, primaryBefore: strip(primary), others: others.map(c => ({ id: c.id, data: strip(c) })), rows, links },
+        });
+        stats.merged++;
+      }
+      await Promise.all([fetchCards(), fetchHotels(), fetchFixLog(), fetchMergeNo(), loadSystemData()]);
+      setAiBusy('');
+      alert(
+        (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🌐 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
+        `Zkontrolováno — jisté: ${stats.ok}\n` +
+        `Zkontrolováno — nejisté (údaje uložené, zkontrolujte): ${stats.unsure}\n` +
+        (stats.failed ? `Nepodařilo se (zkuste znovu): ${stats.failed}\n` : '') +
+        `\nSloučeno duplicitních karet (jisté): ${stats.merged}\n` +
+        `Možné duplicity k vašemu rozhodnutí: ${stats.dupLeft}\n\n` +
+        `Útrata: ${fmtKc(budget.spent())} Kč`);
+    } catch (e) {
+      setAiBusy('');
+      await Promise.all([fetchCards(), fetchFixLog()]);
+      alert(`Kontrola se přerušila: ${e.message}\n\nUtraceno ${fmtKc(budget.spent())} Kč. Hotové karty jsou uložené.`);
+    }
+  };
+
+  // ✏ / 🗑 internetový údaj na kartě — ruční hodnota má vždy přednost.
+  const handleEditWebField = async (card, key, label) => {
+    const cur = card.webInfo?.fields?.[key];
+    const curVal = cur && !cur.deleted ? (typeof cur.value === 'object' && cur.value ? JSON.stringify(cur.value) : String(cur.value ?? '')) : '';
+    const v = window.prompt(`${label}:`, curVal);
+    if (v == null) return;
+    let value = v.trim();
+    if (['stars', 'rooms'].includes(key) && value !== '') value = Number(value.replace(',', '.')) || value;
+    if (key === 'groups') value = /^(a|ano|y|yes|true|1)$/i.test(value) ? true : /^(n|ne|no|false|0)$/i.test(value) ? false : value;
+    if (['google', 'booking'].includes(key) && value) { try { value = JSON.parse(value); } catch { value = { score: value, count: null }; } }
+    try {
+      await updateDoc(doc(db, 'hotelCards', card.id), { [`webInfo.fields.${key}`]: { value, source: '', manual: true, by: auth.currentUser?.email || '', at: new Date().toISOString() } });
+      await fetchCards();
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+  };
+  const handleDeleteWebField = async (card, key, label) => {
+    if (!window.confirm(`Smazat údaj „${label}“ z karty? AI ho při další kontrole znovu nedoplní.`)) return;
+    try {
+      await updateDoc(doc(db, 'hotelCards', card.id), { [`webInfo.fields.${key}`]: { deleted: true, manual: true, by: auth.currentUser?.email || '', at: new Date().toISOString() } });
+      await fetchCards();
+    } catch (e) { alert('Nepodařilo se smazat: ' + e.message); }
+  };
+  const handleEmailType = async (card, email) => {
+    const opts = Object.entries(EMAIL_TYPES).map(([k, v]) => `${k} = ${v}`).join('\n');
+    const v = window.prompt(`Typ adresy ${email}:\n\n${opts}\n\nNapište zkratku (např. groups):`, (card.emails || []).find(e => e.email === email)?.type || '');
+    if (v == null) return;
+    const t = v.trim().toLowerCase();
+    if (t && !EMAIL_TYPES[t]) { alert('Neznámý typ: ' + t); return; }
+    try {
+      const emails = (card.emails || []).map(e => e.email === email ? { ...e, type: t, typeManual: true } : e);
+      await updateDoc(doc(db, 'hotelCards', card.id), { emails });
+      await fetchCards();
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
   };
 
   // Oprava jedné vadné adresy přímo v databázi hotelů. Mění se jen ten jeden
@@ -2803,6 +3104,52 @@ export default function Hotels({ navigate, colors, navParams }) {
                   </div>
                 )}
                 {sys && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 10, padding: 8, background: '#eef5fb', borderRadius: 6, fontSize: 12 }}>
+                    <strong style={{ color: '#1f5f8b' }}>🌐 Internetová kontrola:</strong>
+                    <button onClick={() => handleWebCheck(webPendingWork, 'hotely z nabídek a zakázek')} disabled={!!aiBusy || !!sysBusy || !webPendingWork.length}
+                      style={{ ...smallBtn('#1f5f8b'), opacity: (aiBusy || sysBusy || !webPendingWork.length) ? 0.5 : 1 }}>
+                      hotely z nabídek a zakázek ({webPendingWork.length})
+                    </button>
+                    <button onClick={() => handleWebCheck(webPendingAll, 'všechny karty')} disabled={!!aiBusy || !!sysBusy || !webPendingAll.length}
+                      style={{ ...smallBtn('#41698a'), opacity: (aiBusy || sysBusy || !webPendingAll.length) ? 0.5 : 1 }}>
+                      všechny karty ({webPendingAll.length})
+                    </button>
+                    <span style={{ color: C.muted }}>cca 3 Kč za kartu · limit</span>
+                    <input value={aiLimit} onChange={e => setAiLimit(e.target.value)} disabled={!!aiBusy}
+                      style={inp({ width: 70, fontSize: 12, padding: '2px 6px' })} /> <span style={{ color: C.muted }}>Kč</span>
+                    <button onClick={() => setShowDup(v => !v)}
+                      style={smallBtn(mergeCandidates.length ? '#8a4b1f' : C.muted)}>
+                      🔗 Možné duplicitní karty ({mergeCandidates.length})
+                    </button>
+                  </div>
+                )}
+                {sys && showDup && (
+                  <div style={{ marginTop: 12, maxHeight: 520, overflowY: 'auto', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, padding: 10 }}>
+                    <p style={{ fontSize: 12, color: C.muted, marginTop: 0 }}>
+                      Karty, u kterých internetová kontrola našla stejnou adresu nebo stránku hotelu. Sloučení spojí e-maily,
+                      názvy („také jako“), poznámky i propojení s nabídkami do jedné karty — jde vrátit.
+                    </p>
+                    {mergeCandidates.length === 0 ? <p style={{ fontSize: 13, color: C.muted }}>Žádné duplicity k rozhodnutí.</p> : mergeCandidates.map(g => {
+                      const list = g.ids.map(id => cards.find(c => c.id === id)).filter(Boolean);
+                      return (
+                        <div key={g.key} style={{ borderBottom: `1px solid ${C.border}`, padding: '8px 0', fontSize: 12 }}>
+                          <div style={{ color: '#8a4b1f', marginBottom: 4 }}>{g.reason}{g.sure ? ' · jisté' : ''}</div>
+                          {list.map(c => (
+                            <div key={c.id}>
+                              <strong style={{ cursor: 'pointer', color: C.primary }} onClick={() => setDetailId(c.id)}>{c.name}</strong> · {c.city}
+                              <span style={{ color: C.muted }}> — {c.webInfo?.fields?.address?.value || ''} {c.webInfo?.fields?.website?.value ? `· ${c.webInfo.fields.website.value}` : ''} · {(c.emails || []).map(e => e.email).join(', ')}</span>
+                            </div>
+                          ))}
+                          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                            <button onClick={() => handleMergeDecision(g, true)} disabled={!!sysBusy} style={{ ...smallBtn('#2e7d32'), opacity: sysBusy ? 0.5 : 1 }}>🔗 Sloučit do jedné karty</button>
+                            <button onClick={() => handleMergeDecision(g, false)} disabled={!!sysBusy} style={{ ...smallBtn(C.muted), opacity: sysBusy ? 0.5 : 1 }}>Nechat zvlášť</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {sys && (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, fontSize: 12 }}>
                     {(() => {
                       let works = 0, onlyAsked = 0;
@@ -3012,6 +3359,15 @@ export default function Hotels({ navigate, colors, navParams }) {
                               </div>
                             )}
                             {c.notes && <div style={{ fontSize: 11, color: '#7a5c00' }}>📝 {c.notes}</div>}
+                            {c.webInfo?.checkedAt && (
+                              <div style={{ fontSize: 11, color: '#1f5f8b' }}>
+                                🌐{c.webInfo.sure ? '' : ' ⚠'}
+                                {fieldVal(c, 'stars') ? ` · ${'★'.repeat(Math.min(5, Math.round(Number(fieldVal(c, 'stars')) || 0)))}` : ''}
+                                {fieldVal(c, 'google')?.score ? ` · G ${fieldVal(c, 'google').score}` : ''}
+                                {fieldVal(c, 'booking')?.score ? ` · B ${fieldVal(c, 'booking').score}` : ''}
+                                {fieldVal(c, 'groups') === true ? ' · 👥 skupiny ano' : fieldVal(c, 'groups') === false ? ' · 👥 skupiny ne' : ''}
+                              </div>
+                            )}
                           </td>
                           <td style={tdS}>
                             {c.city || '—'}
@@ -3023,6 +3379,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                               <div key={e.email} style={{ fontSize: 12 }}>
                                 <a href={`mailto:${e.email}`} style={{ color: C.primary }}>{e.email}</a>
                                 {e.main && <span style={{ fontSize: 10, color: C.muted }}> · hlavní</span>}
+                                {(() => { const bdg = emailBadge(e); return bdg ? <span style={{ fontSize: 10, color: bdg.central ? '#8a4b1f' : '#1f5f8b' }}> · {bdg.text}</span> : null; })()}
                                 <button onClick={() => handleEditCardEmail(c, e.email)} title="Upravit adresu na kartě"
                                   style={{ marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0 }}>✏</button>
                                 {e.auto && e.original && (
@@ -3091,7 +3448,13 @@ export default function Hotels({ navigate, colors, navParams }) {
                             {' · ⓘ '}{c.source?.label || 'Zdroj neznámý'}
                           </div>
                         </div>
-                        <button onClick={() => setDetailId('')} style={smallBtn(C.muted)}>✕ Zavřít</button>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => handleWebCheck([c], 'jedna karta')} disabled={!!aiBusy}
+                            style={{ ...smallBtn('#1f5f8b'), opacity: aiBusy ? 0.5 : 1 }}>
+                            {aiBusy ? '⏳ …' : c.webInfo?.checkedAt ? '🌐 Zkontrolovat znovu' : '🌐 Zkontrolovat na internetu'}
+                          </button>
+                          <button onClick={() => setDetailId('')} style={smallBtn(C.muted)}>✕ Zavřít</button>
+                        </div>
                       </div>
 
                       {!sys && <p style={{ fontSize: 13, color: C.muted }}>{sysLoading ? '⏳ Načítám data ze systému…' : 'Data ze systému nejsou načtená.'}</p>}
@@ -3118,6 +3481,9 @@ export default function Hotels({ navigate, colors, navParams }) {
                         <div key={e.email} style={{ fontSize: 12 }}>
                           <a href={`mailto:${e.email}`} style={{ color: C.primary }}>{e.email}</a>
                           {e.main && <span style={{ color: C.muted }}> · hlavní</span>}
+                          {(() => { const bdg = emailBadge(e); return bdg ? <span style={{ color: bdg.central ? '#8a4b1f' : '#1f5f8b' }}> · {bdg.ai && e.type ? '🤖 ' : ''}{bdg.text}</span> : null; })()}
+                          <button onClick={() => handleEmailType(c, e.email)} title="Určit typ adresy (hotel / skupiny / rezervace / centrála…)"
+                            style={{ marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0 }}>🏷</button>
                           {e.fromService && <span style={{ color: C.muted }}> · 📄 ze servisní karty{e.source?.offerNumber ? ` ${e.source.offerNumber}` : ''}{e.source?.group ? ` (${e.source.group})` : ''}</span>}
                           {e.auto && e.original && <span style={{ color: C.muted }}> · 🤖 opraveno, v databázi: {e.original}</span>}
                         </div>
@@ -3129,6 +3495,34 @@ export default function Hotels({ navigate, colors, navParams }) {
                             style={{ ...smallBtn('#2e6b45'), marginLeft: 8, opacity: sysBusy ? 0.5 : 1 }}>Přidat ke kartě</button>
                         </div>
                       )}
+
+                      <h3 style={sec}>🌐 Z internetu {c.webInfo?.checkedAt ? <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>· zkontrolováno {fmtD(c.webInfo.checkedAt)}{c.webInfo.sure ? '' : ' · ⚠ AI si nebyla jistá, zkontrolujte'}</span> : null}</h3>
+                      {!c.webInfo?.checkedAt && <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Karta zatím nebyla zkontrolovaná na internetu.</p>}
+                      {c.webInfo?.checkedAt && (
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <tbody>
+                            {WEB_FIELDS.map(([k, label]) => {
+                              const f = c.webInfo.fields?.[k];
+                              if (!f) return null;
+                              return (
+                                <tr key={k} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                  <td style={{ ...td2, color: C.muted, width: 170 }}>{label}</td>
+                                  <td style={td2}>
+                                    {f.deleted ? <span style={{ color: C.muted }}>— smazáno —</span> : webValue(k, f.value)}
+                                    {f.manual && !f.deleted && <span style={{ color: '#2e7d32', fontSize: 10 }}> · ✏ ručně</span>}
+                                    {f.source && <> · <a href={f.source} target="_blank" rel="noreferrer" style={{ color: '#1f5f8b', fontSize: 11 }}>zdroj</a></>}
+                                  </td>
+                                  <td style={{ ...td2, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                    <button onClick={() => handleEditWebField(c, k, label)} title="Upravit" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}>✏</button>
+                                    {!f.deleted && <button onClick={() => handleDeleteWebField(c, k, label)} title="Smazat" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}>🗑</button>}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                      {c.webInfo?.evidence && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>🤖 {c.webInfo.evidence}</div>}
 
                       {sys && (
                         <>
@@ -3413,7 +3807,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         {f.undone && <div style={{ fontSize: 11, color: '#b00020' }}>↩ vráceno</div>}
                       </td>
                       <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links'].includes(f.kind) && (
+                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links', 'merge', 'web-check'].includes(f.kind) && (
                           <button onClick={() => handleUndoFix(f)} disabled={!!autoBusy}
                             style={{ ...smallBtn(C.muted), opacity: autoBusy ? 0.5 : 1 }}>↩ Vrátit</button>
                         )}
