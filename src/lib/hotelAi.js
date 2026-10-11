@@ -82,7 +82,9 @@ async function callOnce({ model, prompt, web, maxTokens, maxSearches }) {
     err.status = res.status;
     throw err;
   }
-  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  // S hledáním na webu přijde odpověď rozdělená na víc kousků (kvůli odkazům na
+  // zdroje) — kousky se musí spojit BEZ oddělovače, jinak se rozbije JSON.
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
   const cost = costCzk(model, data.usage || {});
   let json = null;
   try { json = extractJSON(text); } catch (e) { json = null; }
@@ -240,7 +242,8 @@ ${JSON.stringify(items)}`;
 // a typ každé e-mailové adresy na kartě. Údaj bez odkazu na zdroj se nepoužije.
 export const EMAIL_TYPES = {
   hotel: 'přímo hotel', groups: 'skupiny', reservations: 'rezervace', sales: 'sales / obchod',
-  events: 'eventy / MICE', central: '🏢 centrální rezervace', agency: 'agentura / jiný', unknown: 'nezjištěno',
+  events: 'eventy / MICE', central: '🏢 centrální rezervace', agency: 'agentura',
+  other: '⚠ jiný hotel — nepatří sem', unknown: 'nezjištěno',
 };
 const FIELD_KEYS = ['name', 'address', 'city', 'country', 'website', 'phone', 'stars', 'rooms', 'groups', 'groupPolicy', 'google', 'booking'];
 
@@ -268,15 +271,29 @@ Search the web (official hotel website, chain website, Google, Booking.com, Trip
   "groupPolicy": {"value": "<short group conditions if published (min rooms, deposit, cancellation), else empty>", "source": "<URL>"},
   "google":      {"value": {"score": <number 1-5 or null>, "count": <number or null>}, "source": "<URL>"},
   "booking":     {"value": {"score": <number 1-10 or null>, "count": <number or null>}, "source": "<URL>"},
-  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|agency|unknown"} ],
+  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|agency|other|unknown"} ],
   "evidence": "<one short sentence>"
 }
 Rules:
 - Every value must come from the page in its "source". If you cannot find a value on a real page, use null / "" for the value and "" for the source. Never invent URLs or numbers.
+- Our card may by mistake contain e-mail addresses of OTHER hotels (collected from offers). Mark an address "other" when it clearly belongs to a different hotel (different hotel name in the domain or address, e.g. another brand or property).
+- Fill every field you can find — the address, website, phone, stars, rooms and ratings of a well-known hotel are usually easy to find. Use "sure": false only for the identity question, still fill the fields you found for the most likely hotel.
 - "central" = a chain's central/regional reservation office or an address shared by several hotels (e.g. hXXXX@accor.com is a hotel's own address, but "reservations.central@..." or a booking centre for many hotels is central).
-- If the card name, city or e-mails do not clearly point to one hotel, set "sure": false.`;
-  const r = await callAi({ prompt, web: true, maxTokens: 1800, model: MODEL_FALLBACK, maxSearches: 6 });
-  const j = r.json && !Array.isArray(r.json) ? r.json : {};
+- If the card name, city or e-mails do not clearly point to one hotel, set "sure": false.
+- Output the JSON object only — no text before or after it, no citation markers inside values.`;
+  let r = await callAi({ prompt, web: true, maxTokens: 4000, model: MODEL_FALLBACK, maxSearches: 6 });
+  let cost = r.cost;
+  if (!r.json || Array.isArray(r.json)) {
+    // Nečitelná odpověď → jeden další pokus.
+    r = await callAi({ prompt, web: true, maxTokens: 6000, model: MODEL_FALLBACK, maxSearches: 6 });
+    cost += r.cost;
+  }
+  if (!r.json || Array.isArray(r.json)) {
+    const e = new Error('Odpověď AI se nepodařilo přečíst');
+    e.cost = cost;
+    throw e;
+  }
+  const j = r.json;
   const okUrl = (u) => /^https?:\/\/[^\s]+\.[^\s]+/i.test(String(u || '').trim());
   const fields = {};
   for (const k of FIELD_KEYS) {
@@ -294,10 +311,15 @@ Rules:
     const em = String(e && e.email || '').trim().toLowerCase();
     if (known.has(em) && EMAIL_TYPES[e.type]) emailTypes[em] = e.type;
   });
+  if (!Object.keys(fields).length) {
+    const e = new Error('AI nenašla žádný údaj s ověřitelným zdrojem');
+    e.cost = cost;
+    throw e;
+  }
   return {
     sure: j.sure === true && !!fields.name,
     fields, emailTypes,
     evidence: String(j.evidence || '').trim().slice(0, 300),
-    cost: r.cost, model: r.model,
+    cost, model: r.model,
   };
 }
