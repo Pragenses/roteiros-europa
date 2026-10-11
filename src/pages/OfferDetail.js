@@ -4308,6 +4308,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                             style={{ ...iStyle, width: 120, padding: '4px 6px', fontWeight: 600 }} />
                           <input key={`name-${it.id}`} type="text" placeholder="Název hotelu" title={it.name || ''} value={it.name || ''} onChange={e => updateItem(it.id, 'name', e.target.value)}
                             style={{ ...iStyle, width: 260, padding: '4px 6px' }} />
+                          {(it.name || emails.length > 0) && (
+                            <button type="button" title="Otevřít kartu hotelu (v novém okně)"
+                              onClick={() => window.open(`${window.location.pathname}${window.location.search}#hotels/link~${encodeURIComponent(`offer:${offerId}:${it.id}`)}`, '_blank')}
+                              style={{ padding: '2px 6px', fontSize: 14, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 5, cursor: 'pointer', lineHeight: 1.2 }}>🏨</button>
+                          )}
                         </div>
                         <div style={grp}>
                           <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={onDateFrom} />
