@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { db } from './firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { isPortalEmail } from './hotelLinks';
 
 export const MODEL_FAST = 'claude-haiku-5-5';
 export const MODEL_FALLBACK = 'claude-sonnet-5';
@@ -42,10 +43,9 @@ export function costCzk(model, usage = {}) {
 }
 
 // První úplná JSON hodnota v textu (model občas přidá větu navíc).
-function extractJSON(text) {
-  let start = -1;
-  for (let i = 0; i < text.length; i++) if (text[i] === '{' || text[i] === '[') { start = i; break; }
-  if (start < 0) throw new Error('V odpovědi AI chybí data');
+// Najde v textu JSON. Zkouší každé místo, kde může začínat, a vezme největší
+// platný objekt — text mezi hledáními na webu může obsahovat závorky.
+function balancedAt(text, start) {
   const open = text[start], close = open === '{' ? '}' : ']';
   let depth = 0, inStr = false, esc = false;
   for (let i = start; i < text.length; i++) {
@@ -53,9 +53,21 @@ function extractJSON(text) {
     if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
     if (ch === '"') { inStr = true; continue; }
     if (ch === open) depth++;
-    else if (ch === close && --depth === 0) return JSON.parse(text.slice(start, i + 1));
+    else if (ch === close && --depth === 0) return text.slice(start, i + 1);
   }
-  throw new Error('Odpověď AI je neúplná');
+  return null;
+}
+function extractJSON(text) {
+  let best = null, bestLen = 0, sawStart = false;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '{' && text[i] !== '[') continue;
+    sawStart = true;
+    const chunk = balancedAt(text, i);
+    if (!chunk || chunk.length <= bestLen) continue;
+    try { best = JSON.parse(chunk); bestLen = chunk.length; i += chunk.length - 1; } catch (e) { /* zkusit další začátek */ }
+  }
+  if (best !== null) return best;
+  throw new Error(sawStart ? 'Odpověď AI je neúplná' : 'V odpovědi AI chybí data');
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -63,32 +75,48 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function callOnce({ model, prompt, web, maxTokens, maxSearches }) {
   const apiKey = await getApiKey();
   if (!apiKey) throw new Error('Chybí klíč k AI (Settings → Anthropic API key).');
-  const body = { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] };
-  if (web) body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxSearches || 3 }];
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (data.error) {
-    const err = new Error(data.error.message || 'Chyba AI');
-    err.kind = data.error.type || '';
-    err.status = res.status;
-    throw err;
+  const messages = [{ role: 'user', content: prompt }];
+  const content = [];
+  let cost = 0, stopReason = '';
+  // Dlouhé hledání na webu může AI „pozastavit“ (pause_turn) — pak se pošle
+  // rozpracovaná odpověď zpět a AI pokračuje (nejvýš 3×).
+  for (let round = 0; round < 4; round++) {
+    const body = { model, max_tokens: maxTokens, messages };
+    if (web) body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxSearches || 3 }];
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) {
+      const err = new Error(data.error.message || 'Chyba AI');
+      err.kind = data.error.type || '';
+      err.status = res.status;
+      err.cost = cost;
+      throw err;
+    }
+    cost += costCzk(model, data.usage || {});
+    content.push(...(data.content || []));
+    stopReason = data.stop_reason || '';
+    if (stopReason !== 'pause_turn') break;
+    messages.splice(1, messages.length - 1, { role: 'assistant', content: [...content] });
   }
-  // S hledáním na webu přijde odpověď rozdělená na víc kousků (kvůli odkazům na
-  // zdroje) — kousky se musí spojit BEZ oddělovače, jinak se rozbije JSON.
-  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  const cost = costCzk(model, data.usage || {});
+  // Odpověď s hledáním na webu přijde rozdělená na víc kousků (kvůli odkazům na
+  // zdroje) — kousky se spojí BEZ oddělovače. Bere se jen text po posledním
+  // hledání (před ním AI jen popisuje, co hledá).
+  let lastTool = -1;
+  content.forEach((b, i) => { if (b.type !== 'text') lastTool = i; });
+  const tail = content.slice(lastTool + 1).filter(b => b.type === 'text').map(b => b.text).join('');
+  const all = content.filter(b => b.type === 'text').map(b => b.text).join('');
   let json = null;
-  try { json = extractJSON(text); } catch (e) { json = null; }
-  return { json, cost, model };
+  try { json = extractJSON(tail); } catch (e) { try { json = extractJSON(all); } catch (e2) { json = null; } }
+  return { json, cost, model, stopReason };
 }
 
 // Volání s pojistkami: při přetížení počká a zkusí znovu; když levný model
@@ -243,10 +271,10 @@ ${JSON.stringify(items)}`;
 export const EMAIL_TYPES = {
   hotel: 'přímo hotel', groups: 'skupiny', reservations: 'rezervace', sales: 'sales / obchod',
   events: 'eventy / MICE', central: '🏢 centrální rezervace', agency: 'agentura',
-  other: '⚠ jiný hotel — nepatří sem', unknown: 'nezjištěno',
+  portal: '📨 systém / portál (podpisy, nabídky)', other: '⚠ jiný hotel — nepatří sem', unknown: 'nezjištěno',
 };
 const FIELD_KEYS = ['name', 'address', 'city', 'country', 'website', 'phone', 'stars', 'rooms', 'groups', 'groupPolicy',
-  'google', 'booking', 'distanceCenter', 'coachStop', 'coachParking', 'twinRooms', 'restaurant', 'elevator', 'aircon'];
+  'google', 'booking', 'distanceCenter', 'coachStop', 'coachParking', 'twinRooms', 'restaurant', 'elevator', 'aircon', 'salesTerms'];
 
 // Výchozí kritéria vhodnosti (upravují se v aplikaci, uložená v settings/hotelCriteria).
 export const DEFAULT_CRITERIA =
@@ -297,7 +325,9 @@ Search the web (official hotel website, chain website, Google Maps, Booking.com,
   "restaurant":     {"value": "<own restaurant suitable for group dinners / half board? capacity?>", "source": "<URL>"},
   "elevator":       {"value": true|false|null, "source": "<URL>"},
   "aircon":         {"value": true|false|null, "source": "<URL>"},
-  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|agency|other|unknown", "belongsTo": {"name": "<hotel the address really belongs to, only for type other>", "city": "<its city>"}} ],
+  "salesTerms":     {"value": "<IN CZECH, max 5 short points: the hotel's published booking / sales / cancellation terms (general T&C or group terms: deposit, prepayment, cancellation deadlines and fees, release / option, no-show, FOC, payment) — else empty>", "source": "<URL of the page or PDF with the terms>"},
+  "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|portal|agency|other|unknown", "belongsTo": {"name": "<hotel the address really belongs to, only for type other>", "city": "<its city>"}} ],
+  "foundEmails": [ {"email": "<e-mail address of THIS hotel published on a web page>", "type": "hotel|groups|reservations|sales|events|central", "source": "<URL of the page where it is written>"} ],
   "suitability": {"rating": "good|caveats|bad", "reasons": "<2-4 short points IN CZECH explaining the rating against OUR criteria, mention what is unknown>"},
   "evidence": "<one short sentence>"
 }
@@ -306,16 +336,22 @@ Rules:
 - Fill every field you can find — well-known hotels have address, website, phone, stars, rooms and ratings easy to find. Use "sure": false only for the identity question; still fill fields for the most likely hotel.
 - Our card may by mistake contain e-mail addresses of OTHER hotels (collected from offers). Mark such an address "other" and say in "belongsTo" which hotel it belongs to.
 - "central" = a chain's central/regional reservation office or an address shared by several hotels.
+- "portal" = an address of an e-signature, proposal or booking platform that sends contracts / offers / confirmations on behalf of hotels (e.g. noreply@scrive.com, sender@proposales.com, app@oneflow.com, no-reply@email.backyou.io, DocuSign, Cvent). Such an address belongs to the hotel's communication — NEVER mark it "other" or "central".
+- "salesTerms": look for the hotel's or chain's published terms and conditions / group booking terms (often a PDF or a page "AGB", "Terms & Conditions", "Condizioni", "Conditions générales"). Summarise only what is written there.
+- "foundEmails": look on the hotel's own contact / groups / MICE / meetings / imprint pages and on the chain's page of this hotel for PUBLISHED e-mail addresses of THIS hotel — above all the groups, sales, MICE/events and reservations departments, plus the general hotel address. Only addresses written literally on the "source" page; never guess or construct an address (no "groups@domain" unless it is printed). No newsletter, privacy, job, press, noreply or other-hotel addresses. A chain's central reservation address serving this hotel = type "central". At most 8.
 - "suitability" is your judgement against OUR criteria (no source needed). "good" = fits well, "caveats" = usable with drawbacks, "bad" = clearly unsuitable.
 - Output the JSON object only — no text before or after it, no citation markers inside values.`;
-  let r = await callAi({ prompt, web: true, maxTokens: 5000, model: MODEL_FALLBACK, maxSearches: 8 });
+  let r = await callAi({ prompt, web: true, maxTokens: 8000, model: MODEL_FALLBACK, maxSearches: 8 });
   let cost = r.cost;
+  const firstStop = r.stopReason;
   if (!r.json || Array.isArray(r.json)) {
-    r = await callAi({ prompt, web: true, maxTokens: 7000, model: MODEL_FALLBACK, maxSearches: 8 });
+    const retry = prompt + '\n\nIMPORTANT: your answer MUST end with the complete JSON object described above. Keep text values short. Do not write any other text.';
+    r = await callAi({ prompt: retry, web: true, maxTokens: 12000, model: MODEL_FALLBACK, maxSearches: 8 });
     cost += r.cost;
   }
   if (!r.json || Array.isArray(r.json)) {
-    const e = new Error('Odpověď AI se nepodařilo přečíst');
+    const why = { max_tokens: 'odpověď byla příliš dlouhá', pause_turn: 'AI nedokončila hledání', end_turn: 'AI nevrátila data ve správném tvaru' };
+    const e = new Error(`Odpověď AI se nepodařilo přečíst (${why[r.stopReason] || why[firstStop] || r.stopReason || 'neznámý důvod'})`);
     e.cost = cost;
     throw e;
   }
@@ -331,15 +367,27 @@ Rules:
     if (empty || !okUrl(f.source)) continue;     // bez zdroje se údaj nepoužije
     fields[k] = { value: v, source: String(f.source).trim() };
   }
-  const known = new Set(emails.map(e => e.toLowerCase()));
+  const known = new Set((card.emails || []).map(e => String(e.email || '').trim().toLowerCase()).filter(Boolean));
   const emailTypes = {}, belongsTo = {};
   (Array.isArray(j.emails) ? j.emails : []).forEach(e => {
     const em = String(e && e.email || '').trim().toLowerCase();
     if (!known.has(em) || !EMAIL_TYPES[e.type]) return;
+    if (isPortalEmail(em)) return;   // systém / portál se určí níže, nikdy „jiný hotel“
     emailTypes[em] = e.type;
     if (e.type === 'other' && e.belongsTo && String(e.belongsTo.name || '').trim()) {
       belongsTo[em] = { name: String(e.belongsTo.name).trim(), city: String(e.belongsTo.city || '').trim() };
     }
+  });
+  known.forEach(em => { if (isPortalEmail(em)) emailTypes[em] = 'portal'; });
+  // Nově nalezené e-maily hotelu (jen s platným zdrojem, které na kartě ještě nejsou).
+  const foundEmails = [];
+  const okEmail = (em) => /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(em) && !/(noreply|no-reply|privacy|datenschutz|gdpr|dpo|jobs?|career|karriere|press|presse|newsletter|unsubscribe|webmaster)@/.test(em);
+  (Array.isArray(j.foundEmails) ? j.foundEmails : []).forEach(e => {
+    const em = String(e && e.email || '').trim().toLowerCase().replace(/^mailto:/, '');
+    if (!okEmail(em) || known.has(em) || !okUrl(e.source) || isPortalEmail(em)) return;
+    if (foundEmails.some(x => x.email === em) || foundEmails.length >= 8) return;
+    const type = ['hotel', 'groups', 'reservations', 'sales', 'events', 'central'].includes(e.type) ? e.type : 'hotel';
+    foundEmails.push({ email: em, type, source: String(e.source).trim() });
   });
   if (!Object.keys(fields).length) {
     const e = new Error('AI nenašla žádný údaj s ověřitelným zdrojem');
@@ -349,7 +397,7 @@ Rules:
   const sRating = j.suitability && ['good', 'caveats', 'bad'].includes(j.suitability.rating) ? j.suitability.rating : '';
   return {
     sure: j.sure === true && !!fields.name,
-    fields, emailTypes, belongsTo,
+    fields, emailTypes, belongsTo, foundEmails,
     suitability: sRating ? { rating: sRating, reasons: String(j.suitability.reasons || '').trim().slice(0, 600) } : null,
     evidence: String(j.evidence || '').trim().slice(0, 300),
     cost, model: r.model,
