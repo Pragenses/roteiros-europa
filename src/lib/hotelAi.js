@@ -193,9 +193,18 @@ For each item return ONLY a JSON array: [{"i": <number>, "match": "<card id or e
 - If none of the candidates is the same hotel: match="" and sure=true if you are certain, otherwise sure=false.
 - When two candidates of the same chain could fit and the offer text does not say which: match="" and sure=false.
 
+Answer with the JSON array only — no explanation before or after it.
+
 Items:
 ${JSON.stringify(items)}`;
-  const r = await callAi({ prompt, web: false, maxTokens: 200 + items.length * 60, model: MODEL_FALLBACK });
-  const arr = Array.isArray(r.json) ? r.json : (r.json && typeof r.json === 'object' ? (Object.values(r.json).find(Array.isArray) || []) : []);
-  return { results: arr, cost: r.cost, model: r.model };
+  const pick = (j) => Array.isArray(j) ? j : (j && typeof j === 'object' ? (Object.values(j).find(Array.isArray) || []) : []);
+  const maxTokens = 400 + items.length * 120;
+  let r = await callAi({ prompt, web: false, maxTokens, model: MODEL_FALLBACK });
+  let arr = pick(r.json), cost = r.cost;
+  // Prázdná / nečitelná odpověď → jeden další pokus.
+  if (!arr.length) {
+    r = await callAi({ prompt, web: false, maxTokens: maxTokens * 2, model: MODEL_FALLBACK });
+    arr = pick(r.json); cost += r.cost;
+  }
+  return { results: arr, cost, model: r.model };
 }
