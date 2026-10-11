@@ -631,7 +631,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v225-vhodnost');
+  console.debug('Hotels v226-prekontrola');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1881,7 +1881,10 @@ export default function Hotels({ navigate, colors, navParams }) {
   }, [workingIds, cards]);
   // Ke kontrole: karta bez kontroly, nebo s kontrolou, která nepřinesla žádný
   // údaj (stará verze nedokázala přečíst delší odpověď AI).
-  const needsWeb = (c) => !(c.webInfo && c.webInfo.checkedAt) || !Object.keys((c.webInfo && c.webInfo.fields) || {}).length;
+  // Ke kontrole: bez internetové kontroly, s prázdným výsledkem, nebo zkontrolované
+  // starší verzí (bez hodnocení vhodnosti a nových údajů).
+  const needsWeb = (c) => !(c.webInfo && c.webInfo.checkedAt) || !Object.keys((c.webInfo && c.webInfo.fields) || {}).length
+    || !c.webInfo.suitability;
   const webPendingWork = cards.filter(c => workSet.has(c.id) && needsWeb(c));
   const webPendingAll = cards.filter(needsWeb);
 
@@ -1935,6 +1938,8 @@ export default function Hotels({ navigate, colors, navParams }) {
     const oldFields = (old && old.fields) || {};
     Object.entries(oldFields).forEach(([k, f]) => { if (f && f.manual) fields[k] = f; });
     Object.entries(r.fields).forEach(([k, f]) => { if (!fields[k]) fields[k] = { ...f, ai: true }; });
+    // Údaj z dřívější kontroly (se zdrojem), který nová kontrola nenašla, zůstává.
+    Object.entries(oldFields).forEach(([k, f]) => { if (!fields[k] && f && !f.deleted && f.source) fields[k] = f; });
     const prev = old ? { ...old } : null;
     if (prev) delete prev.prev;
     const moved = new Set(Object.keys(r.movedEmails || {}));
@@ -3231,7 +3236,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                       style={{ ...smallBtn('#41698a'), opacity: (aiBusy || sysBusy || !webPendingAll.length) ? 0.5 : 1 }}>
                       všechny karty ({webPendingAll.length})
                     </button>
-                    <span style={{ color: C.muted }}>cca 3 Kč za kartu · limit</span>
+                    <span style={{ color: C.muted }}>cca 5 Kč za kartu · limit</span>
                     <input value={aiLimit} onChange={e => setAiLimit(e.target.value)} disabled={!!aiBusy}
                       style={inp({ width: 70, fontSize: 12, padding: '2px 6px' })} /> <span style={{ color: C.muted }}>Kč</span>
                     <button onClick={() => setCritEdit(criteria)} style={smallBtn('#41698a')} title="Podle těchto kritérií AI hodnotí vhodnost hotelů">⚙ Kritéria vhodnosti</button>
