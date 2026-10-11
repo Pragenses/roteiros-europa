@@ -299,12 +299,14 @@ Also known as: ${(card.aliases || []).join(' | ') || '-'}
 City on our card: ${card.city || 'unknown'}
 E-mail addresses on our card: ${emails.join(', ') || 'none'}
 Our own history with this hotel: ${ctx.history || 'none recorded'}
-
+Hotel names used in our offers linked to this card: ${ctx.itemNames || '-'}
+${ctx.kindManual ? `Record type confirmed by us: ${ctx.kindManual === 'central' ? 'a CENTRAL OFFICE of a chain, not a hotel' : 'a single HOTEL'}\n` : ''}
 OUR SUITABILITY CRITERIA (written by the company, in Czech):
 ${ctx.criteria || DEFAULT_CRITERIA}
 
 Search the web (official hotel website, chain website, Google Maps, Booking.com, TripAdvisor, city coach-parking information) and return ONLY one JSON object:
 {
+  "cardKind": "hotel|central",
   "sure": true|false,
   "name":           {"value": "<official name>", "source": "<URL>"},
   "address":        {"value": "<street address with postcode>", "source": "<URL>"},
@@ -333,6 +335,7 @@ Search the web (official hotel website, chain website, Google Maps, Booking.com,
 }
 Rules:
 - Every factual value must come from the page in its "source". If you cannot find it on a real page, use null / "" and source "". Never invent URLs or numbers.
+- "cardKind": "central" when this record is NOT one hotel but a chain's or hotel group's central / regional sales, groups, leisure or reservation office that serves several hotels (e.g. "Radisson Hotels Norway – Leisure Groups", "Scandic Group Sales", "Accor Groups Desk"). Then: fill name / address / city / country / website / phone of THAT OFFICE only — never data of one of its hotels; leave the other fields empty; set "suitability" to null; its own addresses are "central"; addresses of individual hotels are "other" with "belongsTo" naming the hotel. Otherwise "cardKind": "hotel".
 - Fill every field you can find — well-known hotels have address, website, phone, stars, rooms and ratings easy to find. Use "sure": false only for the identity question; still fill fields for the most likely hotel.
 - Our card may by mistake contain e-mail addresses of OTHER hotels (collected from offers). Mark such an address "other" and say in "belongsTo" which hotel it belongs to.
 - "central" = a chain's central/regional reservation office or an address shared by several hotels.
@@ -389,7 +392,14 @@ Rules:
     const type = ['hotel', 'groups', 'reservations', 'sales', 'events', 'central'].includes(e.type) ? e.type : 'hotel';
     foundEmails.push({ email: em, type, source: String(e.source).trim() });
   });
-  if (!Object.keys(fields).length) {
+  const central = ctx.kindManual ? ctx.kindManual === 'central' : j.cardKind === 'central';
+  if (central) {
+    // Centrála: jen údaje kanceláře, žádné údaje hotelu ani hodnocení.
+    Object.keys(fields).forEach(k => { if (!['name', 'address', 'city', 'country', 'website', 'phone'].includes(k)) delete fields[k]; });
+    known.forEach(em => { if (!isPortalEmail(em) && emailTypes[em] !== 'other') emailTypes[em] = 'central'; });
+    foundEmails.forEach(f => { f.type = 'central'; });
+  }
+  if (!Object.keys(fields).length && !central) {
     const e = new Error('AI nenašla žádný údaj s ověřitelným zdrojem');
     e.cost = cost;
     throw e;
@@ -398,8 +408,9 @@ Rules:
   const sRating = j.suitability && ['good', 'caveats', 'bad'].includes(j.suitability.rating) ? j.suitability.rating : '';
   return {
     sure: j.sure === true && !!fields.name,
+    central,
     fields, emailTypes, belongsTo, foundEmails,
-    suitability: sRating ? {
+    suitability: sRating && !central ? {
       rating: sRating,
       reasons: String(j.suitability.summary || j.suitability.reasons || '').trim().slice(0, 1500),
       issues: lines(j.suitability.issues), pros: lines(j.suitability.pros), unknown: lines(j.suitability.unknown),
