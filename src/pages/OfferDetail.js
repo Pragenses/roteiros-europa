@@ -14,6 +14,7 @@ import { codeForEmail } from '../lib/people';
 import { loadRatesDoc, effectiveRates, ratesState, refreshFromEcb } from '../lib/rates';
 import { depositSummary, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposits';
 import DepositRows from '../components/DepositRows';
+import { BOOKING_STATUS, displayStatus, statusFields, statusMeta, fmtStatusAt, STATUS_FIELDS } from '../lib/bookingStatus';
 import { addDepositRow } from '../lib/depositStore';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
@@ -33,14 +34,7 @@ const STATUS_OPTS = [
 // the hotel row, which is why only hotels could carry a status; pulling it out
 // lets every item type (bus, guide, ticket, guide/driver hotel) use the very
 // same three states, labels and colours.
-const BOOKING_STATUS = [
-  { value: '',            label: 'Stav?',        border: null,      bg: '#fff',    color: null },
-  { value: 'requested',   label: '🟡 Poptáno',   border: '#854f0b', bg: '#fff8e1', color: '#854f0b' },
-  { value: 'negotiating', label: '🟠 V jednání', border: '#c2410c', bg: '#ffedd5', color: '#c2410c' },
-  { value: 'preapproved', label: '🔵 Předschváleno', border: '#1d4ed8', bg: '#dbeafe', color: '#1d4ed8' },
-  { value: 'confirmed',   label: '🟢 Potvrzeno', border: '#2d6a4f', bg: '#e8f5e9', color: '#2d6a4f' },
-  { value: 'cancelled',   label: '🔴 Zrušeno',   border: '#dc2626', bg: '#fee2e2', color: '#dc2626' },
-];
+// BOOKING_STATUS (včetně 📨 Objednáno a 💶 Zaplaceno) je sdílený v lib/bookingStatus.js.
 
 // "Zrušeno" má v aplikaci jedinou pravdu: příznak it.cancelled (ten, který
 // nastavuje i tlačítko 🚫 po odeslání storna). bookingStatus se při zrušení
@@ -331,6 +325,20 @@ function BookingStatusSelect({ value, onChange, colors }) {
                background: s.bg, color: s.color || colors.muted }}>
       {BOOKING_STATUS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
+  );
+}
+
+// Kdo a kdy naposledy změnil stav (a celá historie v bublině).
+function StatusWho({ it, colors }) {
+  if (!it || !it.statusAt) return null;
+  const NAMES = Object.fromEntries(BOOKING_STATUS.map(o => [o.value, o.label]));
+  const hist = (it.statusLog || []).map(h => `${fmtStatusAt(h.at)} · ${h.by}${h.from ? ` (${h.from})` : ''}: ${NAMES[h.fromStatus] || 'Stav?'} → ${NAMES[h.toStatus] || h.toStatus}`).join('\n');
+  const d = new Date(it.statusAt);
+  const short = isNaN(d) ? '' : `${d.getDate()}.${d.getMonth() + 1}. ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return (
+    <span title={`Historie stavu:\n${hist}`} style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap', cursor: 'help' }}>
+      {short}{it.statusBy ? ` – ${it.statusBy}` : ''}{it.statusFrom === 'Realizace' ? ' 🧭' : ''}
+    </span>
   );
 }
 
@@ -1337,7 +1345,7 @@ const HotelSummaryRow = ({ it, colors, offer }) => {
   const perPaxDbl = getEffectiveCostDbl(it);
   const perPaxSngl = getEffectiveCostSngl(it);
 
-  const st = BOOKING_STATUS.find(o => o.value === itemStatus(it)) || BOOKING_STATUS[0];
+  const st = BOOKING_STATUS.find(o => o.value === displayStatus(it)) || BOOKING_STATUS[0];
 
   const deposits = offer ? effectiveDeposits(offer, it) : (Array.isArray(it.deposits) ? it.deposits : []);
   const depSum = depositSummary(it, undefined, offer && offer.startDate, offer);
@@ -2427,13 +2435,13 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   // Volba stavu v menu. "Zrušeno" jen nastaví příznak cancelled (bez e-mailu);
   // volba jiného stavu u zrušené karty zrušení zároveň vrátí.
   const pickBookingStatus = (it, v) => {
+    if (v === displayStatus(it)) return;
     if (v === 'cancelled') {
       // Zrušení se vždy potvrzuje. Dodavateli se nic neposílá (na to je 🚫).
       if (!window.confirm(`Označit kartu „${itemTypeIcon(it)} ${itemSourceLabel(it)}“ jako ZRUŠENOU?\n\nDodavateli se nic neodešle. Vrátit jde tlačítkem „ZRUŠENO ✕“.`)) return;
-      updateItem(it.id, 'cancelled', true);
     }
-    else if (it.cancelled) updateItemFields(it.id, { cancelled: false, bookingStatus: v });
-    else updateItem(it.id, 'bookingStatus', v);
+    // Stav + kdo a kdy (stejně jako při změně z Realizace, lib/bookingStatus.js).
+    updateItemFields(it.id, { ...statusFields(it, v), ...statusMeta(it, v, 'nabídka') });
   };
 
   // City tax SNGL (za 1 osobu) → DBL (za 2 osoby) se doplní samo jako 2×.
@@ -2821,6 +2829,24 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       if (!snap.exists()) return;
       const d = snap.data();
       setLiveExtra({ depositsBy: d.depositsBy || null, rzFinal: d.rzFinal || null, rzServices: d.rzServices || null });
+      // Stav karty změněný v Realizaci se hned převezme i do rozpracované
+      // nabídky — jen pole stavu a jen když je změna novější než ta místní,
+      // aby ji pozdější uložení nabídky nepřepsalo.
+      const remote = Array.isArray(d.items) ? d.items : [];
+      setItems(prev => {
+        let changed = false;
+        const next = prev.map(it => {
+          const r = remote.find(x => String(x.id) === String(it.id));
+          if (!r || !r.statusAt || (it.statusAt && it.statusAt >= r.statusAt)) return it;
+          changed = true;
+          const merged = { ...it };
+          STATUS_FIELDS.forEach(k => { if (k in r) merged[k] = r[k]; else delete merged[k]; });
+          return merged;
+        });
+        if (!changed) return prev;
+        itemsRef.current = next;
+        return next;
+      });
     }, err => console.error('Živé sledování záloh selhalo:', err));
     return unsub;
   }, [offerId]);
@@ -4114,7 +4140,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               const collapsible = isHotel && !it.isAlt && (it.cancelled || (!isEnabled && itemStatus(it) !== 'confirmed'));
               const collapsed = collapsible && !expandedIds.has(String(it.id));
               if (collapsed) {
-                const st = BOOKING_STATUS.find(b => b.value === itemStatus(it)) || BOOKING_STATUS[0];
+                const st = BOOKING_STATUS.find(b => b.value === displayStatus(it)) || BOOKING_STATUS[0];
                 const dShort = (d) => {
                   if (!d || d.length < 10) return '';
                   const [y, m, dd] = d.split('-');
@@ -4314,7 +4340,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
                       {/* ŘÁDEK 2 – stav, alternativa, termíny, FOC, přílohy */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px 14px', flexWrap: 'wrap' }}>
-                        <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
+                        <BookingStatusSelect value={displayStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
+<StatusWho it={it} colors={colors} />
                         <div style={{ ...grp, fontSize: 11 }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: it.isAlt ? '#1d4ed8' : colors.muted, fontWeight: it.isAlt ? 700 : 400, whiteSpace: 'nowrap' }}>
                             <input type="checkbox" checked={!!it.isAlt} onChange={e => {
@@ -4565,7 +4592,8 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
                     {/* ŘÁDEK 2 – stav, záloha, přílohy, poznámky, smazat */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px 14px', flexWrap: 'wrap' }}>
-                      <BookingStatusSelect value={itemStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
+                      <BookingStatusSelect value={displayStatus(it)} onChange={v => pickBookingStatus(it, v)} colors={colors} />
+<StatusWho it={it} colors={colors} />
                       {deposits.length === 0 && (
                         <button type="button" title="Přidat zálohu dodavateli (k zaplacení nebo zaplacenou)"
                           onClick={() => addDepositFor(it)}

@@ -584,7 +584,7 @@ const BUILTIN_TEMPLATES = [
 // Popisky pro detail karty (stejné jako v nabídce a zakázce).
 const LINE_STATUS = {
   '': 'Stav?', requested: '🟡 Poptáno', negotiating: '🟠 V jednání', preapproved: '🔵 Předschváleno',
-  confirmed: '🟢 Potvrzeno', cancelled: '🔴 Zrušeno',
+  ordered: '📨 Objednáno', confirmed: '🟢 Potvrzeno', cancelled: '🔴 Zrušeno',
 };
 const RESULT_LABEL = { realized: '🧭 Realizace', won: '✅ Vyhráno', lost: '❌ Prohráno', open: '⏳ Otevřená' };
 const OFFER_STATUS_LABEL = {

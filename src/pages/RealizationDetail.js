@@ -12,20 +12,14 @@ import { allDeposits, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposits';
 import { FINAL_FIELDS, finalFor, hotelTotal, mealCandidates } from '../lib/depositCalc';
 import { saveFinalGroup, saveFinalHotel, addDepositRow } from '../lib/depositStore';
 import DepositRows from '../components/DepositRows';
+import { BOOKING_STATUS, statusStyle, displayStatus, setItemStatus, fmtStatusAt } from '../lib/bookingStatus';
 
 // Přehled jedné akce v Realizaci. Všechno se čte ŽIVĚ z nabídky
 // (offers/<id>) — žádná kopie. Upravuje se v nabídce („Otevřít nabídku“);
 // tady je přehled. Pokoje, platby, rooming list a vouchery přijdou
 // v dalších krocích.
 
-const STATUS = {
-  '':          { label: 'Stav?',          bg: '#F1EFE8', color: '#444441' },
-  requested:   { label: '🟡 Poptáno',      bg: '#fff8e1', color: '#854f0b' },
-  negotiating: { label: '🟠 V jednání',    bg: '#ffedd5', color: '#c2410c' },
-  preapproved: { label: '🔵 Předschváleno', bg: '#dbeafe', color: '#1d4ed8' },
-  confirmed:   { label: '🟢 Potvrzeno',    bg: '#e8f5e9', color: '#2d6a4f' },
-  cancelled:   { label: '🔴 Zrušeno',      bg: '#fee2e2', color: '#dc2626' },
-};
+// Stavy služeb: lib/bookingStatus.js (stejné jako v nabídce).
 
 export default function RealizationDetail({ offerId, navigate, colors }) {
   const [offer, setOffer] = useState(undefined);
@@ -324,9 +318,7 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
                   <span style={{ background: ls.bg, color: ls.color, fontSize: 11, padding: '2px 8px', borderRadius: 6, fontWeight: 600, whiteSpace: 'nowrap', marginLeft: 'auto' }}>
                     {ls.icon} {dl.text}
                   </span>
-                  <span style={{ background: (STATUS[itemStatus(it)] || STATUS['']).bg, color: (STATUS[itemStatus(it)] || STATUS['']).color, fontSize: 11, padding: '2px 8px', borderRadius: 6, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                    {(STATUS[itemStatus(it)] || STATUS['']).label}
-                  </span>
+                  <StatusPicker it={it} offerId={offerId} colors={colors} onError={setErr} />
                 </div>
               );
             })}
@@ -335,6 +327,52 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
       })}
       {itemsCount === 0 && <div style={{ fontSize: 13, color: colors.muted }}>V nabídce nejsou žádné zaškrtnuté služby.</div>}
     </div>
+  );
+}
+
+// ── Stav služby: mění se tady i v nabídce, zapisuje se kdo a kdy ──
+function StatusPicker({ it, offerId, colors, onError }) {
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const cur = displayStatus(it);
+  const s = statusStyle(cur);
+  const NAMES = Object.fromEntries(BOOKING_STATUS.map(o => [o.value, o.label]));
+  const pick = async (v) => {
+    if (v === cur) return;
+    if (v === 'cancelled' && !window.confirm(`Označit „${[it.city, it.name].filter(Boolean).join(' – ') || 'službu'}“ jako ZRUŠENOU?\n\nDodavateli se nic neodešle.`)) return;
+    setBusy(true); onError('');
+    try { await setItemStatus(offerId, it.id, v, 'Realizace'); }
+    catch (e) { console.error(e); onError('Stav se nepodařilo uložit: ' + (e.message || e)); }
+    setBusy(false);
+  };
+  const log = Array.isArray(it.statusLog) ? it.statusLog : [];
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+      <select value={cur} disabled={busy} onChange={e => pick(e.target.value)} title="Stav služby — mění se i na kartě v nabídce"
+        style={{ fontSize: 12, padding: '2px 6px', borderRadius: 6, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                 border: `1px solid ${s.border || colors.border}`, background: s.bg, color: s.color || colors.muted, opacity: busy ? 0.6 : 1 }}>
+        {BOOKING_STATUS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      {it.statusAt ? (
+        <span onClick={() => setOpen(v => !v)} title="Historie stavu"
+          style={{ fontSize: 11, color: colors.muted, cursor: 'pointer', textDecoration: 'underline dotted', whiteSpace: 'nowrap' }}>
+          {fmtStatusAt(it.statusAt)}{it.statusBy ? ` – ${it.statusBy}` : ''}{it.statusFrom ? ` (${it.statusFrom})` : ''}
+        </span>
+      ) : <span style={{ fontSize: 11, color: colors.muted, minWidth: 0 }} />}
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: '120%', zIndex: 20, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 8,
+                      boxShadow: '0 8px 20px rgba(0,0,0,0.15)', padding: '8px 10px', minWidth: 320, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>Historie stavu</div>
+          {log.length === 0 && <div style={{ color: colors.muted }}>Zatím bez záznamu.</div>}
+          {log.map((h, i) => (
+            <div key={i} style={{ padding: '2px 0', borderTop: i ? `1px solid ${colors.border}` : 'none' }}>
+              {fmtStatusAt(h.at)} · <b>{h.by}</b>{h.from ? ` (${h.from})` : ''}: {NAMES[h.fromStatus] || 'Stav?'} → <b>{NAMES[h.toStatus] || h.toStatus}</b>
+            </div>
+          ))}
+          <button onClick={() => setOpen(false)} style={{ marginTop: 6, fontSize: 11, padding: '2px 8px', border: `1px solid ${colors.border}`, borderRadius: 5, background: '#fff', cursor: 'pointer' }}>Zavřít</button>
+        </div>
+      )}
+    </span>
   );
 }
 
