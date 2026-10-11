@@ -145,3 +145,57 @@ Rules — correctness matters more than anything:
     model: r.model,
   };
 }
+
+// ── Hotel z nabídky bez karty: je to opravdu hotel? (s internetem) ──────────
+// → { isHotel, sure, name, city, country, website, source, evidence }
+// "Jisté" jen s odkazem na stránku, která hotel potvrzuje.
+export async function verifyOfferHotel({ name, city, emails, groups }) {
+  const prompt =
+`A tour operator typed this into the hotel line of a group-travel offer. The text may contain notes in Portuguese or Czech (e.g. "depósito pago no momento da confirmação"), may be an abbreviation, a ship, an agency or not a hotel at all.
+Typed name: ${name}
+City as typed (may be Portuguese/Czech, e.g. "Amsterdã", "Praga", "Viena"): ${city || 'unknown'}
+Contact e-mails used: ${(emails || []).join(', ') || 'none'}
+Used in groups: ${(groups || []).slice(0, 3).join(', ') || '-'}
+
+Search the web and return ONLY a JSON object:
+{"isHotel": true|false, "sure": true|false, "name": "<official hotel name, without notes>", "city": "<city in its usual English or local form, e.g. Amsterdam, Prague, Vienna>", "country": "<country in English>", "website": "<official hotel website or empty>", "source": "<URL of the page that confirms it>", "evidence": "<one short sentence>"}
+
+Rules — correctness matters more than anything:
+- isHotel=false for ships/cruises, agencies, transport, restaurants, or text that is not a hotel name (then sure=true if you are certain it is not a hotel).
+- sure=true for a hotel ONLY if a web page at "source" confirms this hotel exists in that city (and, if e-mails are given, preferably that the e-mail/domain belongs to it).
+- Strip notes, prices, payment remarks and booking words from "name".
+- Never invent a URL. If no confirming page, leave "source" empty and set sure=false.`;
+  const r = await callAi({ prompt, web: true, maxTokens: 800, model: MODEL_FALLBACK });
+  const j = r.json && !Array.isArray(r.json) ? r.json : {};
+  const source = String(j.source || '').trim();
+  const okUrl = /^https?:\/\/[^\s]+\.[^\s]+/i.test(source);
+  const isHotel = j.isHotel !== false;
+  const nm = String(j.name || '').trim();
+  return {
+    isHotel,
+    // Hotel je jistý jen se zdrojem; "není hotel" stačí jistota AI.
+    sure: isHotel ? (j.sure === true && !!nm && okUrl) : j.sure === true,
+    name: nm, city: String(j.city || '').trim(), country: String(j.country || '').trim(),
+    website: String(j.website || '').trim(), source: okUrl ? source : '',
+    evidence: String(j.evidence || '').trim().slice(0, 300),
+    cost: r.cost, model: r.model,
+  };
+}
+
+// ── Možná shoda: je hotel z nabídky totéž co některá karta? (bez internetu) ──
+// items = [{ i, name, city, emails, candidates: [{ id, name, city, emails }] }]
+// → [{ i, match: '<id karty>' | '', sure }]
+export async function judgeMatches(items) {
+  const prompt =
+`A tour operator must decide whether a hotel written in an offer is the same hotel as one of the existing hotel cards. Cities may be written in Portuguese/Czech/English ("Praga" = Prague = Praha). Hotel chains have many different hotels in the same city (e.g. "ibis Old Town" and "ibis Wenceslas" are DIFFERENT hotels).
+For each item return ONLY a JSON array: [{"i": <number>, "match": "<card id or empty string>", "sure": true|false}]
+- match = the card id only if it is clearly the same hotel (same property, same city). sure=true only when there is no reasonable doubt.
+- If none of the candidates is the same hotel: match="" and sure=true if you are certain, otherwise sure=false.
+- When two candidates of the same chain could fit and the offer text does not say which: match="" and sure=false.
+
+Items:
+${JSON.stringify(items)}`;
+  const r = await callAi({ prompt, web: false, maxTokens: 200 + items.length * 60, model: MODEL_FALLBACK });
+  const arr = Array.isArray(r.json) ? r.json : (r.json && typeof r.json === 'object' ? (Object.values(r.json).find(Array.isArray) || []) : []);
+  return { results: arr, cost: r.cost, model: r.model };
+}
