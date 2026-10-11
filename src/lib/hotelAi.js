@@ -274,7 +274,7 @@ export const EMAIL_TYPES = {
   portal: '📨 systém / portál (podpisy, nabídky)', other: '⚠ jiný hotel — nepatří sem', unknown: 'nezjištěno',
 };
 const FIELD_KEYS = ['name', 'address', 'city', 'country', 'website', 'phone', 'stars', 'rooms', 'groups', 'groupPolicy',
-  'google', 'booking', 'distanceCenter', 'coachStop', 'coachParking', 'twinRooms', 'restaurant', 'elevator', 'aircon', 'salesTerms'];
+  'google', 'booking', 'distanceCenter', 'coachStop', 'coachParking', 'twinRooms', 'restaurant', 'elevator', 'aircon', 'minibar', 'kettle', 'salesTerms'];
 
 // Výchozí kritéria vhodnosti (upravují se v aplikaci, uložená v settings/hotelCriteria).
 export const DEFAULT_CRITERIA =
@@ -326,7 +326,9 @@ Search the web (official hotel website, chain website, Google Maps, Booking.com,
   "twinRooms":      {"value": "<are twin (two separate beds) rooms available / how many>", "source": "<URL>"},
   "restaurant":     {"value": "<own restaurant suitable for group dinners / half board? capacity?>", "source": "<URL>"},
   "elevator":       {"value": true|false|null, "source": "<URL>"},
-  "aircon":         {"value": true|false|null, "source": "<URL>"},
+  "aircon":         {"value": true|false|null, "source": "<URL>"},   // air conditioning in the guest rooms
+  "minibar":        {"value": true|false|null, "source": "<URL>"},   // minibar / mini fridge in the guest rooms
+  "kettle":         {"value": true|false|null, "source": "<URL>"},   // kettle / tea & coffee making facilities in the guest rooms
   "salesTerms":     {"value": "<IN CZECH, max 5 short points: the hotel's published booking / sales / cancellation terms (general T&C or group terms: deposit, prepayment, cancellation deadlines and fees, release / option, no-show, FOC, payment) — else empty>", "source": "<URL of the page or PDF with the terms>"},
   "emails": [ {"email": "<one of our addresses>", "type": "hotel|groups|reservations|sales|events|central|portal|agency|other|unknown", "belongsTo": {"name": "<hotel the address really belongs to, only for type other>", "city": "<its city>"}} ],
   "foundEmails": [ {"email": "<e-mail address of THIS hotel published on a web page>", "type": "hotel|groups|reservations|sales|events|central", "source": "<URL of the page where it is written>"} ],
@@ -461,4 +463,35 @@ Rules: "good" = fits well, "caveats" = usable with drawbacks, "bad" = clearly un
     suitability: { rating: j.rating, reasons: String(j.summary || '').trim().slice(0, 1500), issues: lines(j.issues), pros: lines(j.pros), unknown: lines(j.unknown) },
     cost, model: r.model,
   };
+}
+
+// ── Levné doplnění vybavení pokojů (klimatizace, minibar, konvice) ───────────
+// Pro karty, které už internetovou kontrolou prošly. Jen tři údaje, každý se
+// zdrojem; bez zdroje se nepoužije.
+export const EQUIP_KEYS = ['aircon', 'minibar', 'kettle'];
+export async function equipCheckCard(card) {
+  const f = (card.webInfo && card.webInfo.fields) || {};
+  const val = (k) => (f[k] && !f[k].deleted && f[k].value ? String(typeof f[k].value === 'object' ? JSON.stringify(f[k].value) : f[k].value) : '');
+  const prompt =
+`Find the GUEST ROOM equipment of this hotel. Use the hotel's official website (room pages, amenities, FAQ) or Booking.com.
+Hotel: ${val('name') || card.name}
+Address: ${val('address') || card.city || '-'}
+Website: ${val('website') || '-'}
+
+Return ONLY one JSON object:
+{"aircon":  {"value": true|false|null, "source": "<URL>"},
+ "minibar": {"value": true|false|null, "source": "<URL>"},
+ "kettle":  {"value": true|false|null, "source": "<URL>"}}
+aircon = air conditioning in the rooms; minibar = minibar or mini fridge in the rooms; kettle = kettle / tea and coffee making facilities in the rooms.
+Only values written on the "source" page (standard rooms). If not found, value null and source "". Never guess.`;
+  const r = await callAi({ prompt, web: true, maxTokens: 1200, model: MODEL_FALLBACK, maxSearches: 2 });
+  const j = r.json && !Array.isArray(r.json) ? r.json : null;
+  if (!j) { const e = new Error('Odpověď AI se nepodařilo přečíst'); e.cost = r.cost; throw e; }
+  const okUrl = (u) => /^https?:\/\/[^\s]+\.[^\s]+/i.test(String(u || '').trim());
+  const fields = {};
+  EQUIP_KEYS.forEach(k => {
+    const x = j[k];
+    if (x && typeof x === 'object' && (x.value === true || x.value === false) && okUrl(x.source)) fields[k] = { value: x.value, source: String(x.source).trim() };
+  });
+  return { fields, cost: r.cost, model: r.model };
 }
