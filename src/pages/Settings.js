@@ -3,6 +3,7 @@ import { db, auth } from '../lib/firebase';
 import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import { normalizeClientCode, yearTwoDigits } from '../lib/offerNumber';
 import RatesSettings from '../components/RatesSettings';
+import CalendarFeedsSettings from '../components/CalendarFeedsSettings';
 import BackupDialog from '../components/BackupDialog';
 import { canBackup } from '../lib/backup';
 
@@ -529,6 +530,9 @@ export default function Settings({ colors, userRole }) {
 
       {/* Kurzy měn — vidí všichni, měnit jen vlastníci */}
       <RatesSettings colors={colors} canEdit={userRole === 'owner'} />
+
+      {/* Kalendáře do telefonu – odkazy má každý své, interval mění jen vlastníci */}
+      <CalendarFeedsSettings colors={colors} canEdit={userRole === 'owner'} />
     </div>
   );
 }
