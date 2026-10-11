@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES, setAiStatusListener } from '../lib/hotelAi';
+import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
 import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
 import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -587,12 +587,20 @@ const WEB_FIELDS = [
   ['name', 'Oficiální název'], ['address', 'Adresa'], ['city', 'Město'], ['country', 'Země'],
   ['website', 'Web'], ['phone', 'Telefon'], ['stars', 'Hvězdičky'], ['rooms', 'Počet pokojů'],
   ['groups', 'Bere skupiny'], ['groupPolicy', 'Podmínky pro skupiny'], ['google', 'Hodnocení Google'], ['booking', 'Hodnocení Booking'],
+  ['distanceCenter', 'Vzdálenost od centra'], ['coachStop', '🚌 Zastavení autobusu'], ['coachParking', '🚌 Parkování autobusu'],
+  ['twinRooms', 'TWIN pokoje'], ['restaurant', 'Restaurace pro skupiny'], ['elevator', 'Výtah'], ['aircon', 'Klimatizace'],
 ];
+const SUIT = {
+  good: { icon: '✅', label: 'vhodný', color: '#2e7d32' },
+  caveats: { icon: '⚠', label: 's výhradami', color: '#b26a00' },
+  bad: { icon: '❌', label: 'nevhodný', color: '#b00020' },
+};
 const fieldVal = (c, k) => { const f = c && c.webInfo && c.webInfo.fields && c.webInfo.fields[k]; return f && !f.deleted ? f.value : null; };
 const webValue = (k, v) => {
   if (v === null || v === undefined || v === '') return '—';
   if (k === 'website') return <a href={/^https?:/.test(String(v)) ? v : `https://${v}`} target="_blank" rel="noreferrer">{String(v)}</a>;
-  if (k === 'groups') return v === true ? 'ano' : v === false ? 'ne' : String(v);
+  if (k === 'groups' || k === 'elevator' || k === 'aircon') return v === true ? 'ano' : v === false ? 'ne' : String(v);
+  if (k === 'distanceCenter' && typeof v === 'object') return `${v.km ?? '—'} km${v.walkMin ? ` · ${v.walkMin} min pěšky` : ''}${v.to ? ` (${v.to})` : ''}`;
   if (k === 'stars') return `${'★'.repeat(Math.min(5, Math.round(Number(v) || 0)))} (${v})`;
   if (k === 'google' || k === 'booking') {
     if (typeof v !== 'object') return String(v);
@@ -623,7 +631,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v224-web-cteni');
+  console.debug('Hotels v225-vhodnost');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1124,6 +1132,20 @@ export default function Hotels({ navigate, colors, navParams }) {
         (m.rows || []).forEach(r => units.push([{ t: 'update', ref: doc(db, 'hotels', r.id), data: { cardId: r.from } }]));
         (m.links || []).forEach(l => units.push([{ t: 'update', ref: doc(db, 'hotelCardLinks', encodeURIComponent(l.key).slice(0, 1400)), data: { cardId: l.from } }]));
       } else {
+        // Přesunuté e-maily zpět; karty založené kvůli přesunu se smažou.
+        for (const mv of (f.moves || [])) {
+          const from = await getDoc(doc(db, 'hotelCards', mv.fromId));
+          if (from.exists()) {
+            const fe = from.data().emails || [];
+            if (!fe.some(x => String(x.email || '').toLowerCase() === mv.email)) units.push([{ t: 'update', ref: from.ref, data: { emails: [...fe, mv.entry] } }]);
+          }
+          if (mv.created) units.push([{ t: 'delete', ref: doc(db, 'hotelCards', mv.toId) }]);
+          else {
+            const to = await getDoc(doc(db, 'hotelCards', mv.toId));
+            if (to.exists()) units.push([{ t: 'update', ref: to.ref, data: { emails: (to.data().emails || []).filter(x => String(x.email || '').toLowerCase() !== mv.email) } }]);
+          }
+        }
+        await commitUnits(units.splice(0), 'Vracím');
         for (const id of (f.webCardIds || [])) {
           const cs = await getDoc(doc(db, 'hotelCards', id));
           if (!cs.exists()) continue;
@@ -1882,6 +1904,31 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const mergeCandidates = React.useMemo(() => findDuplicateGroups(cards).filter(g => !mergeNo[g.key]), [cards, mergeNo]);
 
+  // ⚙ Kritéria vhodnosti — text, podle kterého AI hodnotí hotely. Uložený
+  // v settings/hotelCriteria, upravitelný v aplikaci.
+  const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
+  const [critEdit, setCritEdit] = useState(null);
+  const [suitFilter, setSuitFilter] = useState('');
+  useEffect(() => {
+    if (tab !== 'cards') return;
+    getDoc(doc(db, 'settings', 'hotelCriteria')).then(d => { if (d.exists() && d.data().text) setCriteria(d.data().text); }).catch(() => {});
+  }, [tab]);
+  const saveCriteria = async () => {
+    try {
+      await setDoc(doc(db, 'settings', 'hotelCriteria'), { text: critEdit, by: auth.currentUser?.email || '', at: new Date().toISOString() });
+      setCriteria(critEdit); setCritEdit(null);
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+  };
+
+  // Krátké shrnutí naší historie s hotelem — AI ho bere v úvahu při hodnocení.
+  const historyFor = (card) => {
+    const b = sys && sys.links.get(card.id);
+    const sm = b ? cardSummary(b) : null;
+    if (!sm) return '';
+    const notes = [card.notes, ...(b.offerLines || []).flatMap(l => l.notes.map(n => n.text))].filter(Boolean).join(' | ').slice(0, 700);
+    return `requested ${sm.requests}x, in ${sm.offers} offers, confirmed ${sm.confirmed}x, realized ${sm.realized}x, cancelled ${sm.cancelled}x. Notes: ${notes || '-'}`;
+  };
+
   const applyWebResult = (card, r) => {
     const old = card.webInfo || null;
     const fields = {};
@@ -1890,13 +1937,15 @@ export default function Hotels({ navigate, colors, navParams }) {
     Object.entries(r.fields).forEach(([k, f]) => { if (!fields[k]) fields[k] = { ...f, ai: true }; });
     const prev = old ? { ...old } : null;
     if (prev) delete prev.prev;
-    const emails = (card.emails || []).map(e => {
+    const moved = new Set(Object.keys(r.movedEmails || {}));
+    const emails = (card.emails || []).filter(e => !moved.has(String(e.email || '').toLowerCase())).map(e => {
       const t = r.emailTypes[String(e.email || '').toLowerCase()];
       if (!t || e.typeManual) return e;
       return { ...e, typePrev: e.type || '', type: t };
     });
+    const suitability = old && old.suitability && old.suitability.manual ? old.suitability : (r.suitability ? { ...r.suitability, ai: true, at: new Date().toISOString() } : null);
     return {
-      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, prev },
+      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, suitability, prev },
       emails,
     };
   };
@@ -1952,7 +2001,8 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (list.length === 1 && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 3 Kč)`)) return;
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
     const budget = makeBudget();
-    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0 };
+    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0, moved: 0 };
+    const moves = [];
     const errors = new Map();
     const doneIds = [];
     try {
@@ -1963,8 +2013,47 @@ export default function Hotels({ navigate, colors, navParams }) {
           if (!budget.ok()) return;
           const card = list[idx++];
           try {
-            const r = await webCheckCard(card);
+            const r = await webCheckCard(card, { criteria, history: historyFor(card) });
             budget.add(r.cost);
+            // Cizí e-mail → ke správnému hotelu: existující karta, jinak nová karta
+            // (ta se rovnou přidá do fronty ke kontrole). Ruční typ se nepřesouvá.
+            r.movedEmails = {};
+            for (const [em, bt] of Object.entries(r.belongsTo || {})) {
+              const e0 = (card.emails || []).find(e => String(e.email || '').toLowerCase() === em);
+              if (!e0 || e0.typeManual) continue;
+              // Správná karta: podle názvu (AI), nebo podle domény adresy ve stejném městě.
+              const dom = em.split('@')[1] || '';
+              const byDomain = dom && !FREEMAIL.has(dom)
+                ? cards.filter(c => c.id !== card.id && cityKey(c.city) === cityKey(bt.city || card.city)
+                    && (c.emails || []).some(e => String(e.email || '').toLowerCase().endsWith('@' + dom)))
+                : [];
+              const byName = sys ? [...nameMatches(sys.idx, bt.name, bt.city || card.city), ...nameMatches(sys.idx, bt.name, card.city)] : [];
+              const cand = [...new Map([...byName, ...byDomain].map(c => [c.id, c])).values()].filter(c => c.id !== card.id);
+              let toId = '', created = false;
+              if (cand.length === 1) {
+                toId = cand[0].id;
+                const ts = await getDoc(doc(db, 'hotelCards', toId));
+                if (!ts.exists()) continue;
+                const te = ts.data().emails || [];
+                if (!te.some(x => String(x.email || '').toLowerCase() === em)) {
+                  await updateDoc(ts.ref, { emails: [...te, { email: em, role: '', person: '', main: te.length === 0, movedFrom: card.name, type: '' }] });
+                }
+              } else if (cand.length === 0) {
+                const ref = doc(collection(db, 'hotelCards'));
+                toId = ref.id; created = true;
+                const newCard = {
+                  name: bt.name, city: cityFromCards(bt.city || card.city), country: '', aliases: [], domain: '',
+                  emails: [{ email: em, role: '', person: '', main: true, movedFrom: card.name }], notes: '',
+                  source: { type: 'ai', label: `🤖 AI — adresa přesunutá z karty „${card.name}“`, at: new Date().toISOString() },
+                  createdAt: serverTimestamp(),
+                };
+                await setDoc(ref, newCard);
+                list.push({ id: ref.id, ...newCard });   // dohledat i jeho údaje
+              } else continue;   // víc možných karet → nechat na člověku
+              r.movedEmails[em] = toId;
+              moves.push({ email: em, entry: e0, fromId: card.id, toId, created });
+              stats.moved++;
+            }
             await updateDoc(doc(db, 'hotelCards', card.id), applyWebResult(card, r));
             doneIds.push(card.id);
             if (r.sure) stats.ok++; else stats.unsure++;
@@ -1982,7 +2071,7 @@ export default function Hotels({ navigate, colors, navParams }) {
       await Promise.all([1, 2].map(worker));
       if (doneIds.length) {
         await setDoc(doc(collection(db, 'hotelAutoFixes')), {
-          runId: at, at, by, kind: 'web-check', undone: false, cardIds: [], webCardIds: doneIds, added: [], rowIds: [],
+          runId: at, at, by, kind: 'web-check', undone: false, cardIds: [], webCardIds: doneIds, added: [], rowIds: [], moves,
           costCzk: Math.round(budget.spent() * 100) / 100,
           label: `🌐 Internetová kontrola: ${doneIds.length} karet`,
           reason: `Jisté: ${stats.ok} · nejisté: ${stats.unsure} · chyba: ${stats.failed} · útrata ${fmtKc(budget.spent())} Kč`,
@@ -2027,6 +2116,7 @@ export default function Hotels({ navigate, colors, navParams }) {
         `Zkontrolováno — nejisté (údaje uložené, zkontrolujte): ${stats.unsure}\n` +
         (stats.failed ? `Nepodařilo se (zůstávají ke kontrole, stačí spustit znovu): ${stats.failed}\n` +
           [...errors.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, n]) => `   • ${n}× ${m}`).join('\n') + '\n' : '') +
+        `Cizí e-maily přesunuté ke správnému hotelu: ${stats.moved}\n` +
         `\nSloučeno duplicitních karet (jisté): ${stats.merged}\n` +
         `Možné duplicity k vašemu rozhodnutí: ${stats.dupLeft}\n\n` +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
@@ -2047,6 +2137,8 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (['stars', 'rooms'].includes(key) && value !== '') value = Number(value.replace(',', '.')) || value;
     if (key === 'groups') value = /^(a|ano|y|yes|true|1)$/i.test(value) ? true : /^(n|ne|no|false|0)$/i.test(value) ? false : value;
     if (['google', 'booking'].includes(key) && value) { try { value = JSON.parse(value); } catch { value = { score: value, count: null }; } }
+    if (key === 'distanceCenter' && value) { try { value = JSON.parse(value); } catch { value = { km: Number(String(value).replace(',', '.')) || value, walkMin: null, to: '' }; } }
+    if (['elevator', 'aircon'].includes(key)) value = /^(a|ano|y|yes|true|1)$/i.test(String(value)) ? true : /^(n|ne|no|false|0)$/i.test(String(value)) ? false : value;
     try {
       await updateDoc(doc(db, 'hotelCards', card.id), { [`webInfo.fields.${key}`]: { value, source: '', manual: true, by: auth.currentUser?.email || '', at: new Date().toISOString() } });
       await fetchCards();
@@ -2059,6 +2151,19 @@ export default function Hotels({ navigate, colors, navParams }) {
       await fetchCards();
     } catch (e) { alert('Nepodařilo se smazat: ' + e.message); }
   };
+  const handleEditSuitability = async (card) => {
+    const r = window.prompt('Vhodnost pro naše skupiny — napište: good (✅ vhodný), caveats (⚠ s výhradami), bad (❌ nevhodný):', card.webInfo?.suitability?.rating || '');
+    if (r == null) return;
+    const rating = r.trim().toLowerCase();
+    if (!SUIT[rating]) { alert('Napište good, caveats nebo bad.'); return; }
+    const reasons = window.prompt('Zdůvodnění:', card.webInfo?.suitability?.reasons || '');
+    if (reasons == null) return;
+    try {
+      await updateDoc(doc(db, 'hotelCards', card.id), { 'webInfo.suitability': { rating, reasons: reasons.trim(), manual: true, by: auth.currentUser?.email || '', at: new Date().toISOString() } });
+      await fetchCards();
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+  };
+
   const handleEmailType = async (card, email) => {
     const opts = Object.entries(EMAIL_TYPES).map(([k, v]) => `${k} = ${v}`).join('\n');
     const v = window.prompt(`Typ adresy ${email}:\n\n${opts}\n\nNapište zkratku (např. groups):`, (card.emails || []).find(e => e.email === email)?.type || '');
@@ -2426,6 +2531,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   }, [hotels]);
   const cardsFiltered = cards.filter(c => {
     if (onlyUsed) { const sm = summaryOf(c.id); if (!sm || !(sm.offers || sm.orders)) return false; }
+    if (suitFilter) { const r = c.webInfo?.suitability?.rating || 'none'; if (r !== suitFilter) return false; }
     const q = cardSearch.trim().toLowerCase();
     if (!q) return true;
     return (c.name || '').toLowerCase().includes(q)
@@ -3128,10 +3234,24 @@ export default function Hotels({ navigate, colors, navParams }) {
                     <span style={{ color: C.muted }}>cca 3 Kč za kartu · limit</span>
                     <input value={aiLimit} onChange={e => setAiLimit(e.target.value)} disabled={!!aiBusy}
                       style={inp({ width: 70, fontSize: 12, padding: '2px 6px' })} /> <span style={{ color: C.muted }}>Kč</span>
+                    <button onClick={() => setCritEdit(criteria)} style={smallBtn('#41698a')} title="Podle těchto kritérií AI hodnotí vhodnost hotelů">⚙ Kritéria vhodnosti</button>
                     <button onClick={() => setShowDup(v => !v)}
                       style={smallBtn(mergeCandidates.length ? '#8a4b1f' : C.muted)}>
                       🔗 Možné duplicitní karty ({mergeCandidates.length})
                     </button>
+                  </div>
+                )}
+                {critEdit !== null && (
+                  <div style={{ marginTop: 12, background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, padding: 10 }}>
+                    <strong style={{ fontSize: 13 }}>⚙ Kritéria vhodnosti hotelů pro naše skupiny</strong>
+                    <p style={{ fontSize: 12, color: C.muted, margin: '4px 0 6px' }}>AI podle tohoto textu hodnotí každý hotel při internetové kontrole. Pište normálně česky.</p>
+                    <textarea value={critEdit} onChange={e => setCritEdit(e.target.value)} rows={14}
+                      style={{ ...inp({ fontSize: 12 }), fontFamily: 'inherit' }} />
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <button onClick={saveCriteria} style={smallBtn('#2e7d32')}>Uložit</button>
+                      <button onClick={() => setCritEdit(DEFAULT_CRITERIA)} style={smallBtn(C.muted)}>Vrátit výchozí text</button>
+                      <button onClick={() => setCritEdit(null)} style={smallBtn(C.muted)}>Zavřít</button>
+                    </div>
                   </div>
                 )}
                 {sys && showDup && (
@@ -3331,12 +3451,19 @@ export default function Hotels({ navigate, colors, navParams }) {
               {/* HOTOVÉ KARTY */}
               <div style={cardS}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🗂 Karty hotelů ({onlyUsed || cardSearch ? `${cardsFiltered.length} z ${cards.length}` : cards.length})</h3>
+                  <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🗂 Karty hotelů ({onlyUsed || cardSearch || suitFilter ? `${cardsFiltered.length} z ${cards.length}` : cards.length})</h3>
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                     <label style={{ fontSize: 12, color: C.muted, display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
                       <input type="checkbox" checked={onlyUsed} onChange={e => setOnlyUsed(e.target.checked)} disabled={!sys} />
                       Jen hotely z nabídek a zakázek
                     </label>
+                    <select value={suitFilter} onChange={e => setSuitFilter(e.target.value)} style={inp({ width: 170, fontSize: 12 })}>
+                      <option value="">Vhodnost: vše</option>
+                      <option value="good">✅ vhodné</option>
+                      <option value="caveats">⚠ s výhradami</option>
+                      <option value="bad">❌ nevhodné</option>
+                      <option value="none">bez hodnocení</option>
+                    </select>
                     <input value={cardSearch} onChange={e => setCardSearch(e.target.value)}
                       placeholder="Hledat kartu…" style={inp({ width: 220 })} />
                   </div>
@@ -3372,11 +3499,17 @@ export default function Hotels({ navigate, colors, navParams }) {
                             {c.notes && <div style={{ fontSize: 11, color: '#7a5c00' }}>📝 {c.notes}</div>}
                             {c.webInfo?.checkedAt && (
                               <div style={{ fontSize: 11, color: '#1f5f8b' }}>
+                                {c.webInfo.suitability && SUIT[c.webInfo.suitability.rating] && (
+                                  <span title={c.webInfo.suitability.reasons} style={{ color: SUIT[c.webInfo.suitability.rating].color, fontWeight: 700 }}>
+                                    {SUIT[c.webInfo.suitability.rating].icon} {SUIT[c.webInfo.suitability.rating].label} ·{' '}
+                                  </span>
+                                )}
                                 🌐{c.webInfo.sure ? '' : ' ⚠'}
                                 {fieldVal(c, 'stars') ? ` · ${'★'.repeat(Math.min(5, Math.round(Number(fieldVal(c, 'stars')) || 0)))}` : ''}
                                 {fieldVal(c, 'google')?.score ? ` · G ${fieldVal(c, 'google').score}` : ''}
                                 {fieldVal(c, 'booking')?.score ? ` · B ${fieldVal(c, 'booking').score}` : ''}
                                 {fieldVal(c, 'groups') === true ? ' · 👥 skupiny ano' : fieldVal(c, 'groups') === false ? ' · 👥 skupiny ne' : ''}
+                                {fieldVal(c, 'distanceCenter')?.km != null ? ` · 📍 ${fieldVal(c, 'distanceCenter').km} km od centra` : ''}
                               </div>
                             )}
                           </td>
@@ -3509,6 +3642,16 @@ export default function Hotels({ navigate, colors, navParams }) {
 
                       <h3 style={sec}>🌐 Z internetu {c.webInfo?.checkedAt ? <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>· zkontrolováno {fmtD(c.webInfo.checkedAt)}{c.webInfo.sure ? '' : ' · ⚠ AI si nebyla jistá, zkontrolujte'}</span> : null}</h3>
                       {!c.webInfo?.checkedAt && <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Karta zatím nebyla zkontrolovaná na internetu.</p>}
+                      {c.webInfo?.suitability && SUIT[c.webInfo.suitability.rating] && (
+                        <div style={{ margin: '6px 0 10px', padding: '8px 10px', borderRadius: 6, background: '#f8f9fb', border: `1px solid ${SUIT[c.webInfo.suitability.rating].color}` }}>
+                          <strong style={{ color: SUIT[c.webInfo.suitability.rating].color }}>
+                            {SUIT[c.webInfo.suitability.rating].icon} Pro naše skupiny: {SUIT[c.webInfo.suitability.rating].label}
+                          </strong>
+                          <span style={{ fontSize: 11, color: C.muted }}> · {c.webInfo.suitability.manual ? '✏ hodnoceno ručně' : '🤖 hodnocení AI podle kritérií'}</span>
+                          <button onClick={() => handleEditSuitability(c)} title="Upravit hodnocení" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}>✏</button>
+                          <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 4 }}>{c.webInfo.suitability.reasons}</div>
+                        </div>
+                      )}
                       {c.webInfo?.checkedAt && (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                           <tbody>
