@@ -1,10 +1,10 @@
-// force-rebuild-karty-system
+// force-rebuild-ai-propojeni
 import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, writeBatch, getDoc } from 'firebase/firestore';
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
-import { nameFromWeb } from '../lib/hotelAi';
-import { collectLinks, cardSummary, newEmailsForCard, groupMaybe } from '../lib/hotelLinks';
+import { nameFromWeb, verifyOfferHotel, judgeMatches } from '../lib/hotelAi';
+import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -603,7 +603,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v218-karty-system');
+  console.debug('Hotels v219-ai-propojeni');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1057,7 +1057,8 @@ export default function Hotels({ navigate, colors, navParams }) {
   const handleUndoFix = async (f) => {
     const n = (f.cardIds || []).length;
     const m = (f.added || []).length;
-    if (!window.confirm(`Vrátit celý běh?\n\nZruší se ${n} karet, které běh založil${m ? `, a z ${m} existujících karet se odeberou adresy, které běh přidal` : ''}. Databáze hotelů zůstane beze změny.`)) return;
+    const l = (f.linkKeys || []).length;
+    if (!window.confirm(`Vrátit celý běh?\n\nZruší se ${n} karet, které běh založil${m ? `, z ${m} existujících karet se odeberou adresy, které běh přidal` : ''}${l ? `, a ${l} propojení s nabídkami` : ''}. Databáze hotelů zůstane beze změny.`)) return;
     setAutoBusy('Vracím…');
     try {
       const ids = new Set(f.cardIds || []);
@@ -1076,9 +1077,12 @@ export default function Hotels({ navigate, colors, navParams }) {
         units.push([{ t: 'update', ref: cs.ref, data: { emails: (cs.data().emails || []).filter(e => !drop.has(e.email)) } }]);
       }
       ids.forEach(id => units.push([{ t: 'delete', ref: doc(db, 'hotelCards', id) }]));
+      // Propojení, která běh zapsal (AI shody, hotely z nabídek).
+      (f.linkKeys || []).forEach(k => units.push([{ t: 'delete', ref: doc(db, 'hotelCardLinks', encodeURIComponent(k).slice(0, 1400)) }]));
       await commitUnits(units, 'Vracím');
       await updateDoc(doc(db, 'hotelAutoFixes', f.id), { undone: true, undoneAt: new Date().toISOString(), undoneBy: auth.currentUser?.email || '' });
       await Promise.all([fetchHotels(), fetchCards(), fetchFixLog()]);
+      if ((f.linkKeys || []).length || f.kind === 'orphan-cards') loadSystemData();
     } catch (e) {
       alert('Nepodařilo se vrátit: ' + e.message);
     }
@@ -1479,7 +1483,7 @@ export default function Hotels({ navigate, colors, navParams }) {
           source: src.type, by: auth.currentUser?.email || '', at,
         } }));
         return [...links, { t: 'set', ref, data: {
-          name: name || o.name, city: o.city, country: '', aliases: [], domain: '',
+          name: name || o.name, city: cityFromCards(o.city), country: '', aliases: [], domain: '',
           emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true })),
           notes: note || '',
           source: { type: 'services', label: '📄 Z nabídek / zakázek', at },
@@ -1499,6 +1503,221 @@ export default function Hotels({ navigate, colors, navParams }) {
       await Promise.all([fetchCards(), fetchFixLog()]);
     } catch (e) { alert('Nepodařilo se založit: ' + e.message); }
     setSysBusy('');
+  };
+
+  // ── 🤖 AI pro propojení: hotely bez karty a možné shody ─────────────────────
+  // Výsledky AI se ukládají (`hotelOrphanChecks`, `hotelMatchChecks`), takže se
+  // za stejnou věc neplatí dvakrát. Jisté výsledky AI provede sama (🤖, jde
+  // vrátit celý běh), nejisté zůstanou s návrhem k ručnímu rozhodnutí.
+  const [orphanChecks, setOrphanChecks] = useState({});
+  const [matchChecks, setMatchChecks]   = useState({});
+  const [showNotHotel, setShowNotHotel] = useState(false);
+
+  const fetchAiChecks = useCallback(async () => {
+    try {
+      const [o, m] = await Promise.all([getDocs(collection(db, 'hotelOrphanChecks')), getDocs(collection(db, 'hotelMatchChecks'))]);
+      const oc = {}, mc = {};
+      o.docs.forEach(d => { const v = d.data(); if (v.key) oc[v.key] = v; });
+      m.docs.forEach(d => { const v = d.data(); if (v.key) mc[v.key] = v; });
+      setOrphanChecks(oc); setMatchChecks(mc);
+    } catch (e) { console.error('Výsledky AI kontrol se nepodařilo načíst:', e); }
+  }, []);
+  useEffect(() => { if (tab === 'cards') fetchAiChecks(); }, [tab, fetchAiChecks]);
+
+  // Město zapsané stejně jako na ostatních kartách ("Amsterdã" → "AMSTERDAM").
+  const cityFromCards = (city) => {
+    const k = cityKey(city);
+    const counts = new Map();
+    cards.forEach(c => { if (cityKey(c.city) === k && c.city) counts.set(c.city, (counts.get(c.city) || 0) + 1); });
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    return best ? best[0] : String(city || '').toUpperCase();
+  };
+
+  // Rozpočet jednoho AI běhu: limit, dotaz na nový limit, ⏹ Zastavit.
+  const makeBudget = () => {
+    let limit = Number(String(aiLimit).replace(',', '.')) || 500;
+    let spent = 0, stopped = false;
+    aiStopRef.current = false;
+    return {
+      add: (c) => { spent += c || 0; },
+      spent: () => spent,
+      stopped: () => stopped,
+      ok: () => {
+        if (aiStopRef.current) { stopped = true; return false; }
+        while (spent >= limit) {
+          const v = window.prompt(`Utraceno ${fmtKc(spent)} Kč — limit ${limit} Kč je vyčerpaný.\n\nZadejte nový limit v Kč a zpracování bude pokračovat.\nZrušit = zastavit (hotová práce se uloží).`, String(Math.round(limit * 2)));
+          if (v == null) { stopped = true; return false; }
+          const n = Number(String(v).replace(',', '.'));
+          if (n > limit) { limit = n; setAiLimit(String(n)); }
+        }
+        return !stopped;
+      },
+    };
+  };
+  const checkDocId = (key) => encodeURIComponent(key).slice(0, 1400);
+
+  // ➕ Hotely z nabídek bez karty → AI ověří na internetu → karta / propojení.
+  const pendingOrphans = React.useMemo(() => (sys ? sys.orphans.filter(o => !orphanChecks[o.key]) : []), [sys, orphanChecks]);
+  const handleAiOrphans = async () => {
+    const list = pendingOrphans;
+    if (!list.length) return;
+    if (!window.confirm(
+      `🤖 AI ověří ${list.length} hotelů z nabídek, které nemají kartu.\n\n` +
+      '• na internetu zjistí, jestli je to opravdu hotel, jeho oficiální název a město\n' +
+      '• když už pro něj kartu máme, propojí ho s ní; jinak založí novou kartu — JEN se zdrojem\n' +
+      '• lodě, agentury a nesmysly odloží stranou, nejisté nechá na vás\n\n' +
+      `Cca 2 Kč za hotel. Limit útraty: ${aiLimit} Kč. Databáze hotelů se nemění. Celý běh jde vrátit.\n\nPokračovat?`)) return;
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const budget = makeBudget();
+    const results = new Map();
+    try {
+      let idx = 0, done = 0;
+      setAiBusy(`Ověřuji hotely: 0 z ${list.length}`);
+      const worker = async () => {
+        while (idx < list.length) {
+          if (!budget.ok()) return;
+          const o = list[idx++];
+          const groups = [...new Set(o.sources.map(s => s.group).filter(Boolean))];
+          const r = await verifyOfferHotel({ name: o.name, city: o.city, emails: o.emails, groups });
+          budget.add(r.cost);
+          const check = { key: o.key, typedName: o.name, typedCity: o.city, ...r, at: new Date().toISOString(), by };
+          delete check.cost;
+          await setDoc(doc(db, 'hotelOrphanChecks', checkDocId(o.key)), check);
+          results.set(o.key, check);
+          done++;
+          if (!aiStopRef.current) setAiBusy(`Ověřuji hotely: ${done} z ${list.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+        }
+      };
+      await Promise.all([1, 2, 3].map(worker));
+
+      // Jisté hotely → propojit s existující kartou, nebo založit novou.
+      setAiBusy('Zakládám karty a propojuji…');
+      const units = [], cardIds = [], linkKeys = [];
+      const madeNow = new Map();   // stejný hotel z více řádků → jedna karta
+      const stats = { linked: 0, created: 0, notHotel: 0, unsure: 0 };
+      const linkSources = (o, cardId) => o.sources.filter(s => s.key).forEach(s => {
+        linkKeys.push(s.key);
+        units.push([{ t: 'set', ref: doc(db, 'hotelCardLinks', linkDocId(s.key)), data: {
+          key: s.key, decision: 'yes', cardId, rejected: [], label: `${o.name} · ${o.city}`, source: s.type, ai: true, by, at,
+        } }]);
+      });
+      for (const o of list) {
+        const r = results.get(o.key);
+        if (!r) continue;
+        if (!r.isHotel) { stats.notHotel++; continue; }
+        if (!r.sure) { stats.unsure++; continue; }
+        const city = r.city || o.city;
+        const gk = `${linkNormName(r.name)}|${cityKey(city)}`;
+        if (madeNow.has(gk)) { linkSources(o, madeNow.get(gk)); stats.linked++; continue; }
+        const existing = [...nameMatches(sys.idx, r.name, city), ...nameMatches(sys.idx, r.name, o.city)];
+        const uniq = [...new Map(existing.map(c => [c.id, c])).values()];
+        if (uniq.length === 1) { linkSources(o, uniq[0].id); madeNow.set(gk, uniq[0].id); stats.linked++; continue; }
+        if (uniq.length > 1) { stats.unsure++; continue; }
+        const ref = doc(collection(db, 'hotelCards'));
+        cardIds.push(ref.id); madeNow.set(gk, ref.id); stats.created++;
+        units.push([{ t: 'set', ref, data: {
+          name: r.name, city: cityFromCards(city), country: r.country || '', aliases: [], domain: '',
+          web: r.website || '',
+          emails: o.emails.map((e, i) => ({ email: e, role: '', person: '', main: i === 0, fromService: true })),
+          notes: linkNormName(o.name) !== linkNormName(r.name) ? `V nabídce psáno: ${o.name}` : '',
+          source: { type: 'ai', label: '🤖 AI — ověřeno na webu (hotel z nabídek)', at },
+          ai: { name: { value: r.name, how: 'web', source: r.source, evidence: r.evidence, model: r.model, at } },
+          createdAt: serverTimestamp(),
+        } }]);
+        linkSources(o, ref.id);
+      }
+      if (units.length) await commitUnits(units, 'Zakládám karty');
+      if (units.length) {
+        await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+          runId: at, at, by, kind: 'ai-orphans', cardIds, linkKeys, added: [], rowIds: [], undone: false,
+          costCzk: Math.round(budget.spent() * 100) / 100,
+          label: `AI hotely z nabídek: ${stats.created} nových karet, ${stats.linked} propojeno s existující kartou`,
+          reason: `Není hotel: ${stats.notHotel} · nejisté: ${stats.unsure} · útrata ${fmtKc(budget.spent())} Kč`,
+        });
+      }
+      await Promise.all([fetchCards(), fetchFixLog(), fetchAiChecks(), loadSystemData()]);
+      setAiBusy('');
+      alert(
+        (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🤖 Hotovo. Databáze hotelů zůstala beze změny.\n\n') +
+        `Nových karet (ověřeno na webu): ${stats.created}\n` +
+        `Propojeno s existující kartou: ${stats.linked}\n` +
+        `Není hotel (odloženo stranou): ${stats.notHotel}\n` +
+        `Nejisté (zůstávají s návrhem AI): ${stats.unsure}\n\n` +
+        `Útrata: ${fmtKc(budget.spent())} Kč`);
+    } catch (e) {
+      setAiBusy('');
+      await Promise.all([fetchAiChecks(), loadSystemData()]);
+      alert(`AI se přerušila: ${e.message}\n\nUtraceno ${fmtKc(budget.spent())} Kč. Ověřené hotely jsou uložené — příště se za ně neplatí.`);
+    }
+  };
+
+  // 🔶 Možné shody → AI rozhodne (bez internetu, porovná názvy, města, adresy).
+  const pendingMaybe = React.useMemo(() => maybeGroups.filter(g => !matchChecks[g.key]), [maybeGroups, matchChecks]);
+  const handleAiMaybe = async () => {
+    const groups = pendingMaybe;
+    if (!groups.length) return;
+    if (!window.confirm(
+      `🤖 AI posoudí ${groups.length} možných shod (hotel z nabídky ↔ karta).\n\n` +
+      'Jisté shody propojí sama, jisté neshody pošle mezi hotely bez karty, nejisté nechá na vás s návrhem.\n' +
+      `Cca 0,30 Kč za shodu. Limit útraty: ${aiLimit} Kč. Celý běh jde vrátit.\n\nPokračovat?`)) return;
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const budget = makeBudget();
+    const cardById = new Map(cards.map(c => [c.id, c]));
+    const stats = { yes: 0, no: 0, unsure: 0 };
+    const units = [], linkKeys = [];
+    try {
+      for (let i = 0; i < groups.length; i += 12) {
+        if (!budget.ok()) break;
+        if (!aiStopRef.current) setAiBusy(`Posuzuji shody: ${i} z ${groups.length} · utraceno ${fmtKc(budget.spent())} Kč`);
+        const chunk = groups.slice(i, i + 12);
+        const items = chunk.map((g, j) => ({
+          i: j, name: g.name, city: g.city, emails: g.emails.slice(0, 4),
+          candidates: g.candidates.map(c => ({ id: c.id, name: c.name, city: c.city, emails: ((cardById.get(c.id) || {}).emails || []).slice(0, 4).map(e => e.email) })),
+        }));
+        const r = await judgeMatches(items);
+        budget.add(r.cost);
+        if (!r.results.length) continue;
+        const batch = writeBatch(db);
+        chunk.forEach((g, j) => {
+          const res = r.results.find(x => Number(x.i) === j) || {};
+          const match = g.candidates.some(c => c.id === res.match) ? res.match : '';
+          const check = { key: g.key, match, sure: res.sure === true, model: r.model, at: new Date().toISOString(), by };
+          batch.set(doc(db, 'hotelMatchChecks', checkDocId(g.key)), check);
+          if (!check.sure) { stats.unsure++; return; }
+          const decision = match ? 'yes' : 'no';
+          if (match) stats.yes++; else stats.no++;
+          g.lines.forEach(line => {
+            linkKeys.push(line.key);
+            units.push([{ t: 'set', ref: doc(db, 'hotelCardLinks', linkDocId(line.key)), data: {
+              key: line.key, decision, cardId: match, rejected: match ? [] : g.candidates.map(c => c.id),
+              label: `${line.name} · ${line.city}`, source: line.source || '', ai: true, by, at,
+            } }]);
+          });
+        });
+        await batch.commit();
+      }
+      if (units.length) {
+        await commitUnits(units, 'Ukládám propojení');
+        await setDoc(doc(collection(db, 'hotelAutoFixes')), {
+          runId: at, at, by, kind: 'ai-links', cardIds: [], linkKeys, added: [], rowIds: [], undone: false,
+          costCzk: Math.round(budget.spent() * 100) / 100,
+          label: `AI shody: ${stats.yes} propojeno, ${stats.no} odmítnuto`,
+          reason: `Nejisté: ${stats.unsure} · útrata ${fmtKc(budget.spent())} Kč`,
+        });
+      }
+      await Promise.all([fetchFixLog(), fetchAiChecks(), loadSystemData()]);
+      setAiBusy('');
+      alert(
+        (budget.stopped() ? '⏹ Zastaveno. Hotová práce je uložená.\n\n' : '🤖 Hotovo.\n\n') +
+        `Propojeno (jistá shoda): ${stats.yes}\n` +
+        `Odmítnuto (jistě jiný hotel → mezi hotely bez karty): ${stats.no}\n` +
+        `Nejisté (zůstávají s návrhem AI): ${stats.unsure}\n\n` +
+        `Útrata: ${fmtKc(budget.spent())} Kč`);
+    } catch (e) {
+      setAiBusy('');
+      await Promise.all([fetchAiChecks(), loadSystemData()]);
+      alert(`AI se přerušila: ${e.message}\n\nUtraceno ${fmtKc(budget.spent())} Kč.`);
+    }
   };
 
   // Oprava jedné vadné adresy přímo v databázi hotelů. Mění se jen ten jeden
@@ -1854,7 +2073,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     return out.sort((a, b) => order[a.kind] - order[b.kind] || (a.row.city || '').localeCompare(b.row.city || ''));
   }, [hotels]);
   const cardsFiltered = cards.filter(c => {
-    if (onlyUsed && !summaryOf(c.id)) return false;
+    if (onlyUsed) { const sm = summaryOf(c.id); if (!sm || !(sm.offers || sm.orders)) return false; }
     const q = cardSearch.trim().toLowerCase();
     if (!q) return true;
     return (c.name || '').toLowerCase().includes(q)
@@ -2537,11 +2756,26 @@ export default function Hotels({ navigate, colors, navParams }) {
                   </button>
                 </div>
                 {sysError && <div style={{ marginTop: 8, fontSize: 12, color: '#b00020' }}>Chyba: {sysError}</div>}
+                {aiBusy && (
+                  <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13, color: '#5b3fa0' }}>
+                    ⏳ {aiBusy} <span style={{ color: C.muted, fontSize: 12 }}>— nechte stránku otevřenou</span>
+                    <button onClick={() => { aiStopRef.current = true; setAiBusy('Zastavuji — dokončuji rozpracované a ukládám…'); }} style={smallBtn('#b00020')}>⏹ Zastavit</button>
+                  </div>
+                )}
                 {sys && (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, fontSize: 12 }}>
-                    <span style={{ padding: '5px 10px', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 6 }}>
-                      🏨 karet s historií: <strong>{sys.links.size}</strong>
-                    </span>
+                    {(() => {
+                      let works = 0, onlyAsked = 0;
+                      for (const b of sys.links.values()) {
+                        if (b.offerLines.length || b.orderLines.length) works++; else if (b.requests.length) onlyAsked++;
+                      }
+                      return (
+                        <span style={{ padding: '5px 10px', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 6 }}
+                          title="Pracujeme = hotel byl v nabídce nebo zakázce. Jen poptané = dostal jen (hromadnou) poptávku.">
+                          🏨 pracujeme: <strong>{works}</strong> · 📨 jen poptané: <strong>{onlyAsked}</strong>
+                        </span>
+                      );
+                    })()}
                     <button onClick={() => handleAddEmails(emailsToAdd)} disabled={!emailsToAddCount || !!sysBusy}
                       style={{ ...smallBtn('#2e6b45'), opacity: (!emailsToAddCount || sysBusy) ? 0.5 : 1 }}
                       title="E-maily z nabídek a zakázek, které na kartě hotelu ještě nejsou">
@@ -2552,8 +2786,8 @@ export default function Hotels({ navigate, colors, navParams }) {
                       🔶 Možné shody k potvrzení ({maybeGroups.length})
                     </button>
                     <button onClick={() => setSysPanel(p => p === 'orphans' ? '' : 'orphans')}
-                      style={smallBtn(sys.orphans.length ? '#5b3fa0' : C.muted)}>
-                      ➕ Hotely z nabídek bez karty ({sys.orphans.length})
+                      style={smallBtn(sys.orphans.some(o => !(orphanChecks[o.key] && !orphanChecks[o.key].isHotel)) ? '#5b3fa0' : C.muted)}>
+                      ➕ Hotely z nabídek bez karty ({sys.orphans.filter(o => !(orphanChecks[o.key] && !orphanChecks[o.key].isHotel)).length})
                     </button>
                   </div>
                 )}
@@ -2564,12 +2798,30 @@ export default function Hotels({ navigate, colors, navParams }) {
                       Hotel z nabídky / zakázky, který má podobný název nebo sdílenou adresu s kartou. Dokud to nepotvrdíte,
                       nikam se nepočítá. ✅ propojí, ❌ nechá zvlášť (pak se objeví mezi hotely bez karty).
                     </p>
+                    {pendingMaybe.length > 0 && (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8, padding: 8, background: '#f8f5fe', borderRadius: 6 }}>
+                        <button onClick={handleAiMaybe} disabled={!!aiBusy || !!sysBusy}
+                          style={{ ...smallBtn('#5b3fa0'), opacity: (aiBusy || sysBusy) ? 0.5 : 1 }}>
+                          🤖 Nechat AI posoudit ({pendingMaybe.length})
+                        </button>
+                        <span style={{ fontSize: 12, color: C.muted }}>
+                          jisté propojí / odmítne sama, nejisté nechá s návrhem · cca 0,30 Kč za shodu · limit
+                        </span>
+                        <input value={aiLimit} onChange={e => setAiLimit(e.target.value)} disabled={!!aiBusy}
+                          style={inp({ width: 70, fontSize: 12, padding: '2px 6px' })} /> <span style={{ fontSize: 12, color: C.muted }}>Kč</span>
+                      </div>
+                    )}
                     {maybeGroups.length === 0 ? <p style={{ fontSize: 13, color: C.muted }}>Nic k potvrzení.</p> : maybeGroups.map(g => (
                       <div key={g.key} style={{ borderBottom: `1px solid ${C.border}`, padding: '8px 0', fontSize: 12 }}>
                         <div>
                           <strong>{g.name}</strong> · {g.city || '—'}
                           <span style={{ color: C.muted }}> — {g.lines.length}× v {[...new Set(g.lines.map(l => `${l.source === 'order' ? 'zakázka ' : ''}${l.offerNumber || l.group}`).filter(Boolean))].slice(0, 5).join(', ')}{g.lines.length > 5 ? '…' : ''}</span>
                           {g.emails.length > 0 && <div style={{ color: C.muted }}>{g.emails.join(', ')}</div>}
+                          {matchChecks[g.key] && !matchChecks[g.key].sure && (
+                            <div style={{ color: '#5b3fa0' }}>
+                              🤖 AI si není jistá{matchChecks[g.key].match ? ` — spíš „${(g.candidates.find(c => c.id === matchChecks[g.key].match) || {}).name || ''}“` : ' — spíš žádná z karet'}
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                           {g.candidates.map(c => (
@@ -2592,26 +2844,70 @@ export default function Hotels({ navigate, colors, navParams }) {
                       <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>
                         Hotely, které byly v nabídkách nebo zakázkách, ale žádná karta jim neodpovídá.
                       </p>
-                      {sys.orphans.length > 1 && (
-                        <button onClick={() => handleCreateOrphans(sys.orphans)} disabled={!!sysBusy}
-                          style={{ ...smallBtn('#5b3fa0'), opacity: sysBusy ? 0.5 : 1 }}>
-                          {sysBusy === 'orphans' ? '…' : `Založit karty pro všechny (${sys.orphans.length})`}
-                        </button>
-                      )}
                     </div>
-                    {sys.orphans.length === 0 ? <p style={{ fontSize: 13, color: C.muted }}>Všechny hotely z nabídek mají kartu.</p> : sys.orphans.map(o => (
-                      <div key={o.key} style={{ borderBottom: `1px solid ${C.border}`, padding: '8px 0', fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                        <div>
-                          <strong>{o.name}</strong> · {o.city || '—'}
-                          <span style={{ color: C.muted }}> — {o.sources.length}× v {[...new Set(o.sources.map(s => s.offerNumber || s.group).filter(Boolean))].slice(0, 4).join(', ')}</span>
-                          {o.emails.length > 0 && <div style={{ color: C.muted }}>{o.emails.join(', ')}</div>}
-                        </div>
-                        <button onClick={() => handleCreateOrphans([o])} disabled={!!sysBusy}
-                          style={{ ...smallBtn('#5b3fa0'), opacity: sysBusy ? 0.5 : 1, alignSelf: 'center' }}>
-                          {sysBusy === o.key ? '…' : 'Založit kartu'}
+                    {pendingOrphans.length > 0 && (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '8px 0', padding: 8, background: '#f8f5fe', borderRadius: 6 }}>
+                        <button onClick={handleAiOrphans} disabled={!!aiBusy || !!sysBusy}
+                          style={{ ...smallBtn('#5b3fa0'), opacity: (aiBusy || sysBusy) ? 0.5 : 1 }}>
+                          🤖 Ověřit AI a založit karty ({pendingOrphans.length})
                         </button>
+                        <span style={{ fontSize: 12, color: C.muted }}>
+                          ověří na internetu, propojí s existující kartou nebo založí novou se zdrojem · cca 2 Kč za hotel · limit
+                        </span>
+                        <input value={aiLimit} onChange={e => setAiLimit(e.target.value)} disabled={!!aiBusy}
+                          style={inp({ width: 70, fontSize: 12, padding: '2px 6px' })} /> <span style={{ fontSize: 12, color: C.muted }}>Kč</span>
                       </div>
-                    ))}
+                    )}
+                    {(() => {
+                      const notHotel = sys.orphans.filter(o => orphanChecks[o.key] && !orphanChecks[o.key].isHotel);
+                      const shown = sys.orphans.filter(o => !(orphanChecks[o.key] && !orphanChecks[o.key].isHotel));
+                      const row = (o) => {
+                        const ch = orphanChecks[o.key];
+                        return (
+                          <div key={o.key} style={{ borderBottom: `1px solid ${C.border}`, padding: '8px 0', fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                            <div>
+                              <strong>{o.name}</strong> · {o.city || '—'}
+                              <span style={{ color: C.muted }}> — {o.sources.length}× v {[...new Set(o.sources.map(s => s.offerNumber || s.group).filter(Boolean))].slice(0, 4).join(', ')}</span>
+                              {o.emails.length > 0 && <div style={{ color: C.muted }}>{o.emails.join(', ')}</div>}
+                              {ch && (
+                                <div style={{ color: '#5b3fa0' }}>
+                                  🤖 {!ch.isHotel ? 'podle AI to není hotel' : ch.sure ? 'ověřeno' : 'AI si není jistá'}
+                                  {ch.name ? ` — „${ch.name}“${ch.city ? `, ${ch.city}` : ''}` : ''}
+                                  {ch.source && <> · <a href={ch.source} target="_blank" rel="noreferrer" style={{ color: '#5b3fa0' }}>zdroj</a></>}
+                                  {ch.evidence && <span style={{ color: C.muted }}> · {ch.evidence}</span>}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignSelf: 'center' }}>
+                              {ch && ch.isHotel && ch.name && linkNormName(ch.name) !== linkNormName(o.name) && (
+                                <button onClick={() => handleCreateOrphans([{ ...o, name: ch.name, city: ch.city || o.city }])} disabled={!!sysBusy}
+                                  style={{ ...smallBtn('#5b3fa0'), opacity: sysBusy ? 0.5 : 1 }}>
+                                  Založit jako „{ch.name}“
+                                </button>
+                              )}
+                              <button onClick={() => handleCreateOrphans([o])} disabled={!!sysBusy}
+                                style={{ ...smallBtn(C.muted), opacity: sysBusy ? 0.5 : 1 }}>
+                                {sysBusy === o.key ? '…' : ch && ch.isHotel && ch.name && linkNormName(ch.name) !== linkNormName(o.name) ? 'Založit jak je psáno' : 'Založit kartu'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      };
+                      return (
+                        <>
+                          {shown.length === 0 ? <p style={{ fontSize: 13, color: C.muted }}>Všechny hotely z nabídek mají kartu.</p> : shown.map(row)}
+                          {notHotel.length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <button onClick={() => setShowNotHotel(v => !v)}
+                                style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, textDecoration: 'underline', padding: 0 }}>
+                                {showNotHotel ? '▾' : '▸'} Podle AI to nejsou hotely ({notHotel.length})
+                              </button>
+                              {showNotHotel && notHotel.map(row)}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
                 {sys && <p style={{ fontSize: 11, color: C.muted, margin: '8px 0 0' }}>Přidané e-maily i založené karty jde vrátit v 🧹 Kontrola adres → 🤖 Automatické běhy.</p>}
@@ -2624,7 +2920,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                     <label style={{ fontSize: 12, color: C.muted, display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
                       <input type="checkbox" checked={onlyUsed} onChange={e => setOnlyUsed(e.target.checked)} disabled={!sys} />
-                      Jen hotely, se kterými pracujeme
+                      Jen hotely z nabídek a zakázek
                     </label>
                     <input value={cardSearch} onChange={e => setCardSearch(e.target.value)}
                       placeholder="Hledat kartu…" style={inp({ width: 220 })} />
@@ -3051,7 +3347,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                         {f.undone && <div style={{ fontSize: 11, color: '#b00020' }}>↩ vráceno</div>}
                       </td>
                       <td style={{ ...tdS, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards'].includes(f.kind) && (
+                        {!f.undone && ['cards', 'ai-names', 'emails', 'orphan-cards', 'ai-orphans', 'ai-links'].includes(f.kind) && (
                           <button onClick={() => handleUndoFix(f)} disabled={!!autoBusy}
                             style={{ ...smallBtn(C.muted), opacity: autoBusy ? 0.5 : 1 }}>↩ Vrátit</button>
                         )}
