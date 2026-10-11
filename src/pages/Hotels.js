@@ -5,7 +5,7 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, serverT
 import { looksGlued, planEmailFix, planNameFix } from '../lib/hotelAutoFix';
 import { nameFromWeb, verifyOfferHotel, judgeMatches, webCheckCard, EMAIL_TYPES, setAiStatusListener, DEFAULT_CRITERIA } from '../lib/hotelAi';
 import { findDuplicateGroups, buildMerged } from '../lib/hotelMerge';
-import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches } from '../lib/hotelLinks';
+import { collectLinks, cardSummary, newEmailsForCard, groupMaybe, cityKey, normName as linkNormName, nameMatches, isPortalEmail } from '../lib/hotelLinks';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -133,6 +133,8 @@ const FREEMAIL = new Set([
   'sfr.fr','laposte.net','terra.com.br','uol.com.br','bol.com.br','ig.com.br','abv.bg',
   'protonmail.com','proton.me','zoho.com','mail.com','post.cz','tiscali.cz',
 ]);
+// Doména, podle které nelze poznat hotel: freemail nebo systém / portál (podpisy, nabídky).
+const weakDomain = (d) => FREEMAIL.has(d) || isPortalEmail('x@' + d);
 
 // Slova, která o identitě hotelu nic neříkají a při porovnávání názvů se odmažou.
 const NAME_NOISE = /\b(hotel|hotell|hotels|hotel[eé]?is|h[oôó]tel|penzion|pension|pension[ae]t|hostel|hostal|garni|resort|spa|apartments?|apartm[aá]ny?|apart|residence|rezidence|guesthouse|guest|house|the|and|amp)\b/g;
@@ -280,7 +282,7 @@ function buildCardSuggestions(rows) {
   const domainHotels = new Map();
   for (const r of clean) {
     const d = domainOf(r.email);
-    if (!d || FREEMAIL.has(d)) continue;
+    if (!d || weakDomain(d)) continue;
     const n = isRealName(r.name) ? normName(splitNameNote(r.name).name) : '';
     if (!n) continue;
     if (!domainHotels.has(d)) domainHotels.set(d, new Set());
@@ -306,7 +308,7 @@ function buildCardSuggestions(rows) {
   //    rozhoduje název a město — a řádek bez názvu zůstane sám za sebe.
   const buckets = new Map();
   for (const it of items) {
-    const free = !it.domain || FREEMAIL.has(it.domain);
+    const free = !it.domain || weakDomain(it.domain);
     const key = free
       ? (it.hasName ? `free|${it.nName}|${it.nCity}` : `solo|${it.row.id}`)
       : `dom|${it.domain}`;
@@ -589,12 +591,16 @@ const WEB_FIELDS = [
   ['groups', 'Bere skupiny'], ['groupPolicy', 'Podmínky pro skupiny'], ['google', 'Hodnocení Google'], ['booking', 'Hodnocení Booking'],
   ['distanceCenter', 'Vzdálenost od centra'], ['coachStop', '🚌 Zastavení autobusu'], ['coachParking', '🚌 Parkování autobusu'],
   ['twinRooms', 'TWIN pokoje'], ['restaurant', 'Restaurace pro skupiny'], ['elevator', 'Výtah'], ['aircon', 'Klimatizace'],
+  ['salesTerms', '📜 Obchodní podmínky (web)'],
 ];
 const SUIT = {
   good: { icon: '✅', label: 'vhodný', color: '#2e7d32' },
   caveats: { icon: '⚠', label: 's výhradami', color: '#b26a00' },
   bad: { icon: '❌', label: 'nevhodný', color: '#b00020' },
 };
+// Vhodnost karty: ruční hodnocení má přednost před hodnocením AI.
+const suitOf = (c) => (c && c.suitManual && SUIT[c.suitManual.rating] ? c.suitManual
+  : (c && c.webInfo && c.webInfo.suitability && SUIT[c.webInfo.suitability.rating] ? c.webInfo.suitability : null));
 const fieldVal = (c, k) => { const f = c && c.webInfo && c.webInfo.fields && c.webInfo.fields[k]; return f && !f.deleted ? f.value : null; };
 const webValue = (k, v) => {
   if (v === null || v === undefined || v === '') return '—';
@@ -631,7 +637,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v226-prekontrola-mapy');
+  console.debug('Hotels v228-portaly-vhodnost');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1150,7 +1156,8 @@ export default function Hotels({ navigate, colors, navParams }) {
           const cs = await getDoc(doc(db, 'hotelCards', id));
           if (!cs.exists()) continue;
           const c = cs.data();
-          const emails = (c.emails || []).map(e => (e.typeManual || e.typePrev === undefined) ? e : { ...e, type: e.typePrev || '' });
+          const emails = (c.emails || []).filter(e => !(e.fromWeb && e.webRun && e.webRun === f.runId))
+            .map(e => (e.typeManual || e.typePrev === undefined) ? e : { ...e, type: e.typePrev || '' });
           units.push([{ t: 'update', ref: cs.ref, data: { webInfo: (c.webInfo && c.webInfo.prev) || null, emails } }]);
         }
       }
@@ -1491,6 +1498,30 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (!sysRaw || !cards.length) return null;
     return collectLinks({ cards, hotelRows: hotels, ...sysRaw, decisions });
   }, [sysRaw, cards, hotels, decisions]);
+
+  // 🏨 ze servisní karty: adresa #hotels/link~offer:<nabídka>:<položka> otevře kartu hotelu.
+  const linkTarget = React.useRef((() => {
+    const m = /^#\/?hotels\/link~(.+)$/.exec(window.location.hash || '');
+    return m ? decodeURIComponent(m[1]) : '';
+  })());
+  const [linkNote, setLinkNote] = useState(null);   // { text, name }
+  useEffect(() => { if (linkTarget.current) setTab('cards'); }, []);
+  useEffect(() => {
+    const key = linkTarget.current;
+    if (!key || !sys) return;
+    linkTarget.current = '';
+    for (const [cardId, b] of sys.links) {
+      if (b.offerLines.some(l => l.key === key) || b.orderLines.some(l => l.key === key)) { setDetailId(cardId); setLinkNote(null); return; }
+    }
+    const mb = sys.maybe.find(m => m.key === key);
+    if (mb) {
+      setCardSearch('');
+      setLinkNote({ name: mb.name, text: `„${mb.name}“ (${mb.city || 'bez města'}) zatím není jistě přiřazený ke kartě. Možné karty:`, candidates: mb.candidates });
+      return;
+    }
+    const orphan = sys.orphans.find(o => (o.sources || []).some(x => x.key === key));
+    setLinkNote({ name: orphan ? orphan.name : '', text: orphan ? `„${orphan.name}“ (${orphan.city || 'bez města'}) zatím nemá kartu hotelu. Založíte ji v „Kontrola adres“ → Hotely z nabídek bez karty.` : 'Hotel ze servisní karty se nepodařilo najít.' });
+  }, [sys]);
 
   const summaryOf = (cardId) => (sys && sys.links.has(cardId) ? cardSummary(sys.links.get(cardId)) : null);
   const emailsToAdd = React.useMemo(() => {
@@ -1866,7 +1897,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     if (!workingIds.size) return out;
     const DEPT = /\b(groups?|grupos?|reservations?|reservas?|booking|conference|events?|mice|sales|leisure|meetings?|front ?desk|info)\b/g;
     const baseName = (n) => linkNormName(String(n || '').toLowerCase().replace(DEPT, ' '));
-    const domains = (c) => (c.emails || []).map(e => String(e.email || '').toLowerCase().split('@')[1]).filter(d => d && !FREEMAIL.has(d));
+    const domains = (c) => (c.emails || []).map(e => String(e.email || '').toLowerCase().split('@')[1]).filter(d => d && !weakDomain(d));
     const byCity = new Map();
     cards.forEach(c => { const k = cityKey(c.city); if (!byCity.has(k)) byCity.set(k, []); byCity.get(k).push(c); });
     cards.filter(c => workingIds.has(c.id)).forEach(w => {
@@ -1882,9 +1913,9 @@ export default function Hotels({ navigate, colors, navParams }) {
   // Ke kontrole: karta bez kontroly, nebo s kontrolou, která nepřinesla žádný
   // údaj (stará verze nedokázala přečíst delší odpověď AI).
   // Ke kontrole: bez internetové kontroly, s prázdným výsledkem, nebo zkontrolované
-  // starší verzí (bez hodnocení vhodnosti a nových údajů).
+  // starší verzí (bez hodnocení vhodnosti, nových údajů a hledání e-mailů).
   const needsWeb = (c) => !(c.webInfo && c.webInfo.checkedAt) || !Object.keys((c.webInfo && c.webInfo.fields) || {}).length
-    || !c.webInfo.suitability;
+    || !c.webInfo.suitability || !c.webInfo.emailSearch;
   const webPendingWork = cards.filter(c => workSet.has(c.id) && needsWeb(c));
   const webPendingAll = cards.filter(needsWeb);
 
@@ -1900,6 +1931,7 @@ export default function Hotels({ navigate, colors, navParams }) {
   const emailBadge = (e) => {
     const k = String(e.email || '').toLowerCase();
     if (e.type) return { text: EMAIL_TYPES[e.type] || e.type, central: e.type === 'central', ai: !e.typeManual };
+    if (isPortalEmail(k)) return { text: EMAIL_TYPES.portal, central: false, ai: false };
     const n = emailShare.get(k) || 0;
     if (n >= 2) return { text: `🏢 sdílená (${n} karet) — nejspíš centrála`, central: true, ai: false };
     return null;
@@ -1912,6 +1944,8 @@ export default function Hotels({ navigate, colors, navParams }) {
   const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
   const [critEdit, setCritEdit] = useState(null);
   const [suitFilter, setSuitFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [suitEdit, setSuitEdit] = useState(null);   // { cardId, name, rating, reasons }
   useEffect(() => {
     if (tab !== 'cards') return;
     getDoc(doc(db, 'settings', 'hotelCriteria')).then(d => { if (d.exists() && d.data().text) setCriteria(d.data().text); }).catch(() => {});
@@ -1932,7 +1966,7 @@ export default function Hotels({ navigate, colors, navParams }) {
     return `requested ${sm.requests}x, in ${sm.offers} offers, confirmed ${sm.confirmed}x, realized ${sm.realized}x, cancelled ${sm.cancelled}x. Notes: ${notes || '-'}`;
   };
 
-  const applyWebResult = (card, r) => {
+  const applyWebResult = (card, r, runId) => {
     const old = card.webInfo || null;
     const fields = {};
     const oldFields = (old && old.fields) || {};
@@ -1948,9 +1982,14 @@ export default function Hotels({ navigate, colors, navParams }) {
       if (!t || e.typeManual) return e;
       return { ...e, typePrev: e.type || '', type: t };
     });
+    // Nově nalezené e-maily hotelu z internetu (se zdrojem; jdou vrátit zpět).
+    (r.foundEmails || []).forEach(f => {
+      if (emails.some(e => String(e.email || '').toLowerCase() === f.email)) return;
+      emails.push({ email: f.email, type: f.type, role: '', person: '', main: emails.length === 0, fromWeb: true, webSource: f.source, webRun: runId || '' });
+    });
     const suitability = old && old.suitability && old.suitability.manual ? old.suitability : (r.suitability ? { ...r.suitability, ai: true, at: new Date().toISOString() } : null);
     return {
-      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, suitability, prev },
+      webInfo: { checkedAt: new Date().toISOString(), model: r.model, sure: r.sure, evidence: r.evidence, fields, suitability, prev, emailSearch: true },
       emails,
     };
   };
@@ -2000,13 +2039,14 @@ export default function Hotels({ navigate, colors, navParams }) {
       `🌐 Internetová kontrola: ${label} (${list.length} karet).\n\n` +
       '• AI na internetu dohledá adresu, web, telefon, hvězdičky, pokoje, skupiny a hodnocení — každý údaj se zdrojem\n' +
       '• u každého e-mailu určí, jestli je to hotel, skupiny, rezervace, sales nebo 🏢 centrála\n' +
+      '• dohledá další zveřejněné e-maily hotelu (skupiny, sales, rezervace) a přidá je ke kartě se zdrojem\n' +
       '• karty se stejnou adresou nebo stránkou hotelu jistě sloučí (🤖, jde vrátit), nejisté nechá na vás\n' +
       '• ručně zadané údaje nepřepíše; databáze hotelů se nemění\n\n' +
-      `Cca 3 Kč za kartu. Limit útraty: ${aiLimit} Kč.\n\nPokračovat?`)) return;
-    if (list.length === 1 && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 3 Kč)`)) return;
+      `Cca 5 Kč za kartu. Limit útraty: ${aiLimit} Kč.\n\nPokračovat?`)) return;
+    if (list.length === 1 && !window.confirm(`🌐 Zkontrolovat „${list[0].name}“ na internetu? (cca 5 Kč)`)) return;
     const by = auth.currentUser?.email || '', at = new Date().toISOString();
     const budget = makeBudget();
-    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0, moved: 0 };
+    const stats = { ok: 0, unsure: 0, failed: 0, merged: 0, dupLeft: 0, moved: 0, found: 0 };
     const moves = [];
     const errors = new Map();
     const doneIds = [];
@@ -2028,7 +2068,7 @@ export default function Hotels({ navigate, colors, navParams }) {
               if (!e0 || e0.typeManual) continue;
               // Správná karta: podle názvu (AI), nebo podle domény adresy ve stejném městě.
               const dom = em.split('@')[1] || '';
-              const byDomain = dom && !FREEMAIL.has(dom)
+              const byDomain = dom && !weakDomain(dom)
                 ? cards.filter(c => c.id !== card.id && cityKey(c.city) === cityKey(bt.city || card.city)
                     && (c.emails || []).some(e => String(e.email || '').toLowerCase().endsWith('@' + dom)))
                 : [];
@@ -2059,7 +2099,8 @@ export default function Hotels({ navigate, colors, navParams }) {
               moves.push({ email: em, entry: e0, fromId: card.id, toId, created });
               stats.moved++;
             }
-            await updateDoc(doc(db, 'hotelCards', card.id), applyWebResult(card, r));
+            await updateDoc(doc(db, 'hotelCards', card.id), applyWebResult(card, r, at));
+            stats.found += (r.foundEmails || []).length;
             doneIds.push(card.id);
             if (r.sure) stats.ok++; else stats.unsure++;
           } catch (err) {
@@ -2122,6 +2163,7 @@ export default function Hotels({ navigate, colors, navParams }) {
         (stats.failed ? `Nepodařilo se (zůstávají ke kontrole, stačí spustit znovu): ${stats.failed}\n` +
           [...errors.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, n]) => `   • ${n}× ${m}`).join('\n') + '\n' : '') +
         `Cizí e-maily přesunuté ke správnému hotelu: ${stats.moved}\n` +
+        `Nové e-maily hotelů z internetu: ${stats.found}\n` +
         `\nSloučeno duplicitních karet (jisté): ${stats.merged}\n` +
         `Možné duplicity k vašemu rozhodnutí: ${stats.dupLeft}\n\n` +
         `Útrata: ${fmtKc(budget.spent())} Kč`);
@@ -2156,17 +2198,17 @@ export default function Hotels({ navigate, colors, navParams }) {
       await fetchCards();
     } catch (e) { alert('Nepodařilo se smazat: ' + e.message); }
   };
-  const handleEditSuitability = async (card) => {
-    const r = window.prompt('Vhodnost pro naše skupiny — napište: good (✅ vhodný), caveats (⚠ s výhradami), bad (❌ nevhodný):', card.webInfo?.suitability?.rating || '');
-    if (r == null) return;
-    const rating = r.trim().toLowerCase();
-    if (!SUIT[rating]) { alert('Napište good, caveats nebo bad.'); return; }
-    const reasons = window.prompt('Zdůvodnění:', card.webInfo?.suitability?.reasons || '');
-    if (reasons == null) return;
+  // Ruční hodnocení vhodnosti — uložené zvlášť (suitManual), takže ho
+  // internetová kontrola ani její vrácení nepřepíše.
+  const saveSuitability = async (clear) => {
+    const e = suitEdit;
+    if (!e) return;
     try {
-      await updateDoc(doc(db, 'hotelCards', card.id), { 'webInfo.suitability': { rating, reasons: reasons.trim(), manual: true, by: auth.currentUser?.email || '', at: new Date().toISOString() } });
+      const val = !clear && e.rating ? { rating: e.rating, reasons: String(e.reasons || '').trim(), manual: true, by: auth.currentUser?.email || '', at: new Date().toISOString() } : null;
+      await updateDoc(doc(db, 'hotelCards', e.cardId), { suitManual: val });
+      setSuitEdit(null);
       await fetchCards();
-    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+    } catch (err) { alert('Nepodařilo se uložit: ' + err.message); }
   };
 
   const handleEmailType = async (card, email) => {
@@ -2536,7 +2578,15 @@ export default function Hotels({ navigate, colors, navParams }) {
   }, [hotels]);
   const cardsFiltered = cards.filter(c => {
     if (onlyUsed) { const sm = summaryOf(c.id); if (!sm || !(sm.offers || sm.orders)) return false; }
-    if (suitFilter) { const r = c.webInfo?.suitability?.rating || 'none'; if (r !== suitFilter) return false; }
+    if (suitFilter) { const r = suitOf(c)?.rating || 'none'; if (r !== suitFilter) return false; }
+    if (statusFilter) {
+      const b = sys && sys.links.get(c.id);
+      const ok = !!b && (b.offerLines.some(l => ['confirmed', 'preapproved'].includes(l.bookingStatus))
+        || b.orderLines.some(l => ['confirmed', 'deposit_paid', 'contract', 'paid'].includes(l.serviceStatus)));
+      const asked = !!b && (b.requests.length + b.offerLines.length + b.orderLines.length) > 0;
+      if (statusFilter === 'confirmed' && !ok) return false;
+      if (statusFilter === 'requested' && (ok || !asked)) return false;
+    }
     const q = cardSearch.trim().toLowerCase();
     if (!q) return true;
     return (c.name || '').toLowerCase().includes(q)
@@ -3000,6 +3050,15 @@ export default function Hotels({ navigate, colors, navParams }) {
       {/* ── KARTY ── */}
       {tab === 'cards' && (
         <div>
+          {linkNote && (
+            <div style={{ marginBottom: 10, padding: 10, background: '#fff8e6', border: '1px solid #e0c36a', borderRadius: 8, fontSize: 13 }}>
+              🏨 {linkNote.text}
+              {(linkNote.candidates || []).map(c => (
+                <button key={c.id} onClick={() => { setDetailId(c.id); }} style={{ ...smallBtn('#1f5f8b'), marginLeft: 6 }}>{c.name} · {c.city}</button>
+              ))}
+              <button onClick={() => setLinkNote(null)} style={{ ...smallBtn(C.muted), marginLeft: 8 }}>✕</button>
+            </div>
+          )}
           <div style={{ ...cardS, marginBottom: '1.2rem', background: '#f8f9fb' }}>
             <p style={{ margin: 0, fontSize: 13, color: C.muted, lineHeight: 1.6 }}>
               Databáze hotelů má <strong>jeden řádek na emailovou adresu</strong>, takže jeden hotel se třemi
@@ -3456,7 +3515,7 @@ export default function Hotels({ navigate, colors, navParams }) {
               {/* HOTOVÉ KARTY */}
               <div style={cardS}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-                  <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🗂 Karty hotelů ({onlyUsed || cardSearch || suitFilter ? `${cardsFiltered.length} z ${cards.length}` : cards.length})</h3>
+                  <h3 style={{ margin: 0, fontSize: 15, color: C.primary }}>🗂 Karty hotelů ({onlyUsed || cardSearch || suitFilter || statusFilter ? `${cardsFiltered.length} z ${cards.length}` : cards.length})</h3>
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                     <label style={{ fontSize: 12, color: C.muted, display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
                       <input type="checkbox" checked={onlyUsed} onChange={e => setOnlyUsed(e.target.checked)} disabled={!sys} />
@@ -3468,6 +3527,11 @@ export default function Hotels({ navigate, colors, navParams }) {
                       <option value="caveats">⚠ s výhradami</option>
                       <option value="bad">❌ nevhodné</option>
                       <option value="none">bez hodnocení</option>
+                    </select>
+                    <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} disabled={!sys} style={inp({ width: 210, fontSize: 12 })}>
+                      <option value="">Stav u nás: vše</option>
+                      <option value="confirmed">🟢 potvrzené / 🔵 předschválené</option>
+                      <option value="requested">🟡 jen poptané, nepotvrzené</option>
                     </select>
                     <input value={cardSearch} onChange={e => setCardSearch(e.target.value)}
                       placeholder="Hledat kartu…" style={inp({ width: 220 })} />
@@ -3502,11 +3566,16 @@ export default function Hotels({ navigate, colors, navParams }) {
                               </div>
                             )}
                             {c.notes && <div style={{ fontSize: 11, color: '#7a5c00' }}>📝 {c.notes}</div>}
+                            {!c.webInfo?.checkedAt && suitOf(c) && (
+                              <div style={{ fontSize: 11, color: SUIT[suitOf(c).rating].color, fontWeight: 700 }} title={suitOf(c).reasons}>
+                                {SUIT[suitOf(c).rating].icon} {SUIT[suitOf(c).rating].label} ✏
+                              </div>
+                            )}
                             {c.webInfo?.checkedAt && (
                               <div style={{ fontSize: 11, color: '#1f5f8b' }}>
-                                {c.webInfo.suitability && SUIT[c.webInfo.suitability.rating] && (
-                                  <span title={c.webInfo.suitability.reasons} style={{ color: SUIT[c.webInfo.suitability.rating].color, fontWeight: 700 }}>
-                                    {SUIT[c.webInfo.suitability.rating].icon} {SUIT[c.webInfo.suitability.rating].label} ·{' '}
+                                {suitOf(c) && (
+                                  <span title={suitOf(c).reasons} style={{ color: SUIT[suitOf(c).rating].color, fontWeight: 700 }}>
+                                    {SUIT[suitOf(c).rating].icon} {SUIT[suitOf(c).rating].label}{suitOf(c).manual ? ' ✏' : ''} ·{' '}
                                   </span>
                                 )}
                                 🌐{c.webInfo.sure ? '' : ' ⚠'}
@@ -3569,6 +3638,35 @@ export default function Hotels({ navigate, colors, navParams }) {
                 )}
               </div>
               {/* 🏨 DETAIL KARTY */}
+                {suitEdit && (
+                  <div onClick={() => setSuitEdit(null)}
+                    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '12vh 12px' }}>
+                    <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, padding: 16, width: '100%', maxWidth: 520, boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+                      <strong style={{ fontSize: 14, color: C.primary }}>Vhodnost pro naše skupiny — {suitEdit.name}</strong>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '10px 0' }}>
+                        {Object.entries(SUIT).map(([k, v]) => (
+                          <button key={k} onClick={() => setSuitEdit({ ...suitEdit, rating: k })}
+                            style={{ padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                              border: `2px solid ${v.color}`, background: suitEdit.rating === k ? v.color : '#fff', color: suitEdit.rating === k ? '#fff' : v.color }}>
+                            {v.icon} {v.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>Zdůvodnění (např. naše zkušenost, autobus, poloha):</div>
+                      <textarea value={suitEdit.reasons} onChange={e => setSuitEdit({ ...suitEdit, reasons: e.target.value })} rows={5}
+                        style={{ ...inp({ fontSize: 12 }), fontFamily: 'inherit' }} />
+                      <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                        <button onClick={() => saveSuitability(false)} disabled={!suitEdit.rating} style={{ ...smallBtn('#2e7d32'), opacity: suitEdit.rating ? 1 : 0.5 }}>Uložit</button>
+                        {cards.find(x => x.id === suitEdit.cardId)?.suitManual && (
+                          <button onClick={() => saveSuitability(true)}
+                            style={smallBtn(C.muted)} title="Zrušit ruční hodnocení — bude platit hodnocení AI">Zrušit ruční hodnocení</button>
+                        )}
+                        <button onClick={() => setSuitEdit(null)} style={smallBtn(C.muted)}>Zavřít</button>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>Ruční hodnocení má přednost a další internetová kontrola ho nepřepíše.</div>
+                    </div>
+                  </div>
+                )}
               {detailId && (() => {
                 const c = cards.find(x => x.id === detailId);
                 if (!c) return null;
@@ -3634,6 +3732,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                           <button onClick={() => handleEmailType(c, e.email)} title="Určit typ adresy (hotel / skupiny / rezervace / centrála…)"
                             style={{ marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0 }}>🏷</button>
                           {e.fromService && <span style={{ color: C.muted }}> · 📄 ze servisní karty{e.source?.offerNumber ? ` ${e.source.offerNumber}` : ''}{e.source?.group ? ` (${e.source.group})` : ''}</span>}
+                          {e.fromWeb && <span style={{ color: C.muted }}> · 🌐 z internetu{e.webSource ? <> (<a href={e.webSource} target="_blank" rel="noreferrer" style={{ color: '#1f5f8b' }}>zdroj</a>)</> : ''}</span>}
                           {e.auto && e.original && <span style={{ color: C.muted }}> · 🤖 opraveno, v databázi: {e.original}</span>}
                         </div>
                       ))}
@@ -3647,16 +3746,30 @@ export default function Hotels({ navigate, colors, navParams }) {
 
                       <h3 style={sec}>🌐 Z internetu {c.webInfo?.checkedAt ? <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>· zkontrolováno {fmtD(c.webInfo.checkedAt)}{c.webInfo.sure ? '' : ' · ⚠ AI si nebyla jistá, zkontrolujte'}</span> : null}</h3>
                       {!c.webInfo?.checkedAt && <p style={{ fontSize: 12, color: C.muted, margin: 0 }}>Karta zatím nebyla zkontrolovaná na internetu.</p>}
-                      {c.webInfo?.suitability && SUIT[c.webInfo.suitability.rating] && (
-                        <div style={{ margin: '6px 0 10px', padding: '8px 10px', borderRadius: 6, background: '#f8f9fb', border: `1px solid ${SUIT[c.webInfo.suitability.rating].color}` }}>
-                          <strong style={{ color: SUIT[c.webInfo.suitability.rating].color }}>
-                            {SUIT[c.webInfo.suitability.rating].icon} Pro naše skupiny: {SUIT[c.webInfo.suitability.rating].label}
-                          </strong>
-                          <span style={{ fontSize: 11, color: C.muted }}> · {c.webInfo.suitability.manual ? '✏ hodnoceno ručně' : '🤖 hodnocení AI podle kritérií'}</span>
-                          <button onClick={() => handleEditSuitability(c)} title="Upravit hodnocení" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}>✏</button>
-                          <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 4 }}>{c.webInfo.suitability.reasons}</div>
-                        </div>
-                      )}
+                      {(() => {
+                        const su = suitOf(c);
+                        if (!su) return (
+                          <div style={{ margin: '6px 0 10px', fontSize: 12, color: C.muted }}>
+                            Pro naše skupiny: nehodnoceno{' '}
+                            <button onClick={() => setSuitEdit({ cardId: c.id, name: c.name, rating: '', reasons: '' })} style={smallBtn('#41698a')}>✏ Ohodnotit</button>
+                          </div>
+                        );
+                        const aiSu = c.webInfo && c.webInfo.suitability && SUIT[c.webInfo.suitability.rating] ? c.webInfo.suitability : null;
+                        return (
+                          <div style={{ margin: '6px 0 10px', padding: '8px 10px', borderRadius: 6, background: '#f8f9fb', border: `1px solid ${SUIT[su.rating].color}` }}>
+                            <strong style={{ color: SUIT[su.rating].color }}>{SUIT[su.rating].icon} Pro naše skupiny: {SUIT[su.rating].label}</strong>
+                            <span style={{ fontSize: 11, color: C.muted }}> · {su.manual ? `✏ hodnoceno ručně${su.by ? ` (${su.by}${su.at ? `, ${fmtD(su.at)}` : ''})` : ''}` : '🤖 hodnocení AI podle kritérií'}</span>
+                            <button onClick={() => setSuitEdit({ cardId: c.id, name: c.name, rating: su.rating, reasons: su.reasons || '' })} title="Upravit hodnocení ručně"
+                              style={{ ...smallBtn('#41698a'), marginLeft: 8, padding: '1px 8px' }}>✏ Upravit</button>
+                            <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 4 }}>{su.reasons}</div>
+                            {su.manual && aiSu && aiSu !== su && (
+                              <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
+                                🤖 AI hodnotila: {SUIT[aiSu.rating].icon} {SUIT[aiSu.rating].label} — {aiSu.reasons}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {c.webInfo?.checkedAt && (
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                           <tbody>
@@ -3666,7 +3779,7 @@ export default function Hotels({ navigate, colors, navParams }) {
                               return (
                                 <tr key={k} style={{ borderBottom: `1px solid ${C.border}` }}>
                                   <td style={{ ...td2, color: C.muted, width: 170 }}>{label}</td>
-                                  <td style={td2}>
+                                  <td style={{ ...td2, whiteSpace: k === 'salesTerms' || k === 'groupPolicy' ? 'pre-wrap' : undefined }}>
                                     {f.deleted ? <span style={{ color: C.muted }}>— smazáno —</span> : webValue(k, f.value)}
                                     {f.manual && !f.deleted && <span style={{ color: '#2e7d32', fontSize: 10 }}> · ✏ ručně</span>}
                                     {f.source && <> · <a href={f.source} target="_blank" rel="noreferrer" style={{ color: '#1f5f8b', fontSize: 11 }}>zdroj</a></>}
