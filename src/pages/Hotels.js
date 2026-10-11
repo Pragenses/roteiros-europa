@@ -603,7 +603,7 @@ const fmtD = (v) => {
 };
 
 export default function Hotels({ navigate, colors, navParams }) {
-  console.debug('Hotels v220-ai-shody-spolehlive');
+  console.debug('Hotels v221-patri-ke-karte');
   const C = colors;
   const prefill = navParams?.prefill || null;
   const cityList = prefill?.cityList || null;
@@ -1091,6 +1091,16 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   // ✏ Úpravy přímo na kartě. Ručně upravená hodnota se označí (`manual`),
   // aby ji pozdější automatika (AI v etapě 2) nikdy nepřepsala.
+  // ✏ Město na kartě (např. „Amesterdão“ → „AMSTERDAM“). Jen karta, databáze beze změny.
+  const handleEditCardCity = async (card) => {
+    const v = window.prompt('Město na kartě:', card.city || '');
+    if (v == null || !v.trim()) return;
+    try {
+      await updateDoc(doc(db, 'hotelCards', card.id), { city: v.trim(), cityManual: true });
+      await fetchCards();
+    } catch (e) { alert('Nepodařilo se uložit: ' + e.message); }
+  };
+
   const handleEditCardName = async (card) => {
     const v = window.prompt('Název hotelu na kartě:', card.name || '');
     if (v == null || !v.trim()) return;
@@ -1555,6 +1565,32 @@ export default function Hotels({ navigate, colors, navParams }) {
     };
   };
   const checkDocId = (key) => encodeURIComponent(key).slice(0, 1400);
+
+  // Hotel z nabídek patří k existující kartě (vybráno ručně) → propojit
+  // všechny jeho výskyty. Databáze hotelů beze změny.
+  const handleLinkOrphan = async (o, cardId) => {
+    const by = auth.currentUser?.email || '', at = new Date().toISOString();
+    const docs = o.sources.filter(s => s.key).map(s => ({
+      key: s.key, decision: 'yes', cardId, rejected: [], label: `${o.name} · ${o.city}`, source: s.type, by, at,
+    }));
+    if (!docs.length) return;
+    setSysBusy(o.key);
+    try {
+      await commitUnits(docs.map(v => [{ t: 'set', ref: doc(db, 'hotelCardLinks', linkDocId(v.key)), data: v }]), 'Propojuji');
+      setDecisions(prev => { const n = { ...prev }; docs.forEach(v => { n[v.key] = v; }); return n; });
+    } catch (e) { alert('Nepodařilo se propojit: ' + e.message); }
+    setSysBusy('');
+  };
+  // Karty, ke kterým by hotel z nabídky mohl patřit (podle názvu od AI i jak je psáno).
+  const orphanCardCandidates = (o, ch) => {
+    if (!sys) return [];
+    const found = [
+      ...(ch && ch.name ? nameMatches(sys.idx, ch.name, ch.city || o.city) : []),
+      ...(ch && ch.name ? nameMatches(sys.idx, ch.name, o.city) : []),
+      ...nameMatches(sys.idx, o.name, o.city),
+    ];
+    return [...new Map(found.map(c => [c.id, c])).values()].slice(0, 6);
+  };
 
   // ➕ Hotely z nabídek bez karty → AI ověří na internetu → karta / propojení.
   const pendingOrphans = React.useMemo(() => (sys ? sys.orphans.filter(o => !orphanChecks[o.key]) : []), [sys, orphanChecks]);
@@ -2883,6 +2919,23 @@ export default function Hotels({ navigate, colors, navParams }) {
                               )}
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignSelf: 'center' }}>
+                              {(() => {
+                                const cand = orphanCardCandidates(o, ch);
+                                if (!cand.length) return null;
+                                return (
+                                  <>
+                                    <span style={{ fontSize: 11, color: C.muted }}>Patří ke kartě:</span>
+                                    {cand.map(c => (
+                                      <button key={c.id} onClick={() => handleLinkOrphan(o, c.id)} disabled={!!sysBusy}
+                                        title="Propojit všechny výskyty tohoto hotelu s touto kartou"
+                                        style={{ ...smallBtn('#2e7d32'), opacity: sysBusy ? 0.5 : 1 }}>
+                                        ✅ {c.name} ({c.city})
+                                      </button>
+                                    ))}
+                                    <span style={{ fontSize: 11, color: C.muted }}>nebo nová karta:</span>
+                                  </>
+                                );
+                              })()}
                               {ch && ch.isHotel && ch.name && linkNormName(ch.name) !== linkNormName(o.name) && (
                                 <button onClick={() => handleCreateOrphans([{ ...o, name: ch.name, city: ch.city || o.city }])} disabled={!!sysBusy}
                                   style={{ ...smallBtn('#5b3fa0'), opacity: sysBusy ? 0.5 : 1 }}>
@@ -2960,7 +3013,11 @@ export default function Hotels({ navigate, colors, navParams }) {
                             )}
                             {c.notes && <div style={{ fontSize: 11, color: '#7a5c00' }}>📝 {c.notes}</div>}
                           </td>
-                          <td style={tdS}>{c.city || '—'}</td>
+                          <td style={tdS}>
+                            {c.city || '—'}
+                            <button onClick={() => handleEditCardCity(c)} title="Upravit město na kartě"
+                              style={{ marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0 }}>✏</button>
+                          </td>
                           <td style={tdS}>
                             {(c.emails || []).map(e => (
                               <div key={e.email} style={{ fontSize: 12 }}>
@@ -3027,7 +3084,12 @@ export default function Hotels({ navigate, colors, navParams }) {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                         <div>
                           <h2 style={{ margin: 0, fontSize: 20, color: C.primary }}>🏨 {c.name}</h2>
-                          <div style={{ fontSize: 13, color: C.muted }}>{c.city || '—'} · ⓘ {c.source?.label || 'Zdroj neznámý'}</div>
+                          <div style={{ fontSize: 13, color: C.muted }}>
+                            {c.city || '—'}
+                            <button onClick={() => handleEditCardCity(c)} title="Upravit město na kartě"
+                              style={{ marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, padding: 0 }}>✏</button>
+                            {' · ⓘ '}{c.source?.label || 'Zdroj neznámý'}
+                          </div>
                         </div>
                         <button onClick={() => setDetailId('')} style={smallBtn(C.muted)}>✕ Zavřít</button>
                       </div>
