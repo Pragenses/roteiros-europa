@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import { normalizeClientCode, yearTwoDigits } from '../lib/offerNumber';
 import RatesSettings from '../components/RatesSettings';
+import BackupDialog from '../components/BackupDialog';
+import { canBackup } from '../lib/backup';
 
 export default function Settings({ colors, userRole }) {
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [backupStatus, setBackupStatus] = useState('');
+  const [showFullBackup, setShowFullBackup] = useState(false);
+  const mayBackup = canBackup(auth.currentUser && auth.currentUser.email);
   const [smtpPass, setSmtpPass] = useState(() => localStorage.getItem('smtpPass') || '');
   const [smtpSaved, setSmtpSaved] = useState(false);
   const [showSmtpPass, setShowSmtpPass] = useState(false);
@@ -423,6 +427,20 @@ export default function Settings({ colors, userRole }) {
           {smtpSaved && <span style={{ fontSize: 13, color: '#27500A' }}>✓ Uloženo</span>}
         </div>
       </div>
+
+      {mayBackup && (
+        <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.5rem', maxWidth: 600, marginTop: '1.5rem' }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>💾 Kompletní záloha (ZIP)</div>
+          <div style={{ fontSize: 13, color: colors.muted, marginBottom: '1.25rem', lineHeight: 1.5 }}>
+            Záloha celého systému do jednoho souboru: všechna data (nabídky, zakázky, klienti, karty hotelů, šablony, archiv verzí, importy, logy, nastavení — včetně všech poznámek)
+            i soubory (PDF verzí, potvrzení hotelů, soubory importu). Před stažením vyberete, co se má zálohovat. Záloha se po vytvoření sama zkontroluje a uloží se na disk počítače.
+          </div>
+          <button onClick={() => setShowFullBackup(true)} style={{ padding: '9px 20px', background: '#27500A', color: colors.white, border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+            💾 Kompletní záloha…
+          </button>
+        </div>
+      )}
+      {showFullBackup && <BackupDialog colors={colors} onClose={() => setShowFullBackup(false)} />}
 
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 12, padding: '1.5rem', maxWidth: 600, marginTop: '1.5rem' }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: colors.primary, marginBottom: 8 }}>💾 Backup de segurança</div>
