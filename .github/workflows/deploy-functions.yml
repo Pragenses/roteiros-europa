@@ -1,0 +1,42 @@
+name: Nasazení kalendářů (Firebase)
+
+# Spouští se jen ručně: Actions → „Nasazení kalendářů (Firebase)“ → Run workflow.
+# Nahraje do Firebase program, který vyrábí kalendáře do telefonu
+# (složka functions/). Webovou aplikaci to nemění – ta má svůj „Build a nasazení“.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Stejná pravidla termínů jako v aplikaci (Dashboard, Kalendář).
+      - name: Zkopírovat sdílená pravidla
+        run: |
+          mkdir -p functions/shared
+          cp src/lib/deadlines.js src/lib/calendarFeed.js src/lib/people.js functions/shared/
+
+      - name: Nainstalovat
+        run: npm install --prefix functions --no-audit --no-fund
+
+      - name: Kontrola, že se program dá načíst
+        run: node --input-type=module -e "import('./functions/shared/calendarFeed.js').then(m => { const f = m.buildFeeds({ offers: [], orders: [] }); if (!f.storna) throw new Error('chyba'); console.log('OK'); })"
+
+      - name: Nasadit do Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then echo "Chybí tajný klíč FIREBASE_SERVICE_ACCOUNT v nastavení GitHubu."; exit 1; fi
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@13.29.1 deploy --only functions --project roteiros-europa --non-interactive --force
