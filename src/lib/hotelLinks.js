@@ -158,12 +158,34 @@ export function buildCardIndex(cards, hotelRows) {
 }
 
 // Karty, jejichž název odpovídá (ve stejném městě).
+// Slova, která patří k městu (všechny jeho tvary, např. "brussels", "bruxelas",
+// "brusel"). Při porovnání názvů se nepočítají — jinak by karta jménem
+// "The Hotel Brussels" (po očištění jen "brussels") odpovídala každému hotelu
+// v Bruselu.
+const CITY_WORDS = new Map();
+CITY_ALIASES.forEach(list => {
+  const words = new Set(list.flatMap(v => stripDia(v).split(/\s+/)));
+  list.forEach(v => CITY_WORDS.set(stripDia(v).replace(/[^a-z]/g, ''), words));
+});
+const withoutCity = (n, city) => {
+  const canon = cityKey(city);
+  const words = new Set([
+    ...(CITY_WORDS.get(canon) || []),
+    ...stripDia(String(city || '').toLowerCase()).split(/[^a-z]+/).filter(Boolean),
+    canon,
+  ]);
+  return String(n || '').split(' ').filter(w => w && !words.has(w)).join(' ');
+};
+
 export function nameMatches(idx, name, city) {
-  const n = normName(name);
+  const n = withoutCity(normName(name), city);
   if (!n || n.length < 3) return [];
   const list = idx.byNameCity.get(cityKey(city)) || [];
   const out = new Map();
-  list.forEach(({ card, n: cn }) => { if (sameName(n, cn)) out.set(card.id, card); });
+  list.forEach(({ card, n: cn }) => {
+    const c = withoutCity(cn, card.city || city);
+    if (c.length >= 3 && sameName(n, c)) out.set(card.id, card);
+  });
   return [...out.values()];
 }
 
