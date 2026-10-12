@@ -9,7 +9,7 @@ import { DEFAULT_RATES } from '../lib/offerCalc';
 import { computeOfferRows } from '../lib/offerRows';
 import { loadRatesDoc, effectiveRates } from '../lib/rates';
 import { allDeposits, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposits';
-import { FINAL_FIELDS, finalFor, hotelTotal, mealCandidates } from '../lib/depositCalc';
+import { FINAL_FIELDS, finalFor, hotelTotal, mealCandidates, countsCheck } from '../lib/depositCalc';
 import { saveFinalGroup, saveFinalHotel, addDepositRow } from '../lib/depositStore';
 import DepositRows from '../components/DepositRows';
 import { BOOKING_STATUS, statusStyle, displayStatus, setItemStatus, fmtStatusAt } from '../lib/bookingStatus';
@@ -394,6 +394,44 @@ function CountInput({ value, onCommit, disabled, colors, width = 48 }) {
   );
 }
 
+// Políčka počtů: klientská skupina | naši lidé (pokoje navíc) + kontrolní řádek.
+function CountsEditor({ values, onCommit, colors }) {
+  const lbl = { fontSize: 11, color: colors.muted };
+  const c = countsCheck(values || {});
+  const field = (x) => (
+    <label key={x.key} title={x.hint || ''} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span style={lbl}>{x.label}</span>
+      <CountInput colors={colors} value={(values || {})[x.key]} width={x.key === 'pax' ? 56 : 48} onCommit={v => onCommit(x.key, v)} />
+    </label>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', borderRight: `1px solid ${colors.border}`, paddingRight: 16 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: colors.primary, alignSelf: 'center' }}>Klientská skupina</span>
+          {FINAL_FIELDS.filter(x => x.group === 'client').map(field)}
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: colors.primary, alignSelf: 'center' }}>Naši lidé <span style={{ fontWeight: 400, color: colors.muted }}>(pokoje navíc)</span></span>
+          {FINAL_FIELDS.filter(x => x.group === 'staff').map(field)}
+        </div>
+      </div>
+      {c.any && (
+        <div style={{ fontSize: 12, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+          <span>Platících klientů: <b>{c.paying}</b>{c.foc ? ` (${c.pax} − ${c.foc} zdarma)` : ''}</span>
+          <span>Ubytovaných celkem: <b>{c.total}</b> ({c.pax} klientů{c.staff ? ` + ${c.staff} naši` : ''})</span>
+          <span>Pokojů celkem: <b>{c.roomsAll}</b>{c.staff ? ` (skupina ${c.roomsGroup} + naši ${c.staff})` : ''}</span>
+          <span style={{ fontWeight: 700, color: c.bedsOk ? '#27500A' : '#b91c1c' }}>
+            {c.bedsOk
+              ? `✓ lůžka v pokojích skupiny (${c.beds}) sedí s počtem klientů`
+              : `⚠ lůžka v pokojích skupiny: ${c.beds}, klientů: ${c.pax} (${c.diff > 0 ? '+' : ''}${c.diff})`}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FinalCountsBlock({ offer, offerId, colors, card }) {
   const [err, setErr] = useState('');
   const [showLog, setShowLog] = useState(false);
@@ -408,20 +446,27 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
   const fmtAt = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
   const log = Array.isArray(f.log) ? [...f.log].reverse() : [];
   const lbl = { fontSize: 11, color: colors.muted };
-  const countsLine = (c) => FINAL_FIELDS.filter(x => String(c[x.key] ?? '').trim() !== '' && String(c[x.key]) !== '0')
-    .map(x => `${c[x.key]} ${x.short}`).join(' · ') || '—';
+  const countsLine = (c) => {
+    const k = countsCheck(c);
+    if (!k.any) return '—';
+    const parts = [`${k.pax} klientů${k.foc ? ` (${k.foc} zdarma)` : ''}`];
+    ['dbl', 'sgl', 'trpl'].forEach(key => { if (Number(c[key]) > 0) parts.push(`${c[key]} ${key.toUpperCase()}`); });
+    if (Number(c.guide) > 0) parts.push('tour leader');
+    if (Number(c.driver) > 0) parts.push('řidič');
+    return parts.join(' · ') + (k.bedsOk ? '' : ' ⚠');
+  };
 
   return (
     <div style={card}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>🛏 Konečné počty</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>🛏 Konečné počty a náklady hotelů</div>
         {g.setAt && <span style={lbl}>změněno {fmtAt(g.setAt)}{g.setBy ? ` – ${g.setBy}` : ''}</span>}
         <button onClick={() => setShowLog(v => !v)} style={{ marginLeft: 'auto', padding: '2px 9px', background: '#fff', color: colors.primary, border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
           {showLog ? '▾' : '▸'} Historie změn ({log.length})
         </button>
       </div>
       <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
-        Skutečně prodaná místa a pokoje. Vyplňte, až je znáte, a měňte podle skutečnosti — z těchto čísel se počítají zálohy.
+        Skutečně prodaná místa a pokoje. Počet klientů = všichni klienti včetně osob zdarma; tour leader a řidič jsou pokoje navíc. Z těchto čísel se počítají zálohy (a později cena pro klienta).
       </div>
       {showLog && (
         <div style={{ maxHeight: 200, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: 8, marginBottom: 10 }}>
@@ -434,15 +479,9 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end', background: '#F7F6F3', borderRadius: 8, padding: '10px 12px', marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, alignSelf: 'center', minWidth: 120 }}>Celá akce</div>
-        {FINAL_FIELDS.map(x => (
-          <label key={x.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span style={lbl}>{x.label}</span>
-            <CountInput colors={colors} value={g[x.key]} width={x.key === 'pax' ? 56 : 48}
-              onCommit={v => run(() => saveFinalGroup(offerId, offer, { [x.key]: v }))} />
-          </label>
-        ))}
+      <div style={{ background: '#F7F6F3', borderRadius: 8, padding: '10px 12px', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 6 }}>Celá akce</div>
+        <CountsEditor colors={colors} values={g} onCommit={(key, v) => run(() => saveFinalGroup(offerId, offer, { [key]: v }))} />
       </div>
 
       {hotels.length === 0 && <div style={{ fontSize: 13, color: colors.muted }}>V nabídce nejsou zaškrtnuté hotely.</div>}
@@ -472,20 +511,14 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
                 ✎ výjimka (jiné počty než celá akce)
               </label>
               <span style={{ marginLeft: 'auto', fontSize: 12 }}>
-                celá cena: <b>{tot.any && tot.total > 0 ? `${fmtMoney(tot.total)} ${cur}` : '—'}</b>
+                náklady hotelu: <b>{tot.any && tot.total > 0 ? `${fmtMoney(tot.total)} ${cur}` : '—'}</b>
               </span>
-              <button onClick={() => setOpenCalc(o => ({ ...o, [it.id]: !o[it.id] }))} title="Výpočet celé ceny a nastavení (strava, FOC)"
+              <button onClick={() => setOpenCalc(o => ({ ...o, [it.id]: !o[it.id] }))} title="Výpočet nákladů hotelu a nastavení (strava, FOC od hotelu)"
                 style={{ padding: '2px 8px', background: isOpen ? '#e0f2fe' : '#fff', color: '#0369a1', border: '1px solid #7dd3fc', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>ℹ</button>
             </div>
             {ff.exception && (
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 6 }}>
-                {FINAL_FIELDS.map(x => (
-                  <label key={x.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={lbl}>{x.label}</span>
-                    <CountInput colors={colors} value={h[x.key]} width={x.key === 'pax' ? 56 : 48}
-                      onCommit={v => run(() => saveFinalHotel(offerId, offer, it, { [x.key]: v }))} />
-                  </label>
-                ))}
+              <div style={{ marginTop: 6 }}>
+                <CountsEditor colors={colors} values={h} onCommit={(key, v) => run(() => saveFinalHotel(offerId, offer, it, { [key]: v }))} />
               </div>
             )}
             {isOpen && (
@@ -504,7 +537,7 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
                   <label style={{ display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
                     <input type="checkbox" checked={!!foc.on}
                       onChange={e => setCalc({ foc: { n: foc.n || '1', type: foc.type || 'sgl', on: e.target.checked } }, e.target.checked ? 'odečíst FOC: ano' : 'odečíst FOC: ne')} />
-                    odečíst FOC
+                    odečíst FOC od hotelu
                   </label>
                   {foc.on && (
                     <>
@@ -524,7 +557,7 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
                   </div>
                 ))}
                 <div style={{ borderTop: `1px solid ${colors.border}`, marginTop: 3, paddingTop: 3, fontWeight: 700, display: 'flex' }}>
-                  <span style={{ flex: 1 }}>celá cena hotelu</span><span>{fmtMoney(tot.total)} {cur}</span>
+                  <span style={{ flex: 1 }}>náklady hotelu celkem</span><span>{fmtMoney(tot.total)} {cur}</span>
                 </div>
                 {tot.warnings.map((w, k) => <div key={k} style={{ color: '#b45309' }}>⚠ {w}</div>)}
                 <div style={{ marginTop: 4 }}><b>Podmínky z karty:</b> {String(it.depositTerms || '').trim() || <span style={{ color: colors.muted }}>nevyplněno</span>}</div>
