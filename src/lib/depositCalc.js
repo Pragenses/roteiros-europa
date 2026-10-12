@@ -106,7 +106,7 @@ export function hotelTotal(item, offer) {
   add(`${dbl} DBL × ${fmt(pDbl)} × ${nights} nocí`, dbl * pDbl * nights, 'room');
   add(`${sgl} SGL × ${fmt(pSgl)} × ${nights} nocí`, sgl * pSgl * nights, 'room');
   add(`${trpl} TRPL × ${fmt(pTrpl)} × ${nights} nocí`, trpl * pTrpl * nights, 'room');
-  add(`průvodce + řidič ${staff} SGL × ${fmt(pSgl)} × ${nights} nocí`, staff * pSgl * nights, 'room');
+  add(`tour leader + řidič ${staff} SGL × ${fmt(pSgl)} × ${nights} nocí`, staff * pSgl * nights, 'room');
   const rooms = lines.reduce((s, l) => s + l.amount, 0);
 
   const tax = (dbl * tDbl + (sgl + staff) * tSgl + trpl * tTrpl) * nights;
@@ -125,11 +125,14 @@ export function hotelTotal(item, offer) {
 
   let foc = 0;
   const f = calc.foc || {};
+  // FOC od hotelu = počet OSOB zdarma: v DBL je to polovina ceny DBL pokoje
+  // (1 osoba ve dvoulůžkovém), v SGL celá cena SGL. Prázdné pole = 1, nula = nic.
   if (f.on) {
-    const cnt = n(f.n) || 1;
-    const price = f.type === 'dbl' ? pDbl : pSgl;
+    const cnt = filled(f.n) ? n(f.n) : 1;
+    const inDbl = f.type === 'dbl';
+    const price = inDbl ? pDbl / 2 : pSgl;
     foc = cnt * price * nights;
-    lines.push({ label: `FOC ${cnt} ${f.type === 'dbl' ? 'DBL' : 'SGL'} × ${fmt(price)} × ${nights} nocí (odečteno)`, amount: -r2(foc), kind: 'foc' });
+    if (foc) lines.push({ label: `FOC od hotelu: ${cnt} os. ${inDbl ? `v DBL (½ pokoje) × ${fmt(price)}` : `v SGL × ${fmt(price)}`} × ${nights} nocí (odečteno)`, amount: -r2(foc), kind: 'foc' });
   }
 
   const total = rooms + tax + meals - foc;
