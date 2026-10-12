@@ -4,6 +4,9 @@ import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase
 import { parseClientText, aiFillClientFree } from '../lib/ai';
 import { CURRENCIES } from '../lib/offerCalc';
 import { logDeletion } from '../lib/activityLog';
+import { INCOMING_CHANNELS, channelLabel, addPayment as ledgerAddPayment, updatePayment as ledgerUpdatePayment,
+  deletePayment as ledgerDeletePayment, addAllocation as ledgerAddAllocation, deleteAllocation as ledgerDeleteAllocation,
+  linkAllocation as ledgerLinkAllocation } from '../lib/clientLedger';
 
 const CLIENT_COLORS = ['#E6F1FB','#FAEEDA','#EAF3DE','#EEEDFE','#FCEBEB','#F1EFE8'];
 const CLIENT_TEXT = ['#0C447C','#633806','#27500A','#534AB7','#791F1F','#444441'];
@@ -51,9 +54,9 @@ export default function Clients({ navigate, colors }) {
   const [editingId, setEditingId] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [paymentFormFor, setPaymentFormFor] = useState(null);
-  const [newPayment, setNewPayment] = useState({ date: '', amount: '', currency: 'EUR', note: '' });
+  const [newPayment, setNewPayment] = useState({ date: '', amount: '', currency: 'EUR', note: '', payer: '', ident: '', channel: '' });
   const [editingPaymentId, setEditingPaymentId] = useState(null);
-  const [editPaymentDraft, setEditPaymentDraft] = useState({ date: '', amount: '', currency: 'EUR', note: '' });
+  const [editPaymentDraft, setEditPaymentDraft] = useState({ date: '', amount: '', currency: 'EUR', note: '', payer: '', ident: '', channel: '' });
   const [allocationFormFor, setAllocationFormFor] = useState(null);
   const [newAllocation, setNewAllocation] = useState({ amount: '', currency: 'EUR', target: '', isOther: false, customText: '' });
   const [contacts, setContacts] = useState([{ name: '', role: '', email: '', phone: '' }]);
@@ -217,63 +220,57 @@ export default function Clients({ navigate, colors }) {
 
   const addPayment = async (client) => {
     if (!newPayment.amount || isNaN(parseFloat(newPayment.amount))) { alert('Zadej platnou částku.'); return; }
-    const entry = {
-      id: Date.now() + Math.random(),
-      date: newPayment.date || new Date().toISOString().slice(0, 10),
-      amount: parseFloat(newPayment.amount),
-      currency: newPayment.currency,
-      note: newPayment.note.trim(),
-    };
-    const updatedPayments = [...(client.payments || []), entry];
-    await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
-    setNewPayment({ date: '', amount: '', currency: newPayment.currency, note: '' });
+    // Zápis přes účet klienta (lib/clientLedger.js) — transakce, nic se nepřepíše.
+    try { await ledgerAddPayment(client.id, newPayment); }
+    catch (e) { alert('Platbu se nepodařilo uložit: ' + (e.message || e)); return; }
+    setNewPayment({ date: '', amount: '', currency: newPayment.currency, note: '', payer: '', ident: '', channel: newPayment.channel });
     setPaymentFormFor(null);
     fetchData();
   };
 
   const startEditPayment = (p) => {
     setEditingPaymentId(p.id);
-    setEditPaymentDraft({ date: p.date || '', amount: String(p.amount), currency: p.currency, note: p.note || '' });
+    setEditPaymentDraft({ date: p.date || '', amount: String(p.amount), currency: p.currency, note: p.note || '', payer: p.payer || '', ident: p.ident || '', channel: p.channel || '' });
   };
 
   const updatePayment = async (client, paymentId) => {
     if (!editPaymentDraft.amount || isNaN(parseFloat(editPaymentDraft.amount))) { alert('Zadej platnou částku.'); return; }
-    const updatedPayments = (client.payments || []).map(p => p.id === paymentId
-      ? { ...p, date: editPaymentDraft.date, amount: parseFloat(editPaymentDraft.amount), currency: editPaymentDraft.currency, note: editPaymentDraft.note.trim() }
-      : p);
-    await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
+    try {
+      await ledgerUpdatePayment(client.id, paymentId, { date: editPaymentDraft.date, amount: editPaymentDraft.amount, currency: editPaymentDraft.currency,
+        note: editPaymentDraft.note.trim(), payer: editPaymentDraft.payer.trim(), ident: editPaymentDraft.ident.trim(), channel: editPaymentDraft.channel });
+    } catch (e) { alert('Platbu se nepodařilo uložit: ' + (e.message || e)); return; }
     setEditingPaymentId(null);
     fetchData();
   };
 
   const deletePayment = async (client, paymentId) => {
     if (!window.confirm('Smazat tento záznam platby?')) return;
-    const updatedPayments = (client.payments || []).filter(p => p.id !== paymentId);
-    await updateDoc(doc(db, 'clients', client.id), { payments: updatedPayments });
+    try { await ledgerDeletePayment(client.id, paymentId); }
+    catch (e) { alert('Smazání se nepovedlo: ' + (e.message || e)); return; }
     fetchData();
   };
 
   const addAllocation = async (client) => {
     if (!newAllocation.amount || isNaN(parseFloat(newAllocation.amount))) { alert('Zadej platnou částku.'); return; }
-    const label = newAllocation.isOther ? newAllocation.customText.trim() : newAllocation.target;
-    if (!label) { alert(newAllocation.isOther ? 'Napiš na co se to vztahuje.' : 'Vyber zakázku/nabídku.'); return; }
-    const entry = {
-      id: Date.now() + Math.random(),
-      amount: parseFloat(newAllocation.amount),
-      currency: newAllocation.currency,
-      label,
-    };
-    const updatedAllocations = [...(client.allocations || []), entry];
-    await updateDoc(doc(db, 'clients', client.id), { allocations: updatedAllocations });
+    const target = newAllocation.isOther ? newAllocation.customText.trim() : newAllocation.target;
+    if (!target) { alert(newAllocation.isOther ? 'Napiš na co se to vztahuje.' : 'Vyber zakázku/nabídku.'); return; }
+    // Nabídka/skupina = propojený převod (offerId) — uvidí ho i Realizace.
+    const off = !newAllocation.isOther && target.startsWith('offer:') ? offers.find(o => o.id === target.slice(6)) : null;
+    const offerLabel = off ? [off.offerNumber, off.name].filter(Boolean).join(' · ') : '';
+    try {
+      await ledgerAddAllocation(client.id, off
+        ? { amount: newAllocation.amount, currency: newAllocation.currency, offerId: off.id, offerLabel, label: off.name }
+        : { amount: newAllocation.amount, currency: newAllocation.currency, label: target });
+    } catch (e) { alert('Převod se nepodařilo uložit: ' + (e.message || e)); return; }
     setNewAllocation({ amount: '', currency: newAllocation.currency, target: '', isOther: false, customText: '' });
     setAllocationFormFor(null);
     fetchData();
   };
 
   const deleteAllocation = async (client, allocationId) => {
-    if (!window.confirm('Smazat toto přiřazení?')) return;
-    const updatedAllocations = (client.allocations || []).filter(a => a.id !== allocationId);
-    await updateDoc(doc(db, 'clients', client.id), { allocations: updatedAllocations });
+    if (!window.confirm('Vrátit toto přiřazení zpět na účet klienta?')) return;
+    try { await ledgerDeleteAllocation(client.id, allocationId); }
+    catch (e) { alert('Nepovedlo se: ' + (e.message || e)); return; }
     fetchData();
   };
 
@@ -523,7 +520,7 @@ export default function Clients({ navigate, colors }) {
                         <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                           💰 Platby {c.payments?.length ? `(${c.payments.length})` : ''}
                         </div>
-                        <button onClick={() => { setPaymentFormFor(paymentFormFor === c.id ? null : c.id); setNewPayment({ date: '', amount: '', currency: 'EUR', note: '' }); }}
+                        <button onClick={() => { setPaymentFormFor(paymentFormFor === c.id ? null : c.id); setNewPayment({ date: '', amount: '', currency: 'EUR', note: '', payer: '', ident: '', channel: '' }); }}
                           style={{ fontSize: 11, color: colors.primary, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}>
                           {paymentFormFor === c.id ? '✕ Zavřít' : '+ Přidat platbu'}
                         </button>
@@ -571,6 +568,23 @@ export default function Clients({ navigate, colors }) {
                               {CURRENCIES.map(cur => <option key={cur} value={cur}>{cur}</option>)}
                             </select>
                           </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Od koho</div>
+                            <input type="text" value={newPayment.payer} onChange={e => setNewPayment(p => ({ ...p, payer: e.target.value }))}
+                              placeholder="plátce" style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, width: 130 }} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Identifikace</div>
+                            <input type="text" value={newPayment.ident} onChange={e => setNewPayment(p => ({ ...p, ident: e.target.value }))}
+                              placeholder="VS / reference" style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, width: 110 }} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Kam přišlo</div>
+                            <select value={newPayment.channel} onChange={e => setNewPayment(p => ({ ...p, channel: e.target.value }))}
+                              style={{ padding: '5px 7px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+                              {INCOMING_CHANNELS.map(ch => <option key={ch.value} value={ch.value}>{ch.label}</option>)}
+                            </select>
+                          </div>
                           <div style={{ flex: 1, minWidth: 140 }}>
                             <div style={{ fontSize: 10, color: colors.muted, marginBottom: 3 }}>Poznámka</div>
                             <input type="text" value={newPayment.note} onChange={e => setNewPayment(p => ({ ...p, note: e.target.value }))}
@@ -593,6 +607,14 @@ export default function Clients({ navigate, colors }) {
                                   style={{ padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
                                   {CURRENCIES.map(cur => <option key={cur} value={cur}>{cur}</option>)}
                                 </select>
+                                <input type="text" value={editPaymentDraft.payer} placeholder="od koho" onChange={e => setEditPaymentDraft(d => ({ ...d, payer: e.target.value }))}
+                                  style={{ width: 110, padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }} />
+                                <input type="text" value={editPaymentDraft.ident} placeholder="VS / reference" onChange={e => setEditPaymentDraft(d => ({ ...d, ident: e.target.value }))}
+                                  style={{ width: 100, padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }} />
+                                <select value={editPaymentDraft.channel} onChange={e => setEditPaymentDraft(d => ({ ...d, channel: e.target.value }))}
+                                  style={{ padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
+                                  {INCOMING_CHANNELS.map(ch => <option key={ch.value} value={ch.value}>{ch.label}</option>)}
+                                </select>
                                 <input type="text" value={editPaymentDraft.note} onChange={e => setEditPaymentDraft(d => ({ ...d, note: e.target.value }))}
                                   style={{ flex: 1, minWidth: 120, padding: '4px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }} />
                                 <button onClick={() => updatePayment(c, p.id)} style={{ padding: '4px 10px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: 'pointer' }}>✓ Uložit</button>
@@ -602,7 +624,11 @@ export default function Clients({ navigate, colors }) {
                               <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12 }}>
                                 <div style={{ color: colors.muted, width: 85, flexShrink: 0 }}>{p.date}</div>
                                 <div style={{ fontWeight: 700, color: colors.primary, width: 100, flexShrink: 0 }}>{p.amount.toFixed(2)} {p.currency}</div>
-                                <div style={{ flex: 1, color: colors.text }}>{p.note}</div>
+                                <div style={{ flex: 1, color: colors.text }}>
+                                  {[p.payer, p.ident, channelLabel(p.channel)].filter(Boolean).join(' · ')}
+                                  {p.note ? <span style={{ color: colors.muted }}>{(p.payer || p.ident || p.channel) ? ' · ' : ''}{p.note}</span> : null}
+                                  {p.by ? <span style={{ color: colors.muted, fontSize: 10 }}> · zapsal {p.by}</span> : null}
+                                </div>
                                 <button onClick={() => startEditPayment(p)} style={{ background: 'none', border: 'none', color: colors.primary, cursor: 'pointer', fontSize: 12, padding: 0 }}>✎</button>
                                 <button onClick={() => deletePayment(c, p.id)} style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>
                               </div>
@@ -616,7 +642,7 @@ export default function Clients({ navigate, colors }) {
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: colors.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                          📋 Přiřazeno zakázkám {c.allocations?.length ? `(${c.allocations.length})` : ''}
+                          📋 Převedeno na skupiny / zakázky {c.allocations?.length ? `(${c.allocations.length})` : ''}
                         </div>
                         <button onClick={() => { setAllocationFormFor(allocationFormFor === c.id ? null : c.id); setNewAllocation({ amount: '', currency: 'EUR', target: '', isOther: false, customText: '' }); }}
                           style={{ fontSize: 11, color: colors.primary, background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}>
@@ -663,7 +689,7 @@ export default function Clients({ navigate, colors }) {
                               )}
                               {getOffersFor(c).length > 0 && (
                                 <optgroup label="Offers">
-                                  {getOffersFor(c).map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
+                                  {getOffersFor(c).map(o => <option key={o.id} value={`offer:${o.id}`}>{[o.offerNumber, o.name].filter(Boolean).join(' · ')}</option>)}
                                 </optgroup>
                               )}
                             </select>
@@ -681,8 +707,21 @@ export default function Clients({ navigate, colors }) {
                           {c.allocations.map(a => (
                             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12 }}>
                               <div style={{ fontWeight: 700, color: colors.primary, width: 100, flexShrink: 0 }}>{a.amount.toFixed(2)} {a.currency}</div>
-                              <div style={{ flex: 1, color: colors.text }}>{a.label}</div>
-                              <button onClick={() => deleteAllocation(c, a.id)} style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>✕</button>
+                              <div style={{ flex: 1, color: colors.text }}>
+                                {a.offerId ? <span title="Propojeno se skupinou — vidí to i Realizace">🔗 {a.offerLabel || a.label}</span> : a.label}
+                                {a.note ? <span style={{ color: colors.muted }}> · {a.note}</span> : null}
+                                {a.by ? <span style={{ color: colors.muted, fontSize: 10 }}> · {a.by}</span> : null}
+                              </div>
+                              {!a.offerId && (() => {
+                                // Starší přiřazení jen podle názvu → nabídnout propojení se skupinou se stejným názvem.
+                                const hit = getOffersFor(c).find(o => String(o.name || '').trim().toLowerCase() === String(a.label || '').trim().toLowerCase());
+                                return hit ? (
+                                  <button title={`Propojit se skupinou ${[hit.offerNumber, hit.name].filter(Boolean).join(' · ')}`}
+                                    onClick={async () => { try { await ledgerLinkAllocation(c.id, a.id, hit); fetchData(); } catch (e) { alert('Nepovedlo se: ' + (e.message || e)); } }}
+                                    style={{ background: 'none', border: `1px solid ${colors.border}`, borderRadius: 5, color: colors.primary, cursor: 'pointer', fontSize: 11, padding: '1px 6px' }}>🔗 propojit</button>
+                                ) : null;
+                              })()}
+                              <button onClick={() => deleteAllocation(c, a.id)} title="Vrátit zpět na účet klienta" style={{ background: 'none', border: 'none', color: '#7f1d1d', cursor: 'pointer', fontSize: 12, padding: 0 }}>↩</button>
                             </div>
                           ))}
                         </div>

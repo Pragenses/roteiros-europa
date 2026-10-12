@@ -12,6 +12,10 @@ import { allDeposits, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposits';
 import { FINAL_FIELDS, finalFor, hotelTotal, mealCandidates, countsCheck } from '../lib/depositCalc';
 import { saveFinalGroup, saveFinalHotel, addDepositRow, saveClientPrice } from '../lib/depositStore';
 import { clientTotal } from '../lib/clientPrice';
+import { CURRENCIES } from '../lib/offerCalc';
+import { balances, groupAllocations, receivedByCurrency, planStatus, planRows, PLAN_KINDS, PLAN_STYLE,
+  addAllocation, deleteAllocation, linkAllocation, addPlanRow, savePlanRow, deletePlanRow, channelLabel } from '../lib/clientLedger';
+import { getDocs, collection } from 'firebase/firestore';
 import DepositRows from '../components/DepositRows';
 import { BOOKING_STATUS, statusStyle, displayStatus, setItemStatus, fmtStatusAt } from '../lib/bookingStatus';
 
@@ -214,6 +218,8 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
         byKind={byKind} kindOrder={kindOrder} nLate={nLate} nWarn={nWarn} nNoKind={nNoKind} nSuggest={nSuggest} rowsK={rowsK} />
 
       <FinalCountsBlock offer={offer} offerId={offerId} colors={colors} card={card} />
+
+      <ClientPaymentsBlock offer={offer} offerId={offerId} navigate={navigate} colors={colors} card={card} />
 
       <DepositsBlock offer={offer} offerId={offerId} navigate={navigate} colors={colors} card={card} />
 
@@ -440,6 +446,188 @@ function ClientTotalBox({ offer, offerId, colors }) {
         Jen cena pro klienta — z prodejní ceny, ne z našich nákladů. FOC od hotelů sem nepatří.
       </div>
     </div>
+  );
+}
+
+// ── 💰 Platby od klienta: plán, převody z účtu klienta, stav (lib/clientLedger.js) ──
+function ClientPaymentsBlock({ offer, offerId, navigate, colors, card }) {
+  const [client, setClient] = useState(undefined);
+  const [err, setErr] = useState('');
+  const [tf, setTf] = useState({ amount: '', currency: 'EUR', paymentId: '', note: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let unsub = () => {};
+    let cancelled = false;
+    (async () => {
+      try {
+        let cid = offer.clientId;
+        if (!cid && offer.clientName) {
+          const snap = await getDocs(collection(db, 'clients'));
+          const hit = snap.docs.find(d => String((d.data() || {}).name || '').trim().toLowerCase() === String(offer.clientName).trim().toLowerCase());
+          cid = hit ? hit.id : null;
+        }
+        if (cancelled) return;
+        if (!cid) { setClient(null); return; }
+        unsub = onSnapshot(doc(db, 'clients', cid), s => setClient(s.exists() ? { id: s.id, ...s.data() } : null), e => { console.error(e); setClient(null); });
+      } catch (e) { console.error(e); setClient(null); }
+    })();
+    return () => { cancelled = true; unsub(); };
+  }, [offer.clientId, offer.clientName]);
+
+  const run = async (fn) => { setBusy(true); setErr(''); try { await fn(); } catch (e) { console.error(e); setErr('Uložení se nepovedlo: ' + (e.message || e)); } setBusy(false); };
+  const ct = clientTotal(offer);
+  const totals = Object.fromEntries(ct.parts.map(p => [p.cur, p.total]));
+  const allocs = client ? groupAllocations(client, offer) : [];
+  const linked = allocs.filter(a => !a.legacy);
+  const legacy = allocs.filter(a => a.legacy);
+  const received = receivedByCurrency(linked);
+  const plan = planStatus(offer, totals, received);
+  const rowsRaw = planRows(offer);
+  const curs = [...new Set([...Object.keys(totals), ...Object.keys(received)])];
+  const bal = client ? balances(client) : [];
+  const freeOf = (cur) => (bal.find(b => b.currency === cur) || {}).free || 0;
+  const offerLabel = [offer.offerNumber, offer.name].filter(Boolean).join(' · ');
+  const sel = { padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, fontFamily: 'inherit', background: '#fff' };
+  const inp = (w) => ({ ...sel, width: w });
+  const fmtAt = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('cs-CZ'); };
+  const payments = client ? (client.payments || []).filter(p => (p.currency || 'EUR') === tf.currency) : [];
+
+  const transfer = () => {
+    const amt = parseFloat(String(tf.amount).replace(',', '.'));
+    if (!(amt > 0)) { setErr('Zadejte částku převodu.'); return; }
+    if (amt > freeOf(tf.currency) + 0.004 && !window.confirm(`Na účtu klienta je volných jen ${fmtMoney(freeOf(tf.currency))} ${tf.currency}. Převést přesto ${fmtMoney(amt)} ${tf.currency}?`)) return;
+    run(async () => {
+      await addAllocation(client.id, { amount: amt, currency: tf.currency, offerId, offerLabel, paymentId: tf.paymentId || undefined, note: tf.note });
+      setTf(t => ({ ...t, amount: '', paymentId: '', note: '' }));
+    });
+  };
+
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>💰 Platby od klienta</div>
+        <span style={{ fontSize: 12, color: colors.muted }}>účet skupiny {offerLabel}{client ? ` · klient ${client.name}` : ''}</span>
+        <button onClick={() => navigate('clients')} style={{ marginLeft: 'auto', padding: '3px 10px', background: '#fff', color: colors.primary, border: `1px solid ${colors.primary}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>Otevřít Clients</button>
+      </div>
+      <div style={{ fontSize: 12, color: colors.muted, marginBottom: 8, lineHeight: 1.5 }}>
+        Platby se zapisují u klienta v Clients (jako na bankovní účet). Sem je převedete z volného zůstatku klienta — převod jde vrátit.
+      </div>
+      {client === undefined && <div style={{ fontSize: 13, color: colors.muted }}>Načítám účet klienta…</div>}
+      {client === null && <div style={{ fontSize: 13, color: '#b45309' }}>⚠ Klient této akce nebyl nalezen v Clients — zkontrolujte klienta v nabídce.</div>}
+
+      {/* Souhrn po měnách */}
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        {curs.map(c => {
+          const t = totals[c] || 0, r = received[c] || 0, d = r2c(t - r);
+          return (
+            <div key={c} style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: '6px 12px', fontSize: 13, background: '#fafaf8' }}>
+              <b>{c}</b>: má zaplatit {fmtMoney(t)} · přišlo <b>{fmtMoney(r)}</b> ·{' '}
+              {d > 0.004 ? <b style={{ color: '#b91c1c' }}>chybí {fmtMoney(d)}</b> : d < -0.004 ? <b style={{ color: '#1d4ed8' }}>přebývá {fmtMoney(-d)}</b> : <b style={{ color: '#27500A' }}>vyrovnáno ✓</b>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Plán plateb */}
+      <div style={{ fontSize: 13, fontWeight: 700, margin: '6px 0 4px' }}>Plán plateb</div>
+      {rowsRaw.length === 0 && <div style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>Zatím bez plánu — přidejte řádek (např. 30 % záloha, zbytek 30 dní před příjezdem).</div>}
+      {rowsRaw.map(r => {
+        const st = plan.find(x => x.id === r.id) || {};
+        const ps = PLAN_STYLE[st.status] || PLAN_STYLE.planned;
+        const save = (patch, text) => run(() => savePlanRow(offerId, offer, r.id, patch, text));
+        return (
+          <div key={r.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '4px 8px', borderRadius: 6, marginBottom: 3, background: ps.bg, borderLeft: `4px solid ${ps.color}`, fontSize: 12 }}>
+            <BlurText value={r.note} placeholder="např. 1. záloha" width={120} colors={colors} onCommit={v => save({ note: v }, `plán: název ${v}`)} />
+            <select value={r.kind || 'percent'} onChange={e => save({ kind: e.target.value }, `plán: typ ${e.target.value}`)} style={sel}>
+              {PLAN_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
+            {r.kind === 'percent' || !r.kind ? <><BlurText value={r.pct} placeholder="30" width={40} colors={colors} numeric onCommit={v => save({ pct: v }, `plán: ${v} %`)} />%</> : null}
+            {r.kind === 'fixed' && <BlurText value={r.amount} placeholder="0" width={80} colors={colors} numeric onCommit={v => save({ amount: v }, `plán: částka ${v}`)} />}
+            <select value={r.cur || 'EUR'} onChange={e => save({ cur: e.target.value }, `plán: měna ${e.target.value}`)} style={sel}>
+              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <span>= <b>{fmtMoney(st.amount || 0)} {r.cur || 'EUR'}</b></span>
+            <span style={{ color: colors.muted }}>splatnost:</span>
+            <select value={r.dueMode === 'before' ? 'before' : 'date'} onChange={e => save({ dueMode: e.target.value }, '')} style={sel}>
+              <option value="date">datum</option><option value="before">dní před příjezdem</option>
+            </select>
+            {r.dueMode === 'before'
+              ? <><BlurText value={r.dueDays} placeholder="30" width={40} colors={colors} integer onCommit={v => save({ dueDays: v }, `plán: ${v} dní před příjezdem`)} />{st.due ? <span>= {fmtDate(st.due)}</span> : null}</>
+              : <input type="date" value={r.due || ''} onChange={e => save({ due: e.target.value }, `plán: splatnost ${e.target.value}`)} style={sel} />}
+            <span style={{ fontWeight: 700, color: ps.color }}>{ps.icon} {ps.label}</span>
+            {st.status !== 'paid' && st.covered > 0 && <span>přišlo {fmtMoney(st.covered)} · chybí {fmtMoney(st.missing)}</span>}
+            <button onClick={() => { if (window.confirm('Smazat tento řádek plánu?')) run(() => deletePlanRow(offerId, r.id)); }} style={{ ...sel, color: '#b91c1c', cursor: 'pointer', marginLeft: 'auto' }}>✕</button>
+          </div>
+        );
+      })}
+      <button disabled={busy} onClick={() => run(() => addPlanRow(offerId, { cur: (ct.parts[0] || {}).cur || 'EUR' }))}
+        style={{ ...sel, cursor: 'pointer', color: colors.primary, marginBottom: 10 }}>+ řádek plánu</button>
+
+      {/* Přijato na skupinu */}
+      <div style={{ fontSize: 13, fontWeight: 700, margin: '6px 0 4px' }}>Převedeno na tuto skupinu</div>
+      {linked.length === 0 && <div style={{ fontSize: 12, color: colors.muted }}>Zatím nic.</div>}
+      {linked.map(a => {
+        const pay = client && (client.payments || []).find(p => String(p.id) === String(a.paymentId));
+        return (
+          <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, padding: '3px 8px', borderTop: `1px solid ${colors.border}` }}>
+            <b style={{ minWidth: 110 }}>{fmtMoney(a.amount)} {a.currency}</b>
+            <span>{fmtAt(a.at)}{a.by ? ` – ${a.by}` : ''}</span>
+            {pay && <span style={{ color: colors.muted }}>z platby {pay.date}{pay.ident ? ` · ${pay.ident}` : ''}{pay.channel ? ` · ${channelLabel(pay.channel)}` : ''}</span>}
+            {a.note && <span>{a.note}</span>}
+            <button disabled={busy} onClick={() => { if (window.confirm(`Vrátit ${fmtMoney(a.amount)} ${a.currency} zpět na účet klienta?`)) run(() => deleteAllocation(client.id, a.id)); }}
+              style={{ ...sel, cursor: 'pointer', marginLeft: 'auto', color: '#9a3412' }}>↩ vrátit na účet klienta</button>
+          </div>
+        );
+      })}
+      {legacy.length > 0 && (
+        <div style={{ marginTop: 6, padding: '6px 8px', background: '#fff7ed', borderRadius: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#9a3412', marginBottom: 3 }}>Starší přiřazení podle názvu akce (zatím nepropojená, nezapočítaná)</div>
+          {legacy.map(a => (
+            <div key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, padding: '2px 0' }}>
+              <b>{fmtMoney(a.amount)} {a.currency}</b><span>„{a.label}“</span>
+              <button disabled={busy} onClick={() => run(() => linkAllocation(client.id, a.id, { ...offer, id: offerId }))} style={{ ...sel, cursor: 'pointer', color: colors.primary }}>🔗 propojit se skupinou</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Převod z účtu klienta */}
+      {client && (
+        <div style={{ marginTop: 10, padding: '8px 10px', background: '#F7F6F3', borderRadius: 8 }}>
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            <b>Převést z účtu klienta</b> — volné:{' '}
+            {bal.length ? bal.map(b => <span key={b.currency} style={{ marginRight: 10, color: b.free > 0 ? '#27500A' : colors.muted, fontWeight: 700 }}>{fmtMoney(b.free)} {b.currency}</span>) : 'žádné platby'}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
+            <input type="text" inputMode="decimal" placeholder="částka" value={tf.amount} onChange={e => setTf(t => ({ ...t, amount: e.target.value.replace(/,/g, '.') }))} style={inp(90)} />
+            <select value={tf.currency} onChange={e => setTf(t => ({ ...t, currency: e.target.value, paymentId: '' }))} style={sel}>
+              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={tf.paymentId} onChange={e => setTf(t => ({ ...t, paymentId: e.target.value }))} style={{ ...sel, maxWidth: 260 }}>
+              <option value="">z platby (nepovinné)…</option>
+              {payments.map(p => <option key={p.id} value={p.id}>{p.date} · {fmtMoney(p.amount)} {p.currency}{p.payer ? ` · ${p.payer}` : ''}{p.ident ? ` · ${p.ident}` : ''}</option>)}
+            </select>
+            <input type="text" placeholder="poznámka" value={tf.note} onChange={e => setTf(t => ({ ...t, note: e.target.value }))} style={inp(160)} />
+            <button disabled={busy} onClick={transfer} style={{ padding: '4px 12px', background: colors.primary, color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, cursor: 'pointer' }}>Převést na skupinu</button>
+          </div>
+        </div>
+      )}
+      {err && <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 6 }}>❌ {err}</div>}
+    </div>
+  );
+}
+const r2c = (x) => Math.round((Number(x) || 0) * 100) / 100;
+function BlurText({ value, onCommit, colors, width = 100, placeholder, numeric, integer }) {
+  const [v, setV] = useState(value ?? '');
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setV(value ?? ''); }, [value, focus]);
+  return (
+    <input type="text" inputMode={integer ? 'numeric' : numeric ? 'decimal' : 'text'} value={v} placeholder={placeholder}
+      onFocus={() => setFocus(true)}
+      onChange={e => { let x = e.target.value; if (numeric) x = x.replace(/,/g, '.'); if (integer) x = x.replace(/[^0-9]/g, ''); setV(x); }}
+      onBlur={() => { setFocus(false); if (String(v) !== String(value ?? '')) onCommit(v); }}
+      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+      style={{ width, padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, fontFamily: 'inherit', textAlign: numeric || integer ? 'right' : 'left' }} />
   );
 }
 
