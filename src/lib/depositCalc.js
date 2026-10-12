@@ -19,14 +19,33 @@
 import { evalAmount, getEffectiveCostDbl } from './offerCalc';
 import { kindOf, suggestKind } from './serviceKinds';
 
+// Konečné počty (upraveno 12. 10. 2026):
+//   Klientská skupina: pax = počet klientů CELKEM (včetně osob zdarma),
+//                      foc = z toho zdarma (FOC klienta) → platících = pax − foc,
+//                      dbl / sgl / trpl = pokoje skupiny (pro všechny klienty).
+//   Naši lidé (pokoje NAVÍC, nejsou v klientech): guide = tour leader (SGL), driver = řidič (SGL).
 export const FINAL_FIELDS = [
-  { key: 'pax',    label: 'Osoby',     short: 'os.' },
-  { key: 'dbl',    label: 'DBL',       short: 'DBL' },
-  { key: 'sgl',    label: 'SGL',       short: 'SGL' },
-  { key: 'trpl',   label: 'TRPL',      short: 'TRPL' },
-  { key: 'guide',  label: 'Průvodce (SGL)', short: 'průvodce' },
-  { key: 'driver', label: 'Řidič (SGL)',    short: 'řidič' },
+  { key: 'pax',    label: 'Počet klientů',     short: 'klientů', group: 'client', hint: 'všichni klienti včetně osob zdarma' },
+  { key: 'foc',    label: 'z toho zdarma (FOC)', short: 'zdarma', group: 'client', hint: 'osoby zdarma pro klienta (např. 20+1 → 1)' },
+  { key: 'dbl',    label: 'DBL',               short: 'DBL',     group: 'client' },
+  { key: 'sgl',    label: 'SGL',               short: 'SGL',     group: 'client' },
+  { key: 'trpl',   label: 'TRPL',              short: 'TRPL',    group: 'client' },
+  { key: 'guide',  label: 'Tour leader (SGL)', short: 'tour leader', group: 'staff', hint: 'náš průvodce — pokoj navíc' },
+  { key: 'driver', label: 'Řidič (SGL)',       short: 'řidič',   group: 'staff', hint: 'pokoj navíc' },
 ];
+
+// Kontrola počtů: ubytovaní celkem, platící a lůžka v pokojích skupiny.
+export function countsCheck(c) {
+  const pax = n(c.pax), foc = n(c.foc), dbl = n(c.dbl), sgl = n(c.sgl), trpl = n(c.trpl);
+  const staff = n(c.guide) + n(c.driver);
+  const beds = dbl * 2 + sgl + trpl * 3;
+  return {
+    pax, foc, paying: Math.max(pax - foc, 0), staff, total: pax + staff, beds,
+    roomsGroup: dbl + sgl + trpl, roomsAll: dbl + sgl + trpl + staff,
+    any: [c.pax, c.dbl, c.sgl, c.trpl].some(filled),
+    bedsOk: pax === beds, diff: beds - pax,
+  };
+}
 
 const n = (v) => {
   const s = String(v === 0 ? '0' : (v || '')).replace(/[\s  ]/g, '').replace(',', '.');
@@ -148,9 +167,10 @@ export function computeDeposit(row, item, offer) {
     };
   }
   if (kind === 'per_pax') {
-    const pax = n(counts.pax);
+    // Za osobu = všichni ubytovaní (klienti včetně osob zdarma + tour leader + řidič).
+    const pax = n(counts.pax) + n(counts.guide) + n(counts.driver);
     return {
-      amount: any && unit > 0 && pax > 0 ? r2(pax * unit) : null, lines: [{ label: `${pax} osob × ${fmt(unit)}`, amount: r2(pax * unit) }],
+      amount: any && unit > 0 && pax > 0 ? r2(pax * unit) : null, lines: [{ label: `${pax} ubytovaných osob (klienti + naši) × ${fmt(unit)}`, amount: r2(pax * unit) }],
       formula: `${pax} osob × ${fmt(unit)}`, warnings: any ? [] : ['Chybí konečné počty.'], currency: item.currency || 'EUR',
     };
   }
