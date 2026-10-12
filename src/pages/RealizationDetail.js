@@ -541,12 +541,12 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
                   </label>
                   {foc.on && (
                     <>
-                      <CountInput colors={colors} value={foc.n || '1'} width={36} onCommit={v => setCalc({ foc: { ...foc, n: v } }, `FOC počet: ${v}`)} />
-                      <select value={foc.type || 'sgl'} onChange={e => setCalc({ foc: { ...foc, type: e.target.value } }, `FOC pokoj: ${e.target.value.toUpperCase()}`)}
+                      <CountInput colors={colors} value={foc.n || '1'} width={36} onCommit={v => setCalc({ foc: { ...foc, n: v } }, `FOC od hotelu počet osob: ${v}`)} />
+                      <select value={foc.type || 'sgl'} onChange={e => setCalc({ foc: { ...foc, type: e.target.value } }, `FOC od hotelu v: ${e.target.value.toUpperCase()}`)}
                         style={{ padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12 }}>
                         <option value="sgl">SGL</option><option value="dbl">DBL</option>
                       </select>
-                      <span style={{ color: colors.muted }}>pokoj zdarma (city tax se platí dál)</span>
+                      <span style={{ color: colors.muted }}>osob zdarma (v DBL = ½ pokoje, v SGL celý pokoj; city tax se platí dál)</span>
                     </>
                   )}
                   {it.focRatio && <span style={{ color: colors.muted }}>· na kartě: FOC {it.focRatio}{it.focRoomType ? ` (${String(it.focRoomType).toUpperCase()})` : ''}</span>}
