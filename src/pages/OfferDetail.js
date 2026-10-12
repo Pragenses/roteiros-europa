@@ -4313,6 +4313,11 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                               onClick={() => window.open(`${window.location.pathname}${window.location.search}#hotels/link~${encodeURIComponent(`offer:${offerId}:${it.id}`)}`, '_blank')}
                               style={{ padding: '2px 6px', fontSize: 14, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 5, cursor: 'pointer', lineHeight: 1.2 }}>🏨</button>
                           )}
+                          {it.name && (
+                            <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([it.name, it.city].filter(Boolean).join(', '))}`}
+                              target="_blank" rel="noreferrer" title={`Ukázat na mapě Google: ${[it.name, it.city].filter(Boolean).join(', ')}`}
+                              style={{ padding: '2px 6px', fontSize: 14, background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 5, cursor: 'pointer', lineHeight: 1.2, textDecoration: 'none' }}>📍</a>
+                          )}
                         </div>
                         <div style={grp}>
                           <DateDMY dateKey={`df-${it.id}`} value={it.dateFrom || ''} colors={colors} onChange={onDateFrom} />
