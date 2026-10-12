@@ -10,7 +10,8 @@ import { computeOfferRows } from '../lib/offerRows';
 import { loadRatesDoc, effectiveRates } from '../lib/rates';
 import { allDeposits, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposits';
 import { FINAL_FIELDS, finalFor, hotelTotal, mealCandidates, countsCheck } from '../lib/depositCalc';
-import { saveFinalGroup, saveFinalHotel, addDepositRow } from '../lib/depositStore';
+import { saveFinalGroup, saveFinalHotel, addDepositRow, saveClientPrice } from '../lib/depositStore';
+import { clientTotal } from '../lib/clientPrice';
 import DepositRows from '../components/DepositRows';
 import { BOOKING_STATUS, statusStyle, displayStatus, setItemStatus, fmtStatusAt } from '../lib/bookingStatus';
 
@@ -104,18 +105,36 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
           potvrzeno {fmtDate(rz.confirmedAt)}{rz.confirmedBy ? ` – ${rz.confirmedBy}` : ''}
           {(() => { const n = (rz.history || []).filter(h => h.action === 'change').length; return n > 0 ? ` · prodaná verze změněna ${n}×, naposledy ${fmtDate(rz.changedAt)}${rz.changedBy ? ' – ' + rz.changedBy : ''}` : ''; })()}
         </div>
-        <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead><tr><th style={{ ...th, textAlign: 'left' }}>Skupina</th><th style={th}>DBL / os.</th><th style={th}>SNGL / os.</th></tr></thead>
-          <tbody>
-            {(sold.combinedRows || []).map(r => (
-              <tr key={r.pax}>
-                <td style={{ ...td, textAlign: 'left' }}>{r.pax} pax</td>
-                <td style={{ ...td, fontWeight: 700 }}>{fmtMoney(r.finalDbl)} €</td>
-                <td style={td}>{fmtMoney(r.finalSngl)} €</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {(() => {
+          const ct = clientTotal(offer);
+          const pick = (pax) => saveClientPrice(offerId, ['tierPax'], pax, `cena podle řádku ${pax}+${sold.focCount || 0}`).catch(e => alert('Uložení se nepovedlo: ' + (e.message || e)));
+          return (
+            <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr>
+                <th style={{ ...th, textAlign: 'left' }} title="Ze kterého řádku se počítá celková cena pro klienta">Počítat</th>
+                <th style={{ ...th, textAlign: 'left' }}>Skupina</th><th style={th}>DBL / os.</th><th style={th}>SNGL / os.</th>
+              </tr></thead>
+              <tbody>
+                {(sold.combinedRows || []).map(r => {
+                  const on = Number(ct.tierPax) === Number(r.pax);
+                  return (
+                    <tr key={r.pax} style={{ background: on ? '#ecfdf5' : 'transparent' }}>
+                      <td style={{ ...td, textAlign: 'left' }}>
+                        <label style={{ display: 'inline-flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
+                          <input type="radio" name={`tier-${offerId}`} checked={on} onChange={() => pick(r.pax)} />
+                          {Number(ct.suggested) === Number(r.pax) && <span style={{ fontSize: 10, color: '#166534', fontWeight: 700 }}>navrženo</span>}
+                        </label>
+                      </td>
+                      <td style={{ ...td, textAlign: 'left', fontWeight: on ? 700 : 400 }}>{r.pax}+{sold.focCount || 0}</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{fmtMoney(r.finalDbl)} €</td>
+                      <td style={td}>{fmtMoney(r.finalSngl)} €</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })()}
         {sold.showSplit && sold.split && (
           <div style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>
             Klient dostal ceny rozdělené podle měn:{' '}
@@ -129,6 +148,7 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
         <div style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>
           Marže {sold.margin}% · FOC {sold.focCount} ({String(sold.focType || 'dbl').toUpperCase()}). Změnit prodanou verzi jde v nabídce (zelená lišta nahoře).
         </div>
+        <ClientTotalBox offer={offer} offerId={offerId} colors={colors} />
       </div>
 
       {(() => {
@@ -326,6 +346,99 @@ function ServicesByKind({ offerId, colors, card, cnt, itemsCount, byKind, kindOr
         );
       })}
       {itemsCount === 0 && <div style={{ fontSize: 13, color: colors.muted }}>V nabídce nejsou žádné zaškrtnuté služby.</div>}
+    </div>
+  );
+}
+
+// ── Cena pro klienta celkem (lib/clientPrice.js) ──
+function MoneyInput({ value, onCommit, colors, width = 90, placeholder }) {
+  const [v, setV] = useState(value ?? '');
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setV(value ?? ''); }, [value, focus]);
+  return (
+    <input type="text" inputMode="decimal" value={v} placeholder={placeholder}
+      onFocus={() => setFocus(true)} onChange={e => setV(e.target.value.replace(/,/g, '.'))}
+      onBlur={() => { setFocus(false); if (String(v) !== String(value ?? '')) onCommit(v); }}
+      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+      style={{ width, padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 13, textAlign: 'right', fontFamily: 'inherit' }} />
+  );
+}
+function TextInput({ value, onCommit, colors, width = 220, placeholder }) {
+  const [v, setV] = useState(value ?? '');
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setV(value ?? ''); }, [value, focus]);
+  return (
+    <input type="text" value={v} placeholder={placeholder}
+      onFocus={() => setFocus(true)} onChange={e => setV(e.target.value)}
+      onBlur={() => { setFocus(false); if (String(v) !== String(value ?? '')) onCommit(v); }}
+      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+      style={{ width, padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, fontFamily: 'inherit' }} />
+  );
+}
+
+function ClientTotalBox({ offer, offerId, colors }) {
+  const [err, setErr] = useState('');
+  const [showLog, setShowLog] = useState(false);
+  const ct = clientTotal(offer);
+  const save = (segs, v, text) => { setErr(''); saveClientPrice(offerId, segs, v, text).catch(e => setErr('Uložení se nepovedlo: ' + (e.message || e))); };
+  const log = Array.isArray((offer.rzClient || {}).log) ? [...offer.rzClient.log].reverse() : [];
+  const fmtAt = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const row = { display: 'flex', gap: 12, fontSize: 13, padding: '2px 0' };
+  return (
+    <div style={{ marginTop: 12, border: '2px solid #16a34a', borderRadius: 10, padding: '10px 14px', background: '#f7fdf9' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#166534' }}>💶 Cena pro klienta celkem</div>
+        <span style={{ fontSize: 12, color: colors.muted }}>
+          z Konečných počtů: {ct.pax} klientů · {ct.foc} zdarma (FOC klienta, neplatí) · <b>platících {ct.paying}</b>
+          {ct.tierPax ? <> · počítáno z řádku <b>{ct.tierPax}+{ct.focCount || 0}</b></> : null}
+        </span>
+        <button onClick={() => setShowLog(v => !v)} style={{ marginLeft: 'auto', padding: '2px 9px', background: '#fff', color: colors.primary, border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+          {showLog ? '▾' : '▸'} Historie ({log.length})
+        </button>
+      </div>
+      {showLog && (
+        <div style={{ maxHeight: 160, overflowY: 'auto', border: `1px solid ${colors.border}`, borderRadius: 6, marginBottom: 8, background: '#fff' }}>
+          {log.length === 0 && <div style={{ padding: 6, fontSize: 12, color: colors.muted }}>Zatím žádné změny.</div>}
+          {log.map((h, i) => <div key={i} style={{ padding: '3px 8px', fontSize: 12, borderTop: i ? `1px solid ${colors.border}` : 'none' }}>{fmtAt(h.at)} · {h.by} · {h.text}</div>)}
+        </div>
+      )}
+      {ct.parts.map(p => (
+        <div key={p.cur} style={{ marginBottom: 6 }}>
+          {ct.parts.length > 1 && <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>Část v {p.cur}</div>}
+          {p.lines.map((l, i) => (
+            <div key={i} style={row}><span style={{ flex: 1 }}>{l.label}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(l.amount)} {p.cur}</span></div>
+          ))}
+          <div style={{ ...row, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ flex: 1, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              ruční úprava (+/−):
+              <TextInput colors={colors} value={p.adjNote} placeholder="za co — např. TRPL 1 pokoj, příplatek…"
+                onCommit={v => save(['parts', p.cur, 'adjNote'], v, `poznámka k úpravě (${p.cur}): ${v || '—'}`)} />
+            </span>
+            <MoneyInput colors={colors} value={p.adj ? String(p.adj) : ''} placeholder="0"
+              onCommit={v => save(['parts', p.cur, 'adj'], v, `ruční úprava (${p.cur}): ${v || '0'}`)} />
+            <span style={{ fontSize: 12 }}>{p.cur}</span>
+          </div>
+          <div style={{ ...row, borderTop: `1px solid ${colors.border}`, marginTop: 4, paddingTop: 4, fontWeight: 700, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ flex: 1 }}>celkem klient zaplatí{p.overridden ? <span style={{ fontWeight: 400, color: '#9a3412' }}> ✎ přepsáno (výpočet {fmtMoney(p.withAdj)} {p.cur})</span> : ''}</span>
+            <span style={{ fontSize: 16, color: '#166534' }}>{fmtMoney(p.total)} {p.cur}</span>
+          </div>
+          <div style={{ ...row, fontSize: 12, color: colors.muted, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ flex: 1, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              přepsat celkovou částku:
+              <TextInput colors={colors} value={p.overrideNote} width={180} placeholder="důvod"
+                onCommit={v => save(['parts', p.cur, 'overrideNote'], v, `důvod přepsání (${p.cur}): ${v || '—'}`)} />
+            </span>
+            <MoneyInput colors={colors} value={p.override} placeholder="nechat výpočet"
+              onCommit={v => save(['parts', p.cur, 'override'], v, v ? `celkem přepsáno (${p.cur}): ${v}` : `přepsání zrušeno (${p.cur})`)} />
+            <span>{p.cur}</span>
+          </div>
+        </div>
+      ))}
+      {ct.warnings.map((w, i) => <div key={i} style={{ fontSize: 12, color: '#b45309' }}>⚠ {w}</div>)}
+      {err && <div style={{ fontSize: 12, color: '#b91c1c' }}>❌ {err}</div>}
+      <div style={{ fontSize: 11, color: colors.muted, marginTop: 4 }}>
+        Jen cena pro klienta — z prodejní ceny, ne z našich nákladů. FOC od hotelů sem nepatří.
+      </div>
     </div>
   );
 }
