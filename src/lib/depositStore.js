@@ -113,3 +113,14 @@ export async function saveFinalHotel(offerId, offer, item, patch, logText) {
   if (text) args.push(new FieldPath('rzFinal', 'log'), arrayUnion({ at: now, by, where: [item.city, item.name].filter(Boolean).join(' – ') || 'hotel', text }));
   await updateDoc(ref(offerId), ...args);
 }
+
+// ── Cena pro klienta (offers/<id>.rzClient) — lib/clientPrice.js ──
+// `segs` = cesta uvnitř rzClient, např. ['tierPax'] nebo ['parts', 'EUR', 'adj'].
+export async function saveClientPrice(offerId, segs, value, logText) {
+  const now = new Date().toISOString();
+  const by = who();
+  const args = [new FieldPath('rzClient', ...segs.map(String)), value,
+    new FieldPath('rzClient', 'setAt'), now, new FieldPath('rzClient', 'setBy'), by];
+  if (logText) args.push(new FieldPath('rzClient', 'log'), arrayUnion({ at: now, by, text: logText }));
+  await updateDoc(ref(offerId), ...args);
+}
