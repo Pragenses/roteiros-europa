@@ -5,6 +5,7 @@ import { PEOPLE, personByCode, codeForEmail } from '../lib/people';
 import { strayNeedsAction, watchOption, watchStorno } from '../lib/hotelAlt';
 import { allDeposits, DEPOSIT_STYLE, SOON_DAYS } from '../lib/deposits';
 import { fmtMoney } from '../lib/realization';
+import { clientPlanAlerts, PLAN_STYLE } from '../lib/clientLedger';
 
 const STATUS_COLORS = {
   'confirmed': { bg: '#EAF3DE', color: '#27500A' },
@@ -174,10 +175,11 @@ const DASH_PERSON_KEY = 'dashPerson';
 // --- Pořadí sekcí -----------------------------------------------------------
 // Každý přihlášený má své pořadí: v databázi (settings/dashboardLayouts,
 // pole podle kódu osoby) a pro jistotu i v prohlížeči.
-const DEFAULT_SECTION_ORDER = ['stray', 'deposits', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
+const DEFAULT_SECTION_ORDER = ['stray', 'deposits', 'clientpay', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
 const SECTION_NAMES = {
   stray: 'Potvrzené hotely mimo výběr',
   deposits: 'Zálohy k zaplacení',
+  clientpay: 'Platby od klientů',
   metrics: 'Čísla', attention: 'Vyžaduje pozornost', wip: 'Rozpracované',
   notes: 'Poznámky a úkoly', departures: 'Upcoming departures', quick: 'Quick actions',
 };
@@ -190,7 +192,7 @@ const normalizeOrder = (saved) => {
   const unique = list.filter((id, i) => list.indexOf(id) === i);
   const missing = DEFAULT_SECTION_ORDER.filter(id => !unique.includes(id));
   // Upozornění (hotely mimo výběr, zálohy) přibudou nahoru, ostatní nové sekce na konec.
-  const TOP = ['stray', 'deposits'];
+  const TOP = ['stray', 'deposits', 'clientpay'];
   return [...missing.filter(id => TOP.includes(id)), ...unique, ...missing.filter(id => !TOP.includes(id))];
 };
 
@@ -240,6 +242,12 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
     try { return localStorage.getItem('dashDepCollapsed') === '1'; } catch (e) { return false; }
   });
   const [depShowNoDue, setDepShowNoDue] = useState(false);
+  // Platby od klientů podle plánu v Realizaci (po splatnosti, do 14 dní, bez splatnosti).
+  const [clientPay, setClientPay] = useState([]);
+  const [cpCollapsed, setCpCollapsed] = useState(() => {
+    try { return localStorage.getItem('dashCpCollapsed') === '1'; } catch (e) { return false; }
+  });
+  const toggleCp = () => setCpCollapsed(v => { const next = !v; try { localStorage.setItem('dashCpCollapsed', next ? '1' : '0'); } catch (e) {} return next; });
   const toggleDep = () => {
     setDepCollapsed(v => {
       const next = !v;
@@ -397,6 +405,16 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
         dTasks.sort((a, b) => a.due.localeCompare(b.due));
         setDepositTasks(dTasks);
         setDepositNoDue(dNoDue);
+
+        // Platby od klientů — jen pro vlastníky (finance jsou interní).
+        if (userRole === 'owner') {
+          const cl = cliSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          const cp = clientPlanAlerts(allOffers, cl, todayStr)
+            .filter(r => ['overdue', 'soon', 'nodue'].includes(r.status))
+            .map(r => ({ ...r, diff: r.due ? Math.round((new Date(r.due + 'T12:00:00') - new Date(todayStr + 'T12:00:00')) / 86400000) : null }));
+          cp.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+          setClientPay(cp);
+        }
 
         // Potvrzené, ale nezaškrtnuté a nezrušené hotely — ze VŠECH nabídek,
         // i odmítnutých a už převedených na zakázku (tam se alternativa
@@ -642,8 +660,14 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
     );
   };
 
+  const cpOver = clientPay.filter(r => r.status === 'overdue');
+  const cpSoon = clientPay.filter(r => r.status === 'soon');
+  const cpTotals = (list) => { const t = {}; list.forEach(r => { t[r.cur] = (t[r.cur] || 0) + r.missing; }); return Object.entries(t).map(([c, a]) => `${fmtMoney(a)} ${c}`).join(' · '); };
+  const dnyCp = (n) => `${n} ${n === 1 ? 'den' : n < 5 ? 'dny' : 'dní'}`;
+
   const SECTION_VISIBLE = {
     stray: strayHotels.length > 0,
+    clientpay: clientPay.length > 0,
     deposits: depositTasks.length > 0 || depositNoDue.length > 0,
     metrics: true, attention: hotelTasks.length > 0 || balanceTasks.length > 0,
     wip: !loading, notes: boardView.length > 0, departures: true, quick: true,
@@ -704,6 +728,34 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
               </div>
             )}
             {depShowNoDue && depositNoDue.map(d => <DepRow key={d.key} d={d} />)}
+          </div>
+        )}
+      </div>
+    ),
+    clientpay: (
+      <div style={{ background: '#F0FDF4', border: `2px solid ${cpOver.length ? '#b91c1c' : '#16a34a'}`, borderRadius: 10, padding: cpCollapsed ? '0.75rem 1.25rem' : '0.875rem 1.25rem', marginBottom: '1.25rem' }}>
+        <div onClick={toggleCp} title={cpCollapsed ? 'Rozbalit' : 'Sbalit'}
+          style={{ fontSize: 15, fontWeight: 700, color: '#14532d', marginBottom: cpCollapsed ? 0 : 8, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, width: 12 }}>{cpCollapsed ? '▸' : '▾'}</span>
+          <span>💰 Platby od klientů</span>
+          {cpOver.length > 0 && <span style={{ fontSize: 12, color: PLAN_STYLE.overdue.color, background: PLAN_STYLE.overdue.bg, borderRadius: 6, padding: '2px 8px' }}>⛔ {cpOver.length} po splatnosti · chybí {cpTotals(cpOver)}</span>}
+          {cpSoon.length > 0 && <span style={{ fontSize: 12, color: PLAN_STYLE.soon.color, background: PLAN_STYLE.soon.bg, borderRadius: 6, padding: '2px 8px' }}>⏳ {cpSoon.length} do 14 dní · {cpTotals(cpSoon)}</span>}
+        </div>
+        {!cpCollapsed && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
+            {clientPay.map(r => {
+              const ps = PLAN_STYLE[r.status];
+              const when = r.diff === null ? 'chybí splatnost' : r.diff < 0 ? `${dnyCp(-r.diff)} po splatnosti` : r.diff === 0 ? 'splatné DNES' : r.diff === 1 ? 'splatné zítra' : `splatné za ${dnyCp(r.diff)}`;
+              return (
+                <div key={r.offerId + r.rowId} onClick={() => navigate('realization-detail', { offerId: r.offerId })} title="Otevřít v Realizaci"
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '7px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13, borderLeft: `4px solid ${ps.color}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: ps.color, width: 150, flexShrink: 0 }}>{ps.icon} {when}</span>
+                  <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>chybí {fmtMoney(r.missing)} {r.cur}</span>
+                  <span style={{ fontWeight: 600 }}>{r.clientName}{r.note ? ` · ${r.note}` : ''}</span>
+                  <span style={{ color: colors.muted, fontSize: 12, marginLeft: 'auto' }}>{r.due ? `do ${r.due.split('-').reverse().join('.')} · ` : ''}{r.offerLabel}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

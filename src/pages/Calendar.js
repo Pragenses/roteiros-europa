@@ -5,6 +5,7 @@ import { PEOPLE } from '../lib/people';
 import { watchOption } from '../lib/hotelAlt';
 import { allDeposits } from '../lib/deposits';
 import { fmtMoney } from '../lib/realization';
+import { clientPlanAlerts } from '../lib/clientLedger';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const CLIENT_PALETTE = ['#E6F1FB','#FAEEDA','#EAF3DE','#EEEDFE','#FCEBEB','#F1EFE8','#FCF0E8','#E8F5F1','#F5E8F5','#E8EEF5'];
@@ -18,9 +19,10 @@ const FILTERS = [
   { key: 'storno',  icon: '✂',  label: '✂ Storno lhůty',     bg: '#E0F2FE', color: '#075985' },
   { key: 'alt',     icon: '⚠',  label: '⚠ Alternativy',      bg: '#FFF7ED', color: '#9a3412' },
   { key: 'deposit', icon: '💸', label: '💸 Zálohy',           bg: '#FDECEC', color: '#9f1239' },
+  { key: 'clientpay', icon: '💰', label: '💰 Platby klientů', bg: '#DCFCE7', color: '#14532d', ownerOnly: true },
   { key: 'task',    icon: '✅', label: '✅ Úkoly',            bg: '#EAF3DE', color: '#27500A' },
 ];
-const DEFAULT_FILTERS = { orders: true, offers: true, option: true, storno: true, alt: true, deposit: true, task: true, client: '', person: 'ALL' };
+const DEFAULT_FILTERS = { orders: true, offers: true, option: true, storno: true, alt: true, deposit: true, clientpay: true, task: true, client: '', person: 'ALL' };
 const FILTER_KEY = 'calFilters';
 
 const ymd = (d) => String(d || '').slice(0, 10);
@@ -79,6 +81,7 @@ export default function Calendar({ navigate, colors, userRole, userEmail }) {
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState(new Date().getFullYear());
   const [clientColors, setClientColors] = useState({});
+  const [clientsAll, setClientsAll] = useState([]);
   const [filters, setFilters] = useState(() => {
     try { return { ...DEFAULT_FILTERS, ...(JSON.parse(localStorage.getItem(FILTER_KEY) || 'null') || {}) }; }
     catch (e) { return { ...DEFAULT_FILTERS }; }
@@ -101,6 +104,11 @@ export default function Calendar({ navigate, colors, userRole, userEmail }) {
       if (userRole === 'limited') allOffers = allOffers.filter(o => (o.allowedUsers || []).includes(userEmail));
       setOrders(allOrders);
       setOffers(allOffers);
+      // Platby od klientů (plán v Realizaci) — jen pro vlastníky.
+      if (userRole === 'owner') {
+        try { const cs = await getDocs(collection(db, 'clients')); setClientsAll(cs.docs.map(d => ({ id: d.id, ...d.data() }))); }
+        catch (e) { console.warn('Klienti se nenačetli', e); }
+      }
       const cc = {};
       let idx = 0;
       allOrders.forEach(o => { if (o.clientName && !cc[o.clientName]) cc[o.clientName] = idx++ % CLIENT_PALETTE.length; });
@@ -126,7 +134,12 @@ export default function Calendar({ navigate, colors, userRole, userEmail }) {
     return d.getFullYear() === year && d.getMonth() === month;
   };
 
-  const { list: deadlines, noDate } = buildDeadlines(offers);
+  const { list: deadlinesBase, noDate } = buildDeadlines(offers);
+  // 💰 Platby od klientů podle plánu plateb (nezaplacené řádky s datem splatnosti).
+  const deadlines = userRole === 'owner' ? [...deadlinesBase, ...clientPlanAlerts(offers, clientsAll)
+    .filter(r => r.due)
+    .map(r => ({ offerId: r.offerId, offerLabel: r.offerLabel, clientName: r.clientName, kind: 'clientpay', date: r.due,
+      text: `Klient má poslat ${fmtMoney(r.missing)} ${r.cur}${r.note ? ` · ${r.note}` : ''}`, toRealization: true }))] : deadlinesBase;
   const visibleDeadline = (e) => filters[e.kind] && clientOk(e.clientName) && (e.kind !== 'task' || personOk(e.who));
 
   const getOrdersForMonth = (month) => !filters.orders ? [] :
@@ -161,7 +174,7 @@ export default function Calendar({ navigate, colors, userRole, userEmail }) {
     const isAlt = e.kind === 'alt';
     const person = e.who ? PEOPLE.find(p => p.code === e.who) : null;
     return (
-      <div key={key} onClick={() => openOffer(e.offerId, e.itemId)} title={e.clientName}
+      <div key={key} onClick={() => (e.toRealization ? navigate('realization-detail', { offerId: e.offerId }) : openOffer(e.offerId, e.itemId))} title={e.clientName}
         style={{ background: f.bg, color: f.color, fontSize: 11, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', lineHeight: 1.3,
                  border: overdue ? '2px solid #dc2626' : isAlt ? '2px solid #ea580c' : `1px solid ${f.color}33`, maxWidth: 320 }}>
         <div style={{ fontWeight: 700 }}>
@@ -197,7 +210,7 @@ export default function Calendar({ navigate, colors, userRole, userEmail }) {
       <div style={{ background: colors.white, border: `1px solid ${colors.border}`, borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1.25rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: colors.muted, marginRight: 4 }}>Zobrazit:</span>
-          {FILTERS.map(f => (
+          {FILTERS.filter(f => !f.ownerOnly || userRole === 'owner').map(f => (
             <button key={f.key} type="button" onClick={() => setFilter(f.key, !filters[f.key])} style={toggleStyle(filters[f.key], f)}>{f.label}</button>
           ))}
         </div>
