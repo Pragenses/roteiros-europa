@@ -18,6 +18,7 @@
 import { db, auth } from './firebase';
 import { doc, runTransaction, updateDoc, FieldPath, deleteField, arrayUnion } from 'firebase/firestore';
 import { codeForEmail } from './people';
+import { clientTotal as clientTotalFn } from './clientPrice';
 
 export const INCOMING_CHANNELS = [
   { value: '',        label: 'kam přišlo?' },
@@ -165,4 +166,28 @@ export async function savePlanRow(offerId, offer, id, patch, text) {
 }
 export async function deletePlanRow(offerId, id) {
   await updateDoc(offerRef(offerId), new FieldPath('rzClient', 'plan', String(id)), deleteField(), ...logArgs('řádek plánu plateb smazán'));
+}
+
+// ── Upozornění (Dashboard, Kalendář): řádky plánu plateb všech akcí v Realizaci ──
+// Vrací [{ offerId, offerLabel, clientName, note, amount, missing, cur, due, status }].
+export function clientPlanAlerts(offers, clients, today = new Date().toISOString().slice(0, 10)) {
+  const byId = {};
+  const byName = {};
+  (clients || []).forEach(c => { byId[c.id] = c; byName[norm(c.name)] = c; });
+  const out = [];
+  (offers || []).forEach(o => {
+    if (!(o.realization && o.realization.status === 'active')) return;
+    if (!planRows(o).length) return;
+    const client = byId[o.clientId] || byName[norm(o.clientName)] || null;
+    const ct = clientTotalFn(o);
+    const totals = Object.fromEntries(ct.parts.map(p => [p.cur, p.total]));
+    const received = receivedByCurrency(client ? groupAllocations(client, o).filter(a => !a.legacy) : []);
+    planStatus(o, totals, received, today).forEach(r => {
+      if (r.status === 'paid') return;
+      out.push({ offerId: o.id, offerLabel: [o.offerNumber, o.name].filter(Boolean).join(' · ') || '(bez názvu)',
+        clientName: o.clientName || (client && client.name) || '', note: r.note || '', amount: r.amount, missing: r.missing,
+        cur: r.cur, due: r.due, status: r.status, rowId: r.id });
+    });
+  });
+  return out;
 }
