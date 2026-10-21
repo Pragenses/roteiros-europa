@@ -16,6 +16,7 @@ import { depositSummary, DEPOSIT_STYLE, effectiveDeposits } from '../lib/deposit
 import DepositRows from '../components/DepositRows';
 import { BOOKING_STATUS, displayStatus, statusFields, statusMeta, fmtStatusAt, STATUS_FIELDS } from '../lib/bookingStatus';
 import { addDepositRow } from '../lib/depositStore';
+import { dragHasFiles, filesFromDrop, filesFromPaste } from '../lib/dropFiles';
 
 // Kdo se neozval 90 s (tep chodí každých 25 s), už v nabídce není.
 const PRESENCE_TIMEOUT_MS = 90 * 1000;
@@ -557,20 +558,27 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
   const [progress, setProgress] = React.useState(0);
   const [dragOver, setDragOver] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [queue, setQueue] = React.useState('');
   const inputRef = React.useRef(null);
 
-  const handleFile = async (file) => {
-    if (!file) return;
+  // Víc souborů najednou se nahrává postupně, jeden po druhém.
+  const handleFiles = async (list) => {
+    const files = Array.from(list || []).filter(Boolean);
+    if (!files.length) return;
     setError('');
-    setProgress(0);
     setUploading(true);
     try {
-      await onUpload(file, (pct) => setProgress(pct));
+      for (let i = 0; i < files.length; i++) {
+        setProgress(0);
+        setQueue(files.length > 1 ? ` (${i + 1}/${files.length})` : '');
+        await onUpload(files[i], (pct) => setProgress(pct));
+      }
     } catch (e) {
       setError(e.message || 'Nahrání selhalo');
       console.error('Attachment upload failed:', e);
     } finally {
       setUploading(false);
+      setQueue('');
     }
   };
 
@@ -581,13 +589,24 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
     ...(item.attachments || []),
   ];
 
+  // Celý sloupec s přílohami přijímá přetažené soubory, nejen malé políčko.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+    <div
+      onDragOver={e => { if (!dragHasFiles(e)) return; e.preventDefault(); if (!dragOver) setDragOver(true); }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
+      onDrop={async e => {
+        if (!dragHasFiles(e)) return;
+        e.preventDefault(); e.stopPropagation(); setDragOver(false);
+        if (uploading) return;
+        handleFiles(await filesFromDrop(e));
+      }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start', borderRadius: 6, padding: dragOver ? 3 : 0,
+        outline: dragOver ? `2px dashed ${colors.primary}` : 'none', background: dragOver ? '#eef5ff' : 'transparent' }}>
       {files.map((f, i) => (
         <div key={f.path || i} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <a href={f.url} target="_blank" rel="noopener noreferrer"
             title={f.name}
-            style={{ fontSize: 10, color: colors.primary, textDecoration: 'underline', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            style={{ fontSize: 10, color: colors.primary, textDecoration: 'underline', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             📎 {f.name || 'potvrzení'}
           </a>
           <button onClick={() => onRemove(f)} title="Odebrat přílohu"
@@ -595,25 +614,19 @@ const HotelAttachment = ({ item, onUpload, onRemove, colors }) => {
         </div>
       ))}
       <div
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={e => {
-          e.preventDefault(); setDragOver(false);
-          const file = e.dataTransfer.files && e.dataTransfer.files[0];
-          if (file) handleFile(file);
-        }}
         onClick={() => !uploading && inputRef.current && inputRef.current.click()}
-        title={error || 'Přetáhni sem email/PDF potvrzení, nebo klikni pro výběr souboru'}
+        title={error || 'Přetáhněte sem PDF, e-mail nebo obrázek (i víc najednou), nebo klikněte pro výběr souboru'}
         style={{
-          fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: uploading ? 'default' : 'pointer',
-          border: `1px dashed ${error ? colors.danger : dragOver ? colors.primary : colors.border}`,
-          background: dragOver ? '#f0f7ff' : 'transparent',
-          color: error ? colors.danger : colors.muted, whiteSpace: 'nowrap',
-          maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis',
+          fontSize: 11, padding: '5px 10px', borderRadius: 6, cursor: uploading ? 'default' : 'pointer',
+          border: `${dragOver ? 2 : 1}px dashed ${error ? colors.danger : dragOver ? colors.primary : '#b8a24a'}`,
+          background: dragOver ? '#dcebff' : '#fbf8ee',
+          color: error ? colors.danger : dragOver ? colors.primary : colors.muted, whiteSpace: 'nowrap', fontWeight: dragOver ? 700 : 400,
+          maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
-        {uploading ? `⏳ Nahrávám… ${progress}%` : error ? '⚠ ' + error : (files.length > 0 ? '📎 + Další příloha' : '📎 Potvrzení')}
-        <input ref={inputRef} type="file" style={{ display: 'none' }}
-          onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
+        {uploading ? `⏳ Nahrávám${queue}… ${progress}%` : error ? '⚠ ' + error
+          : dragOver ? '⬇ Pusťte soubor sem' : (files.length > 0 ? '📎 + Další příloha (přetáhnout / kliknout)' : '📎 Potvrzení — přetáhnout sem / kliknout')}
+        <input ref={inputRef} type="file" multiple style={{ display: 'none' }}
+          onChange={e => { const l = Array.from(e.target.files || []); e.target.value = ''; handleFiles(l); }} />
       </div>
     </div>
   );
@@ -1727,6 +1740,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   const [fillRows, setFillRows] = useState(null);
   const [fillLoading, setFillLoading] = useState(false);
   const [fillError, setFillError] = useState('');
+  const [fillDrag, setFillDrag] = useState(false);
   const [fillExtraCount, setFillExtraCount] = useState(0);
   const [fillInfo, setFillInfo] = useState('');
 
@@ -5180,8 +5194,22 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       {/* Okno "Vyplnit z textu" — jen u hotelových karet. Nic se nezapíše dřív,
           než uživatel v tabulce odklikne "Vyplnit označené". */}
       {fillItem && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 620, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onDragOver={e => { if (dragHasFiles(e)) e.preventDefault(); }}
+          onDrop={e => { if (dragHasFiles(e)) e.preventDefault(); }}>
+          {/* PDF nebo obrázek jde přetáhnout kamkoli do okna (dokud se nenačetl výsledek). */}
+          <div
+            onDragOver={e => { if (fillRows || fillLoading || !dragHasFiles(e)) return; e.preventDefault(); if (!fillDrag) setFillDrag(true); }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFillDrag(false); }}
+            onDrop={async e => {
+              if (!dragHasFiles(e)) return;
+              e.preventDefault(); e.stopPropagation(); setFillDrag(false);
+              if (fillRows || fillLoading) return;
+              const files = await filesFromDrop(e);
+              if (files[0]) handleFillFromFile(files[0]);
+            }}
+            style={{ background: fillDrag ? '#eef5ff' : '#fff', borderRadius: 12, padding: '1.5rem', width: 620, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+              outline: fillDrag ? `3px dashed ${colors.primary}` : 'none', outlineOffset: -8 }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: colors.text }}>📋 Vyplnit z textu</div>
             <div style={{ fontSize: 12, color: colors.muted, marginBottom: 12 }}>
               {[fillItem.city, fillItem.name].filter(Boolean).join(' – ') || 'hotelová karta'}
@@ -5190,7 +5218,12 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             {!fillRows && (
               <>
                 <textarea value={fillText} onChange={e => setFillText(e.target.value)} rows={7}
-                  placeholder="Sem vložte e-mail od hotelu…"
+                  onPaste={e => {
+                    // Vložený snímek obrazovky / PDF ze schránky → rovnou načíst.
+                    const files = filesFromPaste(e);
+                    if (files.length && !fillLoading) { e.preventDefault(); handleFillFromFile(files[0]); }
+                  }}
+                  placeholder={fillDrag ? '⬇ Pusťte soubor sem…' : 'Sem vložte e-mail od hotelu — nebo sem přetáhněte PDF či obrázek (i snímek obrazovky přes Cmd+V)…'}
                   style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button type="button" onClick={handleFillFromText} disabled={fillLoading}
