@@ -16,6 +16,7 @@ import { CURRENCIES } from '../lib/offerCalc';
 import { balances, groupAllocations, receivedByCurrency, planStatus, planRows, PLAN_KINDS, PLAN_STYLE,
   addAllocation, deleteAllocation, linkAllocation, addPlanRow, savePlanRow, deletePlanRow, channelLabel } from '../lib/clientLedger';
 import { getDocs, collection } from 'firebase/firestore';
+import { INVOICE_STATUS, compareInvoice, invoiceOf, saveInvoice, uploadInvoiceFile, removeInvoiceFile, paidDeposits } from '../lib/hotelInvoice';
 import DepositRows from '../components/DepositRows';
 import { BOOKING_STATUS, statusStyle, displayStatus, setItemStatus, fmtStatusAt } from '../lib/bookingStatus';
 
@@ -217,7 +218,7 @@ export default function RealizationDetail({ offerId, navigate, colors }) {
       <ServicesByKind offerId={offerId} colors={colors} card={card} cnt={cnt} itemsCount={items.length}
         byKind={byKind} kindOrder={kindOrder} nLate={nLate} nWarn={nWarn} nNoKind={nNoKind} nSuggest={nSuggest} rowsK={rowsK} />
 
-      <FinalCountsBlock offer={offer} offerId={offerId} colors={colors} card={card} />
+      <FinalCountsBlock offer={offer} offerId={offerId} colors={colors} card={card} rates={rates} />
 
       <ClientPaymentsBlock offer={offer} offerId={offerId} navigate={navigate} colors={colors} card={card} />
 
@@ -733,10 +734,11 @@ function CountsEditor({ values, onCommit, colors }) {
   );
 }
 
-function FinalCountsBlock({ offer, offerId, colors, card }) {
+function FinalCountsBlock({ offer, offerId, colors, card, rates }) {
   const [err, setErr] = useState('');
   const [showLog, setShowLog] = useState(false);
   const [openCalc, setOpenCalc] = useState({});
+  const [openInv, setOpenInv] = useState({});
   const f = offer.rzFinal || {};
   const g = f.group || {};
   const hotels = (offer.items || [])
@@ -766,6 +768,17 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
           {showLog ? '▾' : '▸'} Historie změn ({log.length})
         </button>
       </div>
+      {(() => {
+        const cnt = { ok: 0, okDiff: 0, mismatch: 0, waiting: 0 };
+        hotels.forEach(it => { const st = compareInvoice(it, offer, rates).status; cnt[st] = (cnt[st] || 0) + 1; });
+        return hotels.length > 0 ? (
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            🧾 Faktury hotelů: {['ok', 'okDiff', 'mismatch', 'waiting'].filter(k => cnt[k]).map(k => (
+              <span key={k} style={{ marginRight: 10, color: INVOICE_STATUS[k].color, fontWeight: 700 }}>{INVOICE_STATUS[k].icon} {cnt[k]} {INVOICE_STATUS[k].label}</span>
+            ))}
+          </div>
+        ) : null;
+      })()}
       <div style={{ fontSize: 12, color: colors.muted, marginBottom: 10 }}>
         Skutečně prodaná místa a pokoje. Počet klientů = všichni klienti včetně osob zdarma; tour leader a řidič jsou pokoje navíc. Z těchto čísel se počítají zálohy (a později cena pro klienta).
       </div>
@@ -816,7 +829,17 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
               </span>
               <button onClick={() => setOpenCalc(o => ({ ...o, [it.id]: !o[it.id] }))} title="Výpočet nákladů hotelu a nastavení (strava, FOC od hotelu)"
                 style={{ padding: '2px 8px', background: isOpen ? '#e0f2fe' : '#fff', color: '#0369a1', border: '1px solid #7dd3fc', borderRadius: 5, fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>ℹ</button>
+              {(() => {
+                const st = INVOICE_STATUS[compareInvoice(it, offer, rates).status] || INVOICE_STATUS.waiting;
+                return (
+                  <button onClick={() => setOpenInv(o => ({ ...o, [it.id]: !o[it.id] }))} title="Kontrola faktury od hotelu"
+                    style={{ padding: '2px 8px', background: openInv[it.id] ? '#fef3c7' : st.bg, color: st.color, border: `1px solid ${st.color}55`, borderRadius: 5, fontSize: 12, cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                    🧾 Faktura {st.icon}
+                  </button>
+                );
+              })()}
             </div>
+            {openInv[it.id] && <InvoicePanel offer={offer} offerId={offerId} item={it} colors={colors} rates={rates} />}
             {ff.exception && (
               <div style={{ marginTop: 6 }}>
                 <CountsEditor colors={colors} values={h} onCommit={(key, v) => run(() => saveFinalHotel(offerId, offer, it, { [key]: v }))} />
@@ -869,6 +892,119 @@ function FinalCountsBlock({ offer, offerId, colors, card }) {
         );
       })}
       {err && <div style={{ color: '#b91c1c', fontSize: 13, marginTop: 6 }}>❌ {err}</div>}
+    </div>
+  );
+}
+
+// ── 🧾 Kontrola faktury hotelu (lib/hotelInvoice.js) ──
+function InvoicePanel({ offer, offerId, item, colors, rates }) {
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(null);
+  const [showLog, setShowLog] = useState(false);
+  const c = compareInvoice(item, offer, rates);
+  const inv = invoiceOf(offer, item.id);
+  const cur = c.exp.currency;
+  const save = (segs, v, text) => { setErr(''); return saveInvoice(offerId, item.id, segs, v, text).catch(e => setErr('Uložení se nepovedlo: ' + (e.message || e))); };
+  const paid = paidDeposits(item, offer);
+  const rest = c.hasTotal ? Math.round((c.totalConv - paid) * 100) / 100 : null;
+  const sel = { padding: '3px 6px', border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 12, fontFamily: 'inherit', background: '#fff' };
+  const td = { padding: '3px 8px', borderTop: `1px solid ${colors.border}`, fontSize: 12, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+  const fmtV = (r, v) => (v === null || v === undefined ? '' : r.money ? fmtMoney(v) : String(v));
+  const fmtAt = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const log = Array.isArray(inv.log) ? [...inv.log].reverse() : [];
+  const onFile = async (file) => {
+    if (!file) return;
+    setBusy(true); setErr(''); setProg(0);
+    try { await uploadInvoiceFile(offerId, offer, item.id, file, setProg); }
+    catch (e) { setErr('Nahrání se nepovedlo: ' + (e.message || e)); }
+    setBusy(false); setProg(null);
+  };
+  const addRest = async () => {
+    if (!(rest > 0)) return;
+    if (!window.confirm(`Přidat do záloh hotelu doplatek ${fmtMoney(rest)} ${cur}?`)) return;
+    try { await addDepositRow(offerId, offer, item, 'Realizace', { kind: 'fixed', amount: String(rest), amountFrom: 'manual' }); }
+    catch (e) { setErr('Doplatek se nepodařilo přidat: ' + (e.message || e)); }
+  };
+  return (
+    <div style={{ marginTop: 8, fontSize: 12, background: '#fffdf5', border: '1px solid #fcd34d', borderRadius: 6, padding: '8px 10px' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+        <b>🧾 Faktura hotelu</b>
+        <select value={inv.status || c.suggested} onChange={e => save(['status'], e.target.value, `stav: ${INVOICE_STATUS[e.target.value].label}`)}
+          style={{ ...sel, fontWeight: 700, color: INVOICE_STATUS[c.status].color, background: INVOICE_STATUS[c.status].bg }}>
+          {Object.entries(INVOICE_STATUS).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+        </select>
+        {!inv.status && c.hasTotal && <span style={{ color: colors.muted }}>(navrženo podle porovnání — potvrďte výběrem)</span>}
+        <span style={{ marginLeft: 8 }}>částka z faktury:</span>
+        <BlurText colors={colors} numeric width={100} value={inv.total} placeholder="celkem" onCommit={v => save(['total'], v, `částka z faktury: ${v || '—'}`)} />
+        <select value={c.invCur} onChange={e => save(['currency'], e.target.value, `měna faktury: ${e.target.value}`)} style={sel}>
+          {CURRENCIES.map(x => <option key={x} value={x}>{x}</option>)}
+        </select>
+        {!c.sameCur && <span style={{ color: '#9a3412' }}>⚠ faktura v {c.invCur}, karta v {cur} — porovnání přes kurz z Nastavení je orientační{!c.convOk ? ' (kurz chybí!)' : ''}</span>}
+      </div>
+
+      <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 760 }}>
+        <thead><tr>
+          <th style={{ ...td, textAlign: 'left', borderTop: 'none', color: colors.muted }}></th>
+          <th style={{ ...td, borderTop: 'none', color: colors.muted }}>podle nás</th>
+          <th style={{ ...td, borderTop: 'none', color: colors.muted }}>podle faktury{!c.sameCur ? ` (${c.invCur})` : ''}</th>
+          <th style={{ ...td, borderTop: 'none', color: colors.muted }}>rozdíl{!c.sameCur ? ` (v ${cur})` : ''}</th>
+        </tr></thead>
+        <tbody>
+          {c.rows.filter(r => r.key !== 'pTrpl' || r.ours || r.theirsRaw !== null).map(r => (
+            <tr key={r.key} style={{ background: r.bad ? '#fee2e2' : 'transparent' }}>
+              <td style={{ ...td, textAlign: 'left' }}>{r.label}</td>
+              <td style={td}>{fmtV(r, r.ours)}</td>
+              <td style={td}>
+                <BlurText colors={colors} numeric width={90} value={(inv.lines || {})[r.key]} placeholder="—"
+                  onCommit={v => save(['lines', r.key], v, `faktura – ${r.label}: ${v || '—'}`)} />
+              </td>
+              <td style={{ ...td, fontWeight: r.bad ? 700 : 400, color: r.bad ? '#b91c1c' : colors.muted }}>{r.diff === null ? '' : `${r.diff > 0 ? '+' : ''}${fmtV(r, r.diff)}`}</td>
+            </tr>
+          ))}
+          <tr style={{ fontWeight: 700, background: c.hasTotal && Math.abs(c.diff) >= 1 ? '#fee2e2' : c.hasTotal ? '#e8f5e9' : 'transparent' }}>
+            <td style={{ ...td, textAlign: 'left' }}>CELKEM</td>
+            <td style={td}>{fmtMoney(c.exp.total)} {cur}</td>
+            <td style={td}>{c.hasTotal ? `${fmtMoney(c.totalRaw)} ${c.invCur}` : '—'}{c.hasTotal && !c.sameCur ? ` ≈ ${fmtMoney(c.totalConv)} ${cur}` : ''}</td>
+            <td style={{ ...td, color: c.hasTotal && Math.abs(c.diff) >= 1 ? '#b91c1c' : '#27500A' }}>{c.hasTotal ? (Math.abs(c.diff) < 1 ? '✓ sedí' : `${c.diff > 0 ? '+' : ''}${fmtMoney(c.diff)} ${cur}`) : ''}</td>
+          </tr>
+        </tbody>
+      </table>
+      {c.hints.map((h, i) => <div key={i} style={{ color: '#b91c1c', marginTop: 2 }}>⚠ {h}</div>)}
+      {c.exp.warnings.map((w, i) => <div key={'w' + i} style={{ color: '#b45309', marginTop: 2 }}>⚠ {w}</div>)}
+      <div style={{ color: colors.muted, marginTop: 4 }}>Stačí zadat celkovou částku. Řádky doplňte, když rozdíl nesedí — chyba se ukáže u konkrétního řádku. FOC zadejte jako kladné číslo (kolik hotel odečetl).</div>
+
+      {c.hasTotal && (
+        <div style={{ marginTop: 6, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>Zaplacené zálohy: <b>{fmtMoney(paid)} {cur}</b> · zbývá doplatit: <b style={{ color: rest > 0 ? '#9a3412' : '#27500A' }}>{fmtMoney(rest)} {cur}</b>{!c.sameCur ? ' (orientačně)' : ''}</span>
+          {rest > 0 && <button onClick={addRest} style={{ ...sel, cursor: 'pointer', color: colors.primary }}>+ přidat doplatek do záloh</button>}
+        </div>
+      )}
+
+      <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>Poznámka / reklamace:</span>
+        <BlurText colors={colors} width={360} value={inv.note} placeholder="např. reklamováno 21.10., čekáme na opravu" onCommit={v => save(['note'], v, `poznámka: ${v || '—'}`)} />
+      </div>
+      <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>Soubor faktury:</span>
+        {(inv.files || []).map((f, i) => (
+          <span key={i} style={{ display: 'inline-flex', gap: 4, alignItems: 'center', background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 5, padding: '1px 6px' }}>
+            📎 <a href={f.url} target="_blank" rel="noreferrer">{f.name}</a>
+            <button onClick={() => { if (window.confirm('Odebrat soubor faktury?')) removeInvoiceFile(offerId, offer, item.id, f).catch(e => setErr(String(e.message || e))); }}
+              style={{ border: 'none', background: 'none', color: '#b91c1c', cursor: 'pointer' }}>✕</button>
+          </span>
+        ))}
+        <label style={{ ...sel, cursor: busy ? 'default' : 'pointer', color: colors.primary }}>
+          {prog !== null ? `nahrávám ${prog} %` : '+ nahrát PDF / obrázek'}
+          <input type="file" accept=".pdf,image/*" disabled={busy} style={{ display: 'none' }} onChange={e => { onFile(e.target.files[0]); e.target.value = ''; }} />
+        </label>
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <span onClick={() => setShowLog(v => !v)} style={{ cursor: 'pointer', color: colors.primary, textDecoration: 'underline' }}>{showLog ? '▾' : '▸'} Historie ({log.length})</span>
+        {inv.setAt && <span style={{ color: colors.muted }}> · naposledy {fmtAt(inv.setAt)}{inv.setBy ? ` – ${inv.setBy}` : ''}</span>}
+        {showLog && log.map((h, i) => <div key={i} style={{ color: colors.muted }}>{fmtAt(h.at)} · {h.by} · {h.text}</div>)}
+      </div>
+      {err && <div style={{ color: '#b91c1c', marginTop: 4 }}>❌ {err}</div>}
     </div>
   );
 }

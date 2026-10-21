@@ -6,6 +6,7 @@ import { strayNeedsAction, watchOption, watchStorno } from '../lib/hotelAlt';
 import { allDeposits, DEPOSIT_STYLE, SOON_DAYS } from '../lib/deposits';
 import { fmtMoney } from '../lib/realization';
 import { clientPlanAlerts, PLAN_STYLE } from '../lib/clientLedger';
+import { invoiceAlerts } from '../lib/hotelInvoice';
 
 const STATUS_COLORS = {
   'confirmed': { bg: '#EAF3DE', color: '#27500A' },
@@ -175,11 +176,12 @@ const DASH_PERSON_KEY = 'dashPerson';
 // --- Pořadí sekcí -----------------------------------------------------------
 // Každý přihlášený má své pořadí: v databázi (settings/dashboardLayouts,
 // pole podle kódu osoby) a pro jistotu i v prohlížeči.
-const DEFAULT_SECTION_ORDER = ['stray', 'deposits', 'clientpay', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
+const DEFAULT_SECTION_ORDER = ['stray', 'deposits', 'clientpay', 'invoices', 'metrics', 'attention', 'wip', 'notes', 'departures', 'quick'];
 const SECTION_NAMES = {
   stray: 'Potvrzené hotely mimo výběr',
   deposits: 'Zálohy k zaplacení',
   clientpay: 'Platby od klientů',
+  invoices: 'Faktury hotelů',
   metrics: 'Čísla', attention: 'Vyžaduje pozornost', wip: 'Rozpracované',
   notes: 'Poznámky a úkoly', departures: 'Upcoming departures', quick: 'Quick actions',
 };
@@ -192,7 +194,7 @@ const normalizeOrder = (saved) => {
   const unique = list.filter((id, i) => list.indexOf(id) === i);
   const missing = DEFAULT_SECTION_ORDER.filter(id => !unique.includes(id));
   // Upozornění (hotely mimo výběr, zálohy) přibudou nahoru, ostatní nové sekce na konec.
-  const TOP = ['stray', 'deposits', 'clientpay'];
+  const TOP = ['stray', 'deposits', 'clientpay', 'invoices'];
   return [...missing.filter(id => TOP.includes(id)), ...unique, ...missing.filter(id => !TOP.includes(id))];
 };
 
@@ -244,6 +246,7 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const [depShowNoDue, setDepShowNoDue] = useState(false);
   // Platby od klientů podle plánu v Realizaci (po splatnosti, do 14 dní, bez splatnosti).
   const [clientPay, setClientPay] = useState([]);
+  const [invAlerts, setInvAlerts] = useState([]);
   const [cpCollapsed, setCpCollapsed] = useState(() => {
     try { return localStorage.getItem('dashCpCollapsed') === '1'; } catch (e) { return false; }
   });
@@ -414,6 +417,8 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
             .map(r => ({ ...r, diff: r.due ? Math.round((new Date(r.due + 'T12:00:00') - new Date(todayStr + 'T12:00:00')) / 86400000) : null }));
           cp.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
           setClientPay(cp);
+          // Faktury hotelů: nesedí, nebo hotel už proběhl a faktura nepřišla.
+          setInvAlerts(invoiceAlerts(allOffers, todayStr).sort((a, b) => (a.kind === b.kind ? String(a.since || '').localeCompare(String(b.since || '')) : a.kind === 'mismatch' ? -1 : 1)));
         }
 
         // Potvrzené, ale nezaškrtnuté a nezrušené hotely — ze VŠECH nabídek,
@@ -668,6 +673,7 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
   const SECTION_VISIBLE = {
     stray: strayHotels.length > 0,
     clientpay: clientPay.length > 0,
+    invoices: invAlerts.length > 0,
     deposits: depositTasks.length > 0 || depositNoDue.length > 0,
     metrics: true, attention: hotelTasks.length > 0 || balanceTasks.length > 0,
     wip: !loading, notes: boardView.length > 0, departures: true, quick: true,
@@ -730,6 +736,27 @@ export default function Dashboard({ navigate, colors, userRole, userEmail }) {
             {depShowNoDue && depositNoDue.map(d => <DepRow key={d.key} d={d} />)}
           </div>
         )}
+      </div>
+    ),
+    invoices: (
+      <div style={{ background: '#FFFBEB', border: `2px solid ${invAlerts.some(a => a.kind === 'mismatch') ? '#b91c1c' : '#d97706'}`, borderRadius: 10, padding: '0.875rem 1.25rem', marginBottom: '1.25rem' }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#78350f', marginBottom: 8, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
+          <span>🧾 Faktury hotelů</span>
+          {invAlerts.filter(a => a.kind === 'mismatch').length > 0 && <span style={{ fontSize: 12, color: '#b91c1c', background: '#fee2e2', borderRadius: 6, padding: '2px 8px' }}>⚠ {invAlerts.filter(a => a.kind === 'mismatch').length} nesedí</span>}
+          {invAlerts.filter(a => a.kind === 'missing').length > 0 && <span style={{ fontSize: 12, color: '#9a3412', background: '#ffedd5', borderRadius: 6, padding: '2px 8px' }}>⏳ {invAlerts.filter(a => a.kind === 'missing').length} po odjezdu bez faktury</span>}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 260, overflowY: 'auto', paddingRight: 4 }}>
+          {invAlerts.map(a => (
+            <div key={a.offerId + a.itemId} onClick={() => navigate('realization-detail', { offerId: a.offerId })} title="Otevřít v Realizaci"
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', padding: '7px 10px', background: colors.white, borderRadius: 7, cursor: 'pointer', fontSize: 13, borderLeft: `4px solid ${a.kind === 'mismatch' ? '#b91c1c' : '#d97706'}` }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: a.kind === 'mismatch' ? '#b91c1c' : '#9a3412', width: 170, flexShrink: 0 }}>
+                {a.kind === 'mismatch' ? '⚠ nesedí / reklamace' : `⏳ bez faktury od ${a.since.split('-').reverse().join('.')}`}
+              </span>
+              <span style={{ fontWeight: 600 }}>{a.hotel}</span>
+              <span style={{ color: colors.muted, fontSize: 12, marginLeft: 'auto' }}>{a.offerLabel}{a.clientName ? ` · ${a.clientName}` : ''}</span>
+            </div>
+          ))}
+        </div>
       </div>
     ),
     clientpay: (
