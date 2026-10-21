@@ -3,7 +3,7 @@ import { db, auth, storage } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { codeForEmail } from '../lib/people';
-import { readImportFile, assembleOffer, excelTextFor } from '../lib/importRead';
+import { readImportFile, assembleOffer, sourceTextFor } from '../lib/importRead';
 import { computeDraft, checkItem, checkFinal } from '../lib/importCheck';
 
 // Import starých akcí — KROK 1: importní složky.
@@ -591,9 +591,16 @@ function draftFromResult(r, clients) {
       focType: h.focType === 'sngl' ? 'sngl' : 'dbl',
     },
     items: (r.items || []).map(it => ({ ...it, _key: newKey(), enabled: it.enabled !== false })),
-    soldPrices: (r.soldPrices || []).map(p => ({ pax: str(p.pax), finalDbl: str(p.finalDbl), finalSngl: str(p.finalSngl), currency: str(p.currency) || 'EUR', sourceFile: str(p.sourceFile) })),
+    soldPrices: (r.soldPrices || []).map(soldRow),
+    priceVariants: (r.priceVariants || []).filter(v => v && (v.prices || []).length).map((v, i) => ({
+      id: str(v.id) || String.fromCharCode(65 + i), label: str(v.label), meaning: str(v.meaning), sourceFile: str(v.sourceFile),
+      prices: (v.prices || []).map(p => soldRow({ ...p, sourceFile: v.sourceFile })),
+    })),
+    soldVariant: str(r.soldVariant),
+    soldVariantReason: str(r.soldVariantReason),
   };
 }
+const soldRow = (p) => ({ pax: str(p.pax), finalDbl: str(p.finalDbl), finalSngl: str(p.finalSngl), currency: str(p.currency) || 'EUR', sourceFile: str(p.sourceFile) });
 
 function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors, box, btn }) {
   const [asm, setAsm] = useState(null);
@@ -656,15 +663,18 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
     if (asm?.editedAt && !window.confirm('Nové sestavení přepíše vaše úpravy v návrhu. Pokračovat?')) return;
     setBusy(true);
     try {
-      setStep('Načítám kalkulace z Excelu…');
-      const excelTexts = [];
-      for (const f of okFiles.filter(x => x.kind === 'excel')) {
-        excelTexts.push({ fileName: f.name, text: await excelTextFor(f) });
+      setStep('Načítám původní texty (Excel, Word, e-maily)…');
+      const sourceTexts = [];
+      for (const f of okFiles) {
+        const text = await sourceTextFor(f);
+        if (text && text.trim()) sourceTexts.push({ fileName: f.name, kind: f.kind, text });
       }
-      setStep(`Claude sestavuje nabídku z ${okFiles.length} podkladů… (může trvat 1–3 minuty)`);
+      const waitMsg = `Claude sestavuje nabídku z ${okFiles.length} podkladů… (může trvat 2–5 minut)`;
+      setStep(waitMsg);
       const { result, usage } = await assembleOffer({
         reads: okFiles.map(f => ({ fileName: f.name, kind: f.kind, result: reads[f.id].result })),
-        excelTexts, clientNames: clients.map(c => c.name),
+        sourceTexts, clientNames: clients.map(c => c.name),
+        onProgress: (n) => setStep(`${waitMsg} · napsáno ${Math.round(n / 1000)} tis. znaků`),
       });
       await setDoc(asmRef, {
         status: 'ok', result, error: '', fileIds: okFiles.map(f => f.id),
@@ -675,7 +685,7 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
     } catch (err) {
       const msg = err.code === 'download-blocked' ? 'Prohlížeč nedovolil stáhnout Excel z úložiště.' : (err.message || String(err));
       try {
-        await setDoc(asmRef, { ...(asm || {}), status: 'error', error: msg });
+        await setDoc(asmRef, { ...(asm || {}), status: 'error', error: msg, errorAt: new Date().toISOString(), errorBy: auth.currentUser?.email || '' });
       } catch (e) { alert('Sestavení selhalo: ' + msg); }
     }
     setBusy(false);
@@ -695,7 +705,16 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
   const checks = draft ? draft.items.map(it => checkItem(it, calc)) : [];
   const finals = draft ? checkFinal(calc, draft.soldPrices) : [];
   const diffCount = checks.filter(c => c.status === 'diff').length;
-  const finalBad = finals.filter(f => f.missing || !f.okDbl || f.okSngl === false).length;
+  const finalBad = finals.filter(f => f.missing || f.bad).length;
+  const roundedList = finals.filter(f => !f.missing && !f.bad && (f.roundedDbl || f.roundedSngl));
+  const roundedMax = roundedList.reduce((m, f) => Math.max(m, f.roundedDbl ? f.expDbl - f.gotDbl : 0, f.roundedSngl ? f.expSngl - f.gotSngl : 0), 0);
+  const variants = (draft && draft.priceVariants) || [];
+  const chooseVariant = (id) => {
+    const v = variants.find(x => x.id === id);
+    if (!v) return;
+    if (!window.confirm(`Prodaná varianta: „${v.label || v.id}". Přepsat tabulku prodaných cen jejími cenami?\n\nKarty, které do této varianty nepatří (např. doprava), pak zaškrtněte / odškrtněte ve sloupci „V kalk.".`)) return;
+    commit({ ...draft, soldVariant: id, soldPrices: v.prices.map(p => ({ ...p })) });
+  };
   const allGood = draft && diffCount === 0 && finals.length > 0 && finalBad === 0;
 
   const setHeader = (k, v) => setDraft(d => ({ ...d, header: { ...d.header, [k]: v } }));
@@ -729,7 +748,10 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
       </div>
 
       {asm?.status === 'error' && (
-        <div style={{ ...warnBox, background: '#fdf3f3', color: colors.danger }}>⚠ Sestavení selhalo: {asm.error}</div>
+        <div style={{ ...warnBox, background: '#fdf3f3', color: colors.danger }}>
+          ⚠ Sestavení{asm.errorAt ? ` ${fmtWhen(asm.errorAt)} (${who(asm.errorBy)})` : ''} selhalo: {asm.error}
+          {r && <div style={{ fontSize: 12, marginTop: 4 }}>Níže zůstává předchozí návrh ze dne {fmtWhen(asm.createdAt)}.</div>}
+        </div>
       )}
 
       {r && draft && (
@@ -739,7 +761,7 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
           {/* Souhrn kontroly */}
           <div style={{ ...warnBox, fontSize: 14, background: allGood ? '#EAF3DE' : '#FCEBEB', color: allGood ? '#27500A' : '#791F1F' }}>
             {allGood
-              ? <b>✓ Vše sedí na cent — karty i konečné ceny odpovídají prodané kalkulaci.</b>
+              ? <b>✓ Vše sedí — karty i konečné ceny odpovídají prodané kalkulaci{roundedList.length ? ` (${roundedList.length} ${roundedList.length === 1 ? 'cena je' : roundedList.length < 5 ? 'ceny jsou' : 'cen je'} pro klienta zaokrouhleno nahoru, nejvýš o ${fmt2(roundedMax)})` : ' na cent'}.</b>
               : <b>⚠ Ještě nesedí: {diffCount > 0 ? `${diffCount} ${diffCount === 1 ? 'karta' : diffCount < 5 ? 'karty' : 'karet'} s rozdílem` : ''}{diffCount > 0 && finalBad > 0 ? ' · ' : ''}{finalBad > 0 ? `${finalBad} ${finalBad === 1 ? 'konečná cena' : 'konečné ceny'} s rozdílem` : ''}{finals.length === 0 ? 'chybí prodané ceny k porovnání' : ''}</b>}
             {calc && calc.nonEur.length > 0 && (
               <div style={{ fontSize: 12, marginTop: 4 }}>Pozor: návrh obsahuje měny {calc.nonEur.join(', ')} — konečné ceny se počítají aktuálním kurzem, takže na cent sedět nemusí. Karty se kontrolují v jejich měně.</div>
@@ -875,6 +897,31 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
             </table>
           </div>
 
+          {/* Varianty cen v podkladech */}
+          {variants.length > 0 && (
+            <div style={{ ...warnBox, background: '#faf8f4', color: colors.text || '#222', border: `1px solid ${colors.border}` }}>
+              <b style={{ color: colors.primary }}>Varianty cen v podkladech — která se prodala?</b>
+              {filled(draft.soldVariantReason) && (
+                <div style={{ fontSize: 12, marginTop: 4, color: /^nejist/i.test(draft.soldVariantReason) ? '#854F0B' : colors.muted }}>
+                  {/^nejist/i.test(draft.soldVariantReason) ? '⚠ ' : ''}Claude: {draft.soldVariantReason}
+                </div>
+              )}
+              {variants.map(v => (
+                <label key={v.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 8, cursor: 'pointer' }}>
+                  <input type="radio" name={`sold-${folder.id}`} checked={draft.soldVariant === v.id} onChange={() => chooseVariant(v.id)} style={{ marginTop: 3 }} />
+                  <span style={{ fontSize: 12 }}>
+                    <b>{v.label || `Varianta ${v.id}`}</b>{draft.soldVariant === v.id && <span style={{ color: '#3B6D11' }}> — prodaná</span>}
+                    {filled(v.meaning) && <span style={{ display: 'block' }}>{v.meaning}</span>}
+                    <span style={{ display: 'block', color: colors.muted }}>
+                      {v.prices.map(p => `${p.pax} os.: ${p.finalDbl}${filled(p.finalSngl) ? ` / SGL ${p.finalSngl}` : ''}`).join(' · ')} {v.prices[0]?.currency || 'EUR'}
+                      {filled(v.sourceFile) && ` (${v.sourceFile})`}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
           {/* Konečné ceny */}
           <b style={{ fontSize: 13, color: colors.primary }}>Konečné ceny na osobu — aplikace vs. prodáno</b>
           <div style={{ overflowX: 'auto', margin: '4px 0 14px' }}>
@@ -885,16 +932,19 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
               </tr></thead>
               <tbody>{draft.soldPrices.map((p, i) => {
                 const f = finals[i] || {};
-                const bad = f.missing || f.okDbl === false || f.okSngl === false;
+                const bad = f.missing || f.bad;
+                const rounded = !bad && (f.roundedDbl || f.roundedSngl);
                 return (
-                  <tr key={i} style={{ background: bad ? '#FDF3F3' : '#F4F9EE' }}>
+                  <tr key={i} style={{ background: bad ? '#FDF3F3' : rounded ? '#FBF6EA' : '#F4F9EE' }}>
                     <td style={cell}><b>{p.pax}</b></td>
                     <td style={cell}><input style={inp(80)} value={p.finalDbl} onChange={e => setSold(i, { finalDbl: e.target.value })} onBlur={blurSave} /></td>
                     <td style={cell}>{f.missing ? <span style={{ color: '#791F1F' }}>varianta chybí v „Varianty osob"</span> : fmt2(f.gotDbl)}</td>
                     <td style={cell}>{f.missing ? '' : fmt2(f.gotDbl - f.expDbl)}</td>
                     <td style={cell}><input style={inp(80)} value={p.finalSngl} onChange={e => setSold(i, { finalSngl: e.target.value })} onBlur={blurSave} /></td>
                     <td style={cell}>{f.missing ? '' : fmt2(f.gotSngl)}</td>
-                    <td style={cell}>{bad ? <span style={{ color: '#791F1F' }}>⚠</span> : <span style={{ color: '#3B6D11' }}>✓</span>}</td>
+                    <td style={cell}>{bad ? <span style={{ color: '#791F1F' }}>⚠</span>
+                      : rounded ? <span style={{ color: '#854F0B' }} title="Prodaná cena je výpočet zaokrouhlený nahoru">≈ zaokrouhleno</span>
+                      : <span style={{ color: '#3B6D11' }}>✓</span>}</td>
                   </tr>
                 );
               })}</tbody>
