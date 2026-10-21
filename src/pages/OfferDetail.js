@@ -1741,6 +1741,9 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
   const [fillLoading, setFillLoading] = useState(false);
   const [fillError, setFillError] = useState('');
   const [fillDrag, setFillDrag] = useState(false);
+  // Soubor načtený ve „Vyplnit z textu“ se po vyplnění uloží i do příloh karty.
+  const [fillFile, setFillFile] = useState(null);
+  const [fillAttach, setFillAttach] = useState(true);
   const [fillExtraCount, setFillExtraCount] = useState(0);
   const [fillInfo, setFillInfo] = useState('');
 
@@ -2333,6 +2336,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const openFillModal = (item) => {
     setFillItem(item);
+    setFillFile(null);
     setFillText('');
     setFillRows(null);
     setFillError('');
@@ -2342,6 +2346,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const closeFillModal = () => {
     setFillItem(null);
+    setFillFile(null);
     setFillText('');
     setFillRows(null);
     setFillError('');
@@ -2373,6 +2378,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const handleFillFromText = async () => {
     if (!fillText.trim()) { setFillError('Nejdřív vložte text.'); return; }
+    // Text e-mailu jde volitelně uložit do příloh jako textový soubor (výchozí: ne).
+    {
+      const hotel = String((fillItem && fillItem.name) || 'hotel').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 40);
+      const now = new Date();
+      const head = `E-mail vložený do „Vyplnit z textu“ — ${now.toLocaleString('cs-CZ')}\nKarta: ${[fillItem && fillItem.city, fillItem && fillItem.name].filter(Boolean).join(' – ')}\n\n`;
+      const tf = new File([head + fillText], `email_${hotel}_${now.toISOString().slice(0, 10)}.txt`, { type: 'text/plain;charset=utf-8' });
+      tf.isEmailText = true;
+      setFillFile(tf);
+      setFillAttach(false);
+    }
     setFillError('');
     setFillLoading(true);
     try {
@@ -2389,6 +2404,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
     if (file.size > 10000000) { setFillError('Soubor je příliš velký (max. asi 10 MB).'); return; }
     setFillError('');
     setFillLoading(true);
+    // Snímek obrazovky ze schránky má obecný název („image.png“) — dostane srozumitelný.
+    let named = file;
+    if (!file.name || /^(image|screenshot|clipboard|blob|attachment|priloha)(\.\w+)?$/i.test(file.name)) {
+      const ext = ((file.type || '').split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const hotel = String((fillItem && fillItem.name) || 'hotel').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 40);
+      named = new File([file], `potvrzeni_${hotel}_${new Date().toISOString().slice(0, 10)}.${ext}`, { type: file.type });
+    }
+    const already = fillItem && [...((itemsRef.current.find(x => x.id === fillItem.id) || fillItem).attachments || [])].some(a => a.name === named.name);
+    setFillFile(named);
+    setFillAttach(!already);
     try {
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -2412,9 +2437,17 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   // Zapíše do karty jen odškrtnuté řádky. E-mail se přidává k případným
   // stávajícím, poznámka se zakládá jako nový zápis — nic se nepřepisuje.
-  const applyFillRows = () => {
+  const applyFillRows = async () => {
     const chosen = (fillRows || []).filter(r => r.checked);
-    if (chosen.length === 0) { closeFillModal(); return; }
+    // Načtený soubor → do příloh karty (pokud to uživatel nevypnul).
+    const attachFile = async () => {
+      if (!fillFile || !fillAttach) return;
+      setFillLoading(true);
+      try { await handleUploadConfirmation(fillItem, fillFile); }
+      catch (err) { alert('Kartu jsem vyplnila, ale soubor se nepodařilo uložit do příloh: ' + (err.message || err) + '\n\nNahrajte ho prosím ručně přes 📎.'); }
+      setFillLoading(false);
+    };
+    if (chosen.length === 0) { await attachFile(); closeFillModal(); return; }
     const fresh = itemsRef.current.find(x => x.id === fillItem.id) || fillItem;
     const fields = {};
     const newEmails = [];
@@ -2441,6 +2474,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
       fields.note = '';
     }
     updateItemFields(fillItem.id, fields);
+    await attachFile();
     closeFillModal();
   };
 
@@ -5273,12 +5307,23 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                     </label>
                   ))}
                 </div>
+                {fillFile && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '8px 10px', marginBottom: 12, borderRadius: 6,
+                    background: fillAttach ? '#f4fbf6' : '#fafafa', border: `1px solid ${fillAttach ? '#9fc9b0' : colors.border}`, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={fillAttach} onChange={e => setFillAttach(e.target.checked)} style={{ width: 15, height: 15, cursor: 'pointer' }} />
+                    {fillFile.isEmailText
+                      ? <span>📎 Uložit text e-mailu i do příloh karty <span style={{ color: colors.muted }}>(jako soubor {fillFile.name})</span></span>
+                      : <span>📎 Uložit soubor <strong>{fillFile.name}</strong> i do příloh karty</span>}
+                    {(fillItem && ((itemsRef.current.find(x => x.id === fillItem.id) || fillItem).attachments || []).some(a => a.name === fillFile.name)) &&
+                      <span style={{ color: colors.muted }}>· soubor se stejným názvem už v přílohách je</span>}
+                  </label>
+                )}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button type="button" onClick={applyFillRows}
-                    style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
-                    Vyplnit označené
+                  <button type="button" onClick={applyFillRows} disabled={fillLoading}
+                    style={{ padding: '8px 18px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: fillLoading ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 500, opacity: fillLoading ? 0.6 : 1 }}>
+                    {fillLoading ? '⏳ Ukládám přílohu…' : (fillFile && fillAttach ? (fillFile.isEmailText ? 'Vyplnit označené + uložit e-mail' : 'Vyplnit označené + uložit přílohu') : 'Vyplnit označené')}
                   </button>
-                  <button type="button" onClick={() => { setFillRows(null); setFillError(''); setFillExtraCount(0); setFillInfo(''); }}
+                  <button type="button" onClick={() => { setFillRows(null); setFillError(''); setFillExtraCount(0); setFillInfo(''); setFillFile(null); }}
                     style={{ padding: '8px 18px', background: colors.white, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
                     ← Zpět na text
                   </button>
