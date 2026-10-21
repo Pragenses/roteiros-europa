@@ -6,6 +6,7 @@ import { cityTaxForOrder, r4 } from '../lib/cityTax';
 import { codeForEmail } from '../lib/people';
 import { loadRatesDoc, effectiveRates } from '../lib/rates';
 import { parseServiceText, parseServiceDocument, aiFillProviderFree } from '../lib/ai';
+import { dragHasFiles, filesFromDrop, filesFromPaste } from '../lib/dropFiles';
 
 const SERVICE_TYPES = [
   { value: 'hotel', label: 'Hotel', icon: '🏨' },
@@ -67,6 +68,8 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const [pasteText, setPasteText] = useState('');
   const [documents, setDocuments] = useState([]);
   const [docUploading, setDocUploading] = useState(false);
+  const [docDrag, setDocDrag] = useState(false);
+  const [pasteDrag, setPasteDrag] = useState(false);
   const [cancellationDateDisplay, setCancellationDateDisplay] = useState('');
   const [hotelFocSelected, setHotelFocSelected] = useState('none');
   const [pasteLoading, setPasteLoading] = useState(false);
@@ -530,7 +533,10 @@ export default function OrderDetail({ orderId, navigate, colors }) {
       return;
     }
     setDocUploading(true);
+    // Čeká se na dokončení, aby šlo nahrát víc souborů postupně za sebou.
+    await new Promise((done) => {
     const reader = new FileReader();
+    reader.onerror = () => { alert('Soubor se nepodařilo přečíst.'); setDocUploading(false); done(); };
     reader.onload = async () => {
       try {
         const dataUrl = reader.result;
@@ -557,8 +563,15 @@ export default function OrderDetail({ orderId, navigate, colors }) {
         alert('Upload failed: ' + err.message);
       }
       setDocUploading(false);
+      done();
     };
     reader.readAsDataURL(file);
+    });
+  };
+  const uploadFiles = async (files) => {
+    if (!files.length) return;
+    if (!editingServiceId) { alert('Save the service first, then add documents.'); return; }
+    for (const f of files) await uploadFile(f);
   };
 
   const handleDownloadDocument = async (d) => {
@@ -592,50 +605,19 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   };
 
   const handleFileUpload = (e) => {
-    uploadFile(e.target.files[0]);
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
+    uploadFiles(files);
   };
 
   const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    let file = e.dataTransfer.files?.[0];
-    if (!file && e.dataTransfer.items) {
-      for (let i = 0; i < e.dataTransfer.items.length; i++) {
-        const item = e.dataTransfer.items[i];
-        if (item.kind === 'file') {
-          const f = item.getAsFile();
-          if (f) { file = f; break; }
-        }
-      }
-    }
-    if (!file) {
-      // Webmail clients (Gmail, Outlook web) often use a "DownloadURL" / uri-list payload instead of a real File
-      const downloadUrl = e.dataTransfer.getData('DownloadURL') || e.dataTransfer.getData('text/uri-list');
-      if (downloadUrl) {
-        try {
-          const parts = downloadUrl.split(':');
-          let url = downloadUrl;
-          let suggestedName = 'attachment';
-          if (parts.length >= 3 && (downloadUrl.startsWith('application') || downloadUrl.includes(':'))) {
-            // Format is often "mime/type:filename:url"
-            const firstColon = downloadUrl.indexOf(':');
-            const secondColon = downloadUrl.indexOf(':', firstColon + 1);
-            if (secondColon > -1) {
-              suggestedName = downloadUrl.slice(firstColon + 1, secondColon);
-              url = downloadUrl.slice(secondColon + 1);
-            }
-          }
-          const resp = await fetch(url);
-          const blob = await resp.blob();
-          file = new File([blob], suggestedName, { type: blob.type });
-        } catch (err) {
-          console.error('Attachment fetch failed', err);
-        }
-      }
-    }
-    if (file) {
-      uploadFile(file);
+    setDocDrag(false);
+    if (docUploading) return;
+    const files = await filesFromDrop(e);
+    if (files.length) {
+      uploadFiles(files);
     } else {
       const types = Array.from(e.dataTransfer.types || []);
       const items = Array.from(e.dataTransfer.items || []).map(it => `${it.kind}/${it.type}`);
@@ -647,6 +629,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!docDrag) setDocDrag(true);
   };
 
   const handleDeleteDocument = async (docId) => {
@@ -1105,10 +1088,22 @@ export default function OrderDetail({ orderId, navigate, colors }) {
               {editingServiceId ? 'Edit' : 'Add'}: {SERVICE_TYPES.find(t => t.value === activeType)?.icon} {SERVICE_TYPES.find(t => t.value === activeType)?.label}
             </div>
           </div>
-          <div style={{ background: '#f0ede8', borderRadius: 8, padding: '0.875rem 1rem', marginBottom: '1.25rem' }}>
-            <div style={{ fontSize: 13, color: colors.primary, fontWeight: 500, marginBottom: 6 }}>📋 Paste from email to auto-fill</div>
+          <div
+            onDragOver={e => { if (pasteLoading || !dragHasFiles(e)) return; e.preventDefault(); if (!pasteDrag) setPasteDrag(true); }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setPasteDrag(false); }}
+            onDrop={async e => {
+              if (!dragHasFiles(e)) return;
+              e.preventDefault(); e.stopPropagation(); setPasteDrag(false);
+              if (pasteLoading) return;
+              const files = await filesFromDrop(e);
+              if (files[0]) handleContractUpload(files[0]);
+            }}
+            style={{ background: pasteDrag ? '#eef5ff' : '#f0ede8', borderRadius: 8, padding: '0.875rem 1rem', marginBottom: '1.25rem',
+              outline: pasteDrag ? `3px dashed ${colors.primary}` : 'none', outlineOffset: -4 }}>
+            <div style={{ fontSize: 13, color: colors.primary, fontWeight: 500, marginBottom: 6 }}>📋 Paste from email to auto-fill — or drop a contract (PDF / image) here</div>
             <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} rows={2}
-              placeholder="e.g. Bergen | 25/07 e 28/07 — 3 noites. Hospedagem no elegante Radisson Blu Royal Hotel..."
+              onPaste={e => { const files = filesFromPaste(e); if (files.length && !pasteLoading) { e.preventDefault(); handleContractUpload(files[0]); } }}
+              placeholder={pasteDrag ? '⬇ Drop the file here…' : 'e.g. Bergen | 25/07 e 28/07 — 3 noites. Hospedagem no elegante Radisson Blu Royal Hotel... (or drop / paste a PDF or screenshot)'}
               style={{ width: '100%', padding: '8px 10px', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 13, fontFamily: 'Georgia, serif', boxSizing: 'border-box', resize: 'vertical', marginBottom: 8 }} />
             <button type="button" onClick={handlePasteText} disabled={pasteLoading}
               style={{ padding: '7px 16px', background: colors.primary, color: colors.white, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', opacity: pasteLoading ? 0.6 : 1 }}>
@@ -1335,13 +1330,14 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 📎 Documents ({documents.length})
               </div>
               <div onDrop={handleDrop} onDragOver={handleDragOver}
-                style={{ marginBottom: 10, padding: '1.25rem', border: `2px dashed ${colors.border}`, borderRadius: 8, textAlign: 'center', background: '#fafaf8' }}>
-                <div style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>
-                  {docUploading ? 'Uploading...' : 'Drag & drop a file here (PDF, image — max ~5 MB)'}
+                onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDocDrag(false); }}
+                style={{ marginBottom: 10, padding: '1.25rem', border: `2px dashed ${docDrag ? colors.primary : colors.border}`, borderRadius: 8, textAlign: 'center', background: docDrag ? '#eef5ff' : '#fafaf8' }}>
+                <div style={{ fontSize: 13, color: docDrag ? colors.primary : colors.muted, marginBottom: 8, fontWeight: docDrag ? 700 : 400 }}>
+                  {docUploading ? 'Uploading...' : docDrag ? '⬇ Drop the files here' : 'Drag & drop files here (PDF, image — max ~5 MB each, more at once OK)'}
                 </div>
                 <label style={{ display: 'inline-block', padding: '6px 14px', background: '#f0ede8', border: `1px solid ${colors.border}`, borderRadius: 6, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', color: colors.text }}>
                   or browse files
-                  <input type="file" onChange={handleFileUpload} disabled={docUploading} style={{ display: 'none' }} />
+                  <input type="file" multiple onChange={handleFileUpload} disabled={docUploading} style={{ display: 'none' }} />
                 </label>
               </div>
               {documents.length === 0 ? (
