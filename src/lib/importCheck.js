@@ -121,7 +121,20 @@ export function checkItem(it, calc) {
   return { status: ok ? 'ok' : 'diff', lines, fix: ok || !Object.keys(fix).length ? null : fix };
 }
 
+// Ceny pro klienta bývají zaokrouhlené nahoru na celé euro (nebo na 5).
+// Za „zaokrouhleno" bereme: prodaná cena je CELÉ číslo, je vyšší nebo stejná
+// než výpočet a rozdíl je menší než ROUND_MAX. Přesné ceny s centy (z kalkulace)
+// se tím nezakryjí — ty musí sedět na cent.
+export const ROUND_MAX = 5;
+export const isRounded = (got, exp) => {
+  if (!isFinite(got) || !isFinite(exp)) return false;
+  const whole = Math.abs(exp - Math.round(exp)) < TOL;
+  const diff = exp - got;
+  return whole && diff > -TOL && diff < ROUND_MAX;
+};
+
 // Porovnání konečných cen s prodanými.
+// okDbl/okSngl = sedí na cent; roundedDbl/roundedSngl = rozdíl je jen zaokrouhlení pro klienta.
 export function checkFinal(calc, soldPrices) {
   return (soldPrices || []).map(sp => {
     const pax = parseInt(sp.pax, 10);
@@ -129,9 +142,14 @@ export function checkFinal(calc, soldPrices) {
     const expDbl = num(sp.finalDbl);
     const expSngl = has(sp.finalSngl) ? num(sp.finalSngl) : null;
     if (!row) return { pax, missing: true, expDbl, expSngl };
+    const okDbl = same(row.finalDbl, expDbl);
+    const okSngl = expSngl === null ? null : same(row.finalSngl, expSngl);
+    const roundedDbl = !okDbl && isRounded(row.finalDbl, expDbl);
+    const roundedSngl = okSngl === false && isRounded(row.finalSngl, expSngl);
     return {
-      pax, gotDbl: row.finalDbl, expDbl, okDbl: same(row.finalDbl, expDbl),
-      gotSngl: row.finalSngl, expSngl, okSngl: expSngl === null ? null : same(row.finalSngl, expSngl),
+      pax, gotDbl: row.finalDbl, expDbl, okDbl, roundedDbl,
+      gotSngl: row.finalSngl, expSngl, okSngl, roundedSngl,
+      bad: (!okDbl && !roundedDbl) || (okSngl === false && !roundedSngl),
       currency: sp.currency || 'EUR',
     };
   });

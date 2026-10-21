@@ -201,7 +201,8 @@ Vrať POUZE JSON (žádný jiný text, žádné \`\`\`) v tomto tvaru:
   "notes": ""
 }`;
 
-async function callClaude(content, maxTokens = 8000) {
+// stream = true: odpověď se přebírá průběžně (dlouhé sestavení nevyprší a vidíme postup).
+async function callClaude(content, maxTokens = 8000, { stream = false, onProgress } = {}) {
   const apiKey = await getApiKey();
   if (!apiKey) throw new Error('Chybí klíč k Claude API (Settings).');
   let response;
@@ -214,16 +215,63 @@ async function callClaude(content, maxTokens = 8000) {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, stream, messages: [{ role: 'user', content }] }),
     });
   } catch (e) {
     throw new Error('Spojení s Claude selhalo (internet?).');
   }
-  const data = await response.json();
-  if (data.error) throw new Error('Claude: ' + (data.error.message || 'chyba'));
-  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-  if (data.stop_reason === 'max_tokens') throw new Error('Výsledek je příliš dlouhý — dokument je asi potřeba rozdělit.');
-  return { result: extractJSON(text), usage: data.usage || {} };
+  if (!stream || !response.ok || !response.body) {
+    const data = await response.json();
+    if (data.error) throw new Error('Claude: ' + (data.error.message || 'chyba'));
+    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+    if (data.stop_reason === 'max_tokens') throw new Error('Výsledek je příliš dlouhý — dokument je asi potřeba rozdělit.');
+    return { result: extractJSON(text), usage: data.usage || {} };
+  }
+  const { text, stopReason, usage } = await readStream(response.body, onProgress);
+  if (stopReason === 'max_tokens') throw new Error('Výsledek je příliš dlouhý ani po zvýšení limitu — podklady je asi potřeba rozdělit.');
+  return { result: extractJSON(text), usage };
+}
+
+// Čte průběžnou odpověď (server-sent events) a skládá text.
+export async function readStream(body, onProgress) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '', text = '', stopReason = '';
+  const usage = {};
+  const handle = (ev) => {
+    if (ev.type === 'message_start' && ev.message && ev.message.usage) Object.assign(usage, ev.message.usage);
+    else if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+      text += ev.delta.text;
+      if (onProgress) onProgress(text.length);
+    } else if (ev.type === 'message_delta') {
+      if (ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
+      if (ev.usage) Object.assign(usage, ev.usage);
+    } else if (ev.type === 'error') {
+      throw new Error('Claude: ' + ((ev.error && ev.error.message) || 'chyba při přenosu'));
+    }
+  };
+  const flush = (chunk) => {
+    for (const line of chunk.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let ev;
+      try { ev = JSON.parse(payload); } catch (e) { continue; }
+      handle(ev);
+    }
+  };
+  for (;;) {
+    let r;
+    try { r = await reader.read(); } catch (e) { throw new Error('Spojení s Claude se přerušilo — zkuste to prosím znovu.'); }
+    if (r.done) break;
+    buf += decoder.decode(r.value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) !== -1) { flush(buf.slice(0, i)); buf = buf.slice(i + 2); }
+  }
+  buf += decoder.decode();
+  if (buf.trim()) flush(buf);
+  if (!stopReason) throw new Error('Odpověď od Clauda nedorazila celá — zkuste to prosím znovu.');
+  return { text, stopReason, usage };
 }
 
 // Přečte jeden soubor ze složky. entry = položka z folder.files.
@@ -279,10 +327,10 @@ JAK APLIKACE POČÍTÁ (musíš to přesně respektovat):
   PŘEPOČET CITY TAX: když kalkulace v podkladech počítá city tax ZA OSOBU v DBL (nedělí ho dvěma), zapiš cityTax jako DVOJNÁSOBEK té částky za noc, aby po vydělení dvěma vyšla přesně stejná částka. Když je city tax procentem z ceny pokoje, spočítej číslo. Vždy tak, aby částka na osobu za celý pobyt seděla s kalkulací (DBL i SGL zvlášť). Postup přepočtu stručně popiš v "conversionNote".
 - Karta "ticket" (vstupenky, večeře, jídla, lodě, vlaky — cokoliv za osobu): costDbl = částka na osobu v DBL za celou akci, costSngl = částka na osobu v SGL (obvykle stejná).
 - Karta "group" (autobus, průvodce, cokoliv placené za celou skupinu): groupCost = celková částka za skupinu. Každý průvodce / každá služba je samostatná karta.
-- Karta "guide_hotel" (ubytování průvodce/tour leadera): aplikace automaticky počítá součet SGL na osobu ze VŠECH hotelů i ticket karet.
+- Karta "guide_hotel" (ubytování průvodce/tour leadera): aplikace automaticky počítá součet SGL na osobu ze VŠECH hotelů i ticket karet. Vytvoř ji JEN tehdy, když ji kalkulace má jako samostatný náklad skupiny. Tour leader, který jede jako volné místo (FOC), NENÍ karta guide_hotel — to řeší focCount/focType.
 - Karta "driver_hotel" (ubytování řidiče): aplikace automaticky počítá součet SGL ZA HOTELY (bez ticket karet — tedy bez večeří, vstupenek).
   Když kalkulace počítá ubytování řidiče/průvodce jinak než aplikace automaticky (např. včetně večeří), vyplň guideOverride přesnou částkou z kalkulace a vysvětli v conversionNote.
-- enabled = true pro karty započítané v kalkulaci, false pro alternativy/hotely mimo výpočet (zůstanou jako karty, ale nepočítají se).
+- enabled = true JEN pro karty, které jsou v ceně PRODANÉ varianty (viz níže). false pro alternativy, hotely mimo výpočet, služby za příplatek nebo „não incluído" a služby, které prodaná varianta neobsahuje (zůstanou jako karty, ale nepočítají se; důvod stručně do notes).
 - Konečná cena na osobu v DBL pro každou variantu počtu osob (pax): (součet group karet ÷ pax + součet na osobu v DBL ze všech hotel a ticket karet) × (1 + margin/100) + FOC podíl.
   FOC podíl = (součet na osobu v DBL ze všech hotel a ticket karet × focCount) ÷ pax, přičtený AŽ PO marži. focType "dbl" (nebo "sngl", když kalkulace bere FOC ze SGL). Když kalkulace FOC nemá, focCount = 0.
 - Měny: currency u každé karty (EUR, CZK, CHF, GBP…).
@@ -293,16 +341,29 @@ KONTROLNÍ ČÁSTKY (velmi důležité — aplikace podle nich sama ověří ka�
 - Do "sourceRef" napiš, odkud kontrolní částka je (např. "F8+F9, G8+G9").
 - U karet, které nejsou v kalkulaci (alternativy, enabled=false), kontrolní částky nevyplňuj.
 
+POROZUMĚNÍ TEXTU A VARIANTY CEN (velmi důležité):
+- Původní text Wordů, e-mailů a textových souborů dostáváš CELÝ. Čti nadpisy a popisky u cen (často portugalsky, např. „PREÇO COM TRANSPORTE…", „PREÇO SEM TRANSPORTE, SEM ESTACIONAMENTO, SEM QUARTO PARA MOTORISTA…", „sem gorjeta", „não inclui…") a pochop, co každá sada cen obsahuje a co ne.
+- Každou sadu konečných cen (z nabídky pro klienta i z kalkulace) zapiš do "priceVariants" ZVLÁŠŤ: doslovný popisek z dokumentu, česky co obsahuje / neobsahuje, ceny. Sady cen NIKDY nesměšuj.
+- Kalkulace v Excelu může počítat jinou variantu (např. s dopravou), než jaká se klientovi prodala (např. bez dopravy). Rozhoduje, co se klientovi nabídlo a prodalo — obvykle nabídka pro klienta (Word/PDF/e-mail). Prodanou variantu nastav v "soldVariant" a důvod stručně v "soldVariantReason"; když to z podkladů jisté není, začni důvod slovem „Nejisté:".
+- Pozor na význam sloupců kalkulace: ověř ho ze vzorců (např. jeden sloupec může být cena bez podílu FOC a další s ním). Nepřebírej význam jen podle pořadí.
+- KARTY SESTAV PRO PRODANOU VARIANTU: služby, které prodaná varianta neobsahuje (např. autobus, ubytování a strava řidiče, parkování u varianty bez dopravy), vytvoř jako karty s enabled=false a do notes napiš „není v prodané variantě". Kontrolní částky u nich vyplň z kalkulace.
+- Ceny pro klienta bývají zaokrouhlené nahoru (na celé euro nebo na 5). Do "soldPrices" opiš ceny prodané varianty přesně tak, jak byly klientovi nabídnuty. Aplikace sama pozná, že jde o zaokrouhlení.
+
 PRAVIDLA:
 - JEDNA KARTA = JEDNA SKUTEČNÁ SLUŽBA. Nikdy nevytvářej druhou „opravnou" kopii karty. Když si nejsi jistý přepočtem, vyplň kartu nejlépe, jak umíš — aplikace ji porovná s kontrolními částkami.
 - Údaje z podkladů, které patří k JINÉ akci (jiná skupina, jiný termín, jiný klient), do návrhu NEZAPOČÍTÁVEJ a uveď je v "otherEventFiles".
 - Když si podklady odporují (jiná cena, jiné datum, jiný počet nocí), použij hodnotu z kalkulace (podle ní se prodávalo), ale rozpor uveď v "conflicts" se všemi hodnotami a soubory.
-- Do "soldPrices" opiš PRODANÉ konečné ceny na osobu přesně z podkladů (nepočítej je).
+- Do "soldPrices" opiš PRODANÉ konečné ceny na osobu (jen prodaná varianta) přesně z podkladů (nepočítej je).
 - Do "observations" uveď věci, které vypadají jako chyba nebo nejasnost v původní kalkulaci (např. city tax započítaný dvakrát, nekonzistentní dělení), s návrhem opravy. NIC z toho do karet nepromítej — karty musí odpovídat prodané kalkulaci.
 - Čísla piš jako čísla (desetinná tečka), přesně, bez zaokrouhlování (klidně 4 desetinná místa). Data YYYY-MM-DD.
 - header.name: název skupiny/akce bez čísel verzí a interních označení (např. bez "NR4").
 - clientName: vyber PŘESNĚ jeden název ze seznamu existujících klientů, pokud odpovídá; jinak napiš název z podkladů a clientMatched = false.
 - Texty (conversionNote, notes, observations, conflicts, summary) piš česky.
+
+STRUČNOST (výsledek má omezenou délku — piš úsporně):
+- summary max 2 věty. conversionNote a notes max 1 krátká věta, nebo prázdné.
+- observations max 8 bodů: issue max 2 věty, proposal max 1 věta. Nerozepisuj výpočty krok za krokem.
+- conflicts jen podstatné rozdíly (max 10). sourceRef jen adresy buněk.
 
 Vrať POUZE JSON (žádný jiný text):
 {
@@ -314,29 +375,46 @@ Vrať POUZE JSON (žádný jiný text):
       "expectedDbl": "", "expectedSngl": "", "expectedGroup": "", "sourceRef": "",
       "currency": "EUR", "conversionNote": "", "notes": "", "sourceFiles": [""] }
   ],
+  "priceVariants": [ { "id": "A", "label": "doslovný popisek z dokumentu", "meaning": "česky: co obsahuje a neobsahuje", "sourceFile": "", "prices": [ { "pax": 20, "finalDbl": 0, "finalSngl": "", "currency": "EUR" } ] } ],
+  "soldVariant": "A",
+  "soldVariantReason": "",
   "soldPrices": [ { "pax": 20, "finalDbl": 0, "finalSngl": "", "currency": "EUR", "sourceFile": "" } ],
   "otherEventFiles": [ { "fileName": "", "reason": "" } ],
   "conflicts": [ { "topic": "", "values": [ { "value": "", "fileName": "" } ], "used": "" } ],
   "observations": [ { "topic": "", "issue": "", "proposal": "" } ]
 }`;
 
-// reads: [{ fileName, kind, result }], excelTexts: [{ fileName, text }], clientNames: [string]
-export async function assembleOffer({ reads, excelTexts, clientNames }) {
+// reads: [{ fileName, kind, result }], sourceTexts: [{ fileName, kind, text }], clientNames: [string]
+// sourceTexts = celé původní texty (Excel se vzorci, Word, e-maily), aby Claude
+// rozuměl popiskům cen a variantám — ne jen výtahu z kroku 2.
+export async function assembleOffer({ reads, sourceTexts, clientNames, onProgress }) {
   const parts = [];
   parts.push(`EXISTUJÍCÍ KLIENTI:\n${clientNames.join('\n') || '(žádní)'}`);
-  for (const x of excelTexts) {
-    parts.push(`=== KALKULACE (Excel) — ${x.fileName} — buňky se vzorci; prázdné řádky a buňky jsou vynechané schválně ===\n${x.text.slice(0, MAX_TEXT_CHARS)}`);
+  for (const x of sourceTexts) {
+    const title = x.kind === 'excel'
+      ? `KALKULACE (Excel) — ${x.fileName} — buňky se vzorci; prázdné řádky a buňky jsou vynechané schválně`
+      : `PŮVODNÍ TEXT DOKUMENTU — ${x.fileName}`;
+    parts.push(`=== ${title} ===\n${x.text.slice(0, MAX_TEXT_CHARS)}`);
   }
   for (const r of reads) {
     parts.push(`=== PŘEČTENÝ PODKLAD — ${r.fileName} (${r.kind}) ===\n${JSON.stringify(r.result)}`);
   }
   const content = [{ type: 'text', text: `${parts.join('\n\n')}\n\n---\n\n${ASSEMBLY_PROMPT}` }];
-  return callClaude(content, 16000);
+  return callClaude(content, 32000, { stream: true, onProgress });
 }
 
-// Excel ze složky znovu stáhne a převede (pro sestavení potřebujeme vzorce).
-export async function excelTextFor(entry) {
+// Původní text souboru pro sestavení: Excel (se vzorci), Word .docx, textové soubory.
+// U PDF a fotek vrací null — ty jdou do sestavení jen jako přečtený výtah.
+export async function sourceTextFor(entry) {
+  const name = entry.name || '';
+  const isExcel = entry.kind === 'excel';
+  const isDocx = /\.docx$/i.test(name);
+  const isPlain = entry.kind === 'text' && /\.(txt|eml|html?|md)$/i.test(name);
+  if (!isExcel && !isDocx && !isPlain) return null;
   const blob = await downloadBlob(entry.url);
-  if (/\.csv$/i.test(entry.name || '')) return blob.text();
-  return excelToText(blob);
+  if (isExcel) return /\.csv$/i.test(name) ? blob.text() : excelToText(blob);
+  if (isDocx) return wordToText(blob);
+  let text = await blob.text();
+  if (/\.html?$/i.test(name)) text = text.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ');
+  return text;
 }
