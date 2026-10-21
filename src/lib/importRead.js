@@ -158,10 +158,30 @@ export function sheetsToText(XLSX, wb) {
   }).join('\n\n');
 }
 
-async function excelToText(blob) {
+async function readWorkbook(blob) {
   const XLSX = await loadLib('XLSX');
   const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array', cellNF: true, cellFormula: true });
+  return { XLSX, wb };
+}
+
+async function excelToText(blob) {
+  const { XLSX, wb } = await readWorkbook(blob);
   return sheetsToText(XLSX, wb);
+}
+
+// Číselné hodnoty buněk (u vzorců výsledek uložený Excelem):
+// [{ name: 'List1', values: { F8: 186, ... } }] — aplikace podle nich ověřuje karty.
+export function sheetsToCells(wb) {
+  return wb.SheetNames.map(name => {
+    const ws = wb.Sheets[name] || {};
+    const values = {};
+    Object.keys(ws).forEach(addr => {
+      if (addr[0] === '!') return;
+      const c = ws[addr];
+      if (c && c.t === 'n' && typeof c.v === 'number' && isFinite(c.v)) values[addr] = c.v;
+    });
+    return { name, values };
+  });
 }
 
 async function wordToText(blob) {
@@ -324,7 +344,7 @@ const ASSEMBLY_PROMPT = `Jsi asistent české DMC. Ze všech přečtených podkl
 JAK APLIKACE POČÍTÁ (musíš to přesně respektovat):
 - Karta "hotel": pricePerNightDbl = cena DBL POKOJE za noc, pricePerNightSngl = cena SGL pokoje za noc, cityTax = city tax za DBL POKOJ a noc, cityTaxSngl = city tax za SGL pokoj a noc, nights = počet nocí.
   Na osobu v DBL aplikace počítá: (pricePerNightDbl + cityTax) × nights ÷ 2.  Na osobu v SGL: (pricePerNightSngl + cityTaxSngl) × nights.
-  PŘEPOČET CITY TAX: když kalkulace v podkladech počítá city tax ZA OSOBU v DBL (nedělí ho dvěma), zapiš cityTax jako DVOJNÁSOBEK té částky za noc, aby po vydělení dvěma vyšla přesně stejná částka. Když je city tax procentem z ceny pokoje, spočítej číslo. Vždy tak, aby částka na osobu za celý pobyt seděla s kalkulací (DBL i SGL zvlášť). Postup přepočtu stručně popiš v "conversionNote".
+  PŘEPOČET CITY TAX: cityTax (DBL pokoj = 2 osoby) = 2 × city tax na osobu a noc. cityTaxSngl (SGL pokoj = 1 osoba) = city tax na osobu a noc — u SGL NIKDY nezdvojnásobuj. Když kalkulace v podkladech počítá city tax ZA OSOBU v DBL (nedělí ho dvěma), zapiš cityTax jako DVOJNÁSOBEK té částky za noc, aby po vydělení dvěma vyšla přesně stejná částka. Když je city tax procentem z ceny pokoje, spočítej číslo. Vždy tak, aby částka na osobu za celý pobyt seděla s kalkulací (DBL i SGL zvlášť). Postup přepočtu stručně popiš v "conversionNote".
 - Karta "ticket" (vstupenky, večeře, jídla, lodě, vlaky — cokoliv za osobu): costDbl = částka na osobu v DBL za celou akci, costSngl = částka na osobu v SGL (obvykle stejná).
 - Karta "group" (autobus, průvodce, cokoliv placené za celou skupinu): groupCost = celková částka za skupinu. Každý průvodce / každá služba je samostatná karta.
 - Karta "guide_hotel" (ubytování průvodce/tour leadera): aplikace automaticky počítá součet SGL na osobu ze VŠECH hotelů i ticket karet. Vytvoř ji JEN tehdy, když ji kalkulace má jako samostatný náklad skupiny. Tour leader, který jede jako volné místo (FOC), NENÍ karta guide_hotel — to řeší focCount/focType.
@@ -336,17 +356,19 @@ JAK APLIKACE POČÍTÁ (musíš to přesně respektovat):
 - Měny: currency u každé karty (EUR, CZK, CHF, GBP…).
 
 KONTROLNÍ ČÁSTKY (velmi důležité — aplikace podle nich sama ověří každou kartu):
+- NEJDŮLEŽITĚJŠÍ jsou ADRESY BUNĚK: do "refDbl", "refSngl" a "refGroup" napiš přesné adresy buněk Excelu, jejichž SOUČET dává kontrolní částku (např. refDbl "F8+F9", refSngl "G8+G9", refGroup "C53"). Jen adresy spojené znakem +, nic jiného (žádné vzorce, čísla ani text). Název listu jen když má Excel víc listů ("List1!F8"). Když je Excelů víc, napiš do "refFile" název souboru. Aplikace si hodnoty z buněk přečte sama a podle nich kartu zkontroluje.
 - U každé karty "hotel" a "ticket" vyplň expectedDbl = kolik ta položka v kalkulaci stojí NA OSOBU V DBL za celý pobyt / celou akci (u hotelu VČETNĚ city tax), a expectedSngl = totéž na osobu v SGL. Opiš/sečti přesně čísla z kalkulace (např. buňky F a G), NE z tvého přepočtu.
 - U karet "group", "guide_hotel", "driver_hotel" vyplň expectedGroup = celková částka té položky v kalkulaci.
-- Do "sourceRef" napiš, odkud kontrolní částka je (např. "F8+F9, G8+G9").
 - U karet, které nejsou v kalkulaci (alternativy, enabled=false), kontrolní částky nevyplňuj.
 
 POROZUMĚNÍ TEXTU A VARIANTY CEN (velmi důležité):
 - Původní text Wordů, e-mailů a textových souborů dostáváš CELÝ. Čti nadpisy a popisky u cen (často portugalsky, např. „PREÇO COM TRANSPORTE…", „PREÇO SEM TRANSPORTE, SEM ESTACIONAMENTO, SEM QUARTO PARA MOTORISTA…", „sem gorjeta", „não inclui…") a pochop, co každá sada cen obsahuje a co ne.
 - Každou sadu konečných cen (z nabídky pro klienta i z kalkulace) zapiš do "priceVariants" ZVLÁŠŤ: doslovný popisek z dokumentu, česky co obsahuje / neobsahuje, ceny. Sady cen NIKDY nesměšuj.
-- Kalkulace v Excelu může počítat jinou variantu (např. s dopravou), než jaká se klientovi prodala (např. bez dopravy). Rozhoduje, co se klientovi nabídlo a prodalo — obvykle nabídka pro klienta (Word/PDF/e-mail). Prodanou variantu nastav v "soldVariant" a důvod stručně v "soldVariantReason"; když to z podkladů jisté není, začni důvod slovem „Nejisté:".
+- Kalkulace v Excelu může počítat jinou variantu (např. s dopravou), než jaká se klientovi prodala (např. bez dopravy). Rozhoduje, co se klientovi nabídlo a prodalo — obvykle nabídka pro klienta (Word/PDF/e-mail). Prodanou variantu nastav v "soldVariant" a důvod stručně v "soldVariantReason". Nabídka pro klienta s několika variantami SAMA NEŘÍKÁ, kterou si klient vybral — a to, že kalkulace počítá jednu z nich, také ne. Jistá je varianta jen tehdy, když to dokládá potvrzení klienta, objednávka, faktura/záloha nebo výslovný text. Jinak začni důvod slovem „Nejisté:" (člověk to potvrdí).
+- U každé karty vyplň "variants" = seznam id variant cen, ve kterých je služba v ceně (např. autobus jen ["B"], hotely ["A","B"]). U alternativ a služeb mimo cenu nech []. Aplikace podle toho při výběru varianty karty sama zaškrtne / odškrtne.
 - Pozor na význam sloupců kalkulace: ověř ho ze vzorců (např. jeden sloupec může být cena bez podílu FOC a další s ním). Nepřebírej význam jen podle pořadí.
 - KARTY SESTAV PRO PRODANOU VARIANTU: služby, které prodaná varianta neobsahuje (např. autobus, ubytování a strava řidiče, parkování u varianty bez dopravy), vytvoř jako karty s enabled=false a do notes napiš „není v prodané variantě". Kontrolní částky u nich vyplň z kalkulace.
+- SGL: když nabídka pro klienta uvádí příplatek za SGL (např. „suplemento por sngl 840"), vyplň finalSngl = finalDbl + příplatek (v soldPrices i v priceVariants). Když je příplatek uveden jen obecně nebo jen u jiné varianty, použij ho a přidej do "observations" bod k ověření.
 - Ceny pro klienta bývají zaokrouhlené nahoru (na celé euro nebo na 5). Do "soldPrices" opiš ceny prodané varianty přesně tak, jak byly klientovi nabídnuty. Aplikace sama pozná, že jde o zaokrouhlení.
 
 PRAVIDLA:
@@ -363,7 +385,7 @@ PRAVIDLA:
 STRUČNOST (výsledek má omezenou délku — piš úsporně):
 - summary max 2 věty. conversionNote a notes max 1 krátká věta, nebo prázdné.
 - observations max 8 bodů: issue max 2 věty, proposal max 1 věta. Nerozepisuj výpočty krok za krokem.
-- conflicts jen podstatné rozdíly (max 10). sourceRef jen adresy buněk.
+- conflicts jen podstatné rozdíly (max 10).
 
 Vrať POUZE JSON (žádný jiný text):
 {
@@ -372,7 +394,7 @@ Vrať POUZE JSON (žádný jiný text):
   "items": [
     { "kind": "hotel | ticket | group | guide_hotel | driver_hotel", "enabled": true, "city": "", "name": "", "dateFrom": "", "dateTo": "", "nights": "",
       "pricePerNightDbl": "", "pricePerNightSngl": "", "cityTax": "", "cityTaxSngl": "", "costDbl": "", "costSngl": "", "groupCost": "", "guideOverride": "",
-      "expectedDbl": "", "expectedSngl": "", "expectedGroup": "", "sourceRef": "",
+      "expectedDbl": "", "expectedSngl": "", "expectedGroup": "", "refDbl": "", "refSngl": "", "refGroup": "", "refFile": "", "variants": [],
       "currency": "EUR", "conversionNote": "", "notes": "", "sourceFiles": [""] }
   ],
   "priceVariants": [ { "id": "A", "label": "doslovný popisek z dokumentu", "meaning": "česky: co obsahuje a neobsahuje", "sourceFile": "", "prices": [ { "pax": 20, "finalDbl": 0, "finalSngl": "", "currency": "EUR" } ] } ],
@@ -403,8 +425,8 @@ export async function assembleOffer({ reads, sourceTexts, clientNames, onProgres
   return callClaude(content, 32000, { stream: true, onProgress });
 }
 
-// Původní text souboru pro sestavení: Excel (se vzorci), Word .docx, textové soubory.
-// U PDF a fotek vrací null — ty jdou do sestavení jen jako přečtený výtah.
+// Původní text souboru pro sestavení: Excel (se vzorci + hodnoty buněk), Word .docx, textové soubory.
+// Vrací { text, cells } (cells jen u Excelu), u PDF a fotek null — ty jdou do sestavení jen jako přečtený výtah.
 export async function sourceTextFor(entry) {
   const name = entry.name || '';
   const isExcel = entry.kind === 'excel';
@@ -412,9 +434,13 @@ export async function sourceTextFor(entry) {
   const isPlain = entry.kind === 'text' && /\.(txt|eml|html?|md)$/i.test(name);
   if (!isExcel && !isDocx && !isPlain) return null;
   const blob = await downloadBlob(entry.url);
-  if (isExcel) return /\.csv$/i.test(name) ? blob.text() : excelToText(blob);
-  if (isDocx) return wordToText(blob);
+  if (isExcel) {
+    if (/\.csv$/i.test(name)) return { text: await blob.text(), cells: null };
+    const { XLSX, wb } = await readWorkbook(blob);
+    return { text: sheetsToText(XLSX, wb), cells: sheetsToCells(wb) };
+  }
+  if (isDocx) return { text: await wordToText(blob), cells: null };
   let text = await blob.text();
   if (/\.html?$/i.test(name)) text = text.replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ');
-  return text;
+  return { text, cells: null };
 }

@@ -133,9 +133,19 @@ export const isRounded = (got, exp) => {
   return whole && diff > -TOL && diff < ROUND_MAX;
 };
 
+// Paušální SGL příplatek: u všech (aspoň 2) řádků je prodaná SGL = prodaná DBL + stejná částka.
+// Aplikace počítá SGL z nákladů, takže paušál na cent sedět nemůže — není to chyba, jen jiný způsob prodeje.
+export function flatSnglSupplement(soldPrices) {
+  const d = (soldPrices || []).filter(p => has(p.finalDbl) && has(p.finalSngl)).map(p => num(p.finalSngl) - num(p.finalDbl));
+  if (d.length < 2) return null;
+  return d.every(x => same(x, d[0])) && d[0] > 0 ? Math.round(d[0] * 100) / 100 : null;
+}
+
 // Porovnání konečných cen s prodanými.
-// okDbl/okSngl = sedí na cent; roundedDbl/roundedSngl = rozdíl je jen zaokrouhlení pro klienta.
+// okDbl/okSngl = sedí na cent; roundedDbl/roundedSngl = rozdíl je jen zaokrouhlení pro klienta;
+// flatSngl = SGL prodána s paušálním příplatkem (viz flatSnglSupplement).
 export function checkFinal(calc, soldPrices) {
+  const flat = flatSnglSupplement(soldPrices);
   return (soldPrices || []).map(sp => {
     const pax = parseInt(sp.pax, 10);
     const row = calc.rows.find(r => r.pax === pax);
@@ -146,13 +156,59 @@ export function checkFinal(calc, soldPrices) {
     const okSngl = expSngl === null ? null : same(row.finalSngl, expSngl);
     const roundedDbl = !okDbl && isRounded(row.finalDbl, expDbl);
     const roundedSngl = okSngl === false && isRounded(row.finalSngl, expSngl);
+    const flatSngl = okSngl === false && !roundedSngl && flat !== null ? flat : null;
     return {
       pax, gotDbl: row.finalDbl, expDbl, okDbl, roundedDbl,
-      gotSngl: row.finalSngl, expSngl, okSngl, roundedSngl,
-      bad: (!okDbl && !roundedDbl) || (okSngl === false && !roundedSngl),
+      gotSngl: row.finalSngl, expSngl, okSngl, roundedSngl, flatSngl,
+      bad: (!okDbl && !roundedDbl) || (okSngl === false && !roundedSngl && flatSngl === null),
       currency: sp.currency || 'EUR',
     };
   });
 }
 
 export const round4 = (x) => Math.round(x * 10000) / 10000;
+
+// ── Kontrolní částky přímo z buněk Excelu ──
+// ref = "F8+F9" nebo "List1!F8+'Můj list'!G9" (jen buňky spojené +).
+// sheets = [{ name, values: { F8: 186 } }]. Vrací { value } nebo { error }.
+export function resolveRef(ref, sheets) {
+  const txt = String(ref || '').trim();
+  if (!txt) return { error: 'bez adresy' };
+  if (!sheets || !sheets.length) return { error: 'Excel není k dispozici' };
+  let total = 0;
+  for (const raw of txt.split('+')) {
+    const part = raw.trim().replace(/\$/g, '');
+    const m = part.match(/^(?:(?:'([^']+)'|([^!]+))!)?([A-Z]{1,3}[0-9]{1,6})$/i);
+    if (!m) return { error: `neplatná adresa „${part}"` };
+    const sheetName = m[1] || m[2];
+    const addr = m[3].toUpperCase();
+    const sh = sheetName ? sheets.find(x => x.name.trim().toLowerCase() === sheetName.trim().toLowerCase()) : sheets[0];
+    if (!sh) return { error: `list „${sheetName}" neexistuje` };
+    const v = sh.values[addr];
+    if (typeof v !== 'number') return { error: `buňka ${addr} není číslo` };
+    total += v;
+  }
+  return { value: total };
+}
+
+// Doplní kartám kontrolní částky z buněk Excelu (přednost před číslem od Clauda).
+// excelCells = [{ fileName, sheets }]. U karty zůstane: refCheck = { Dbl|Sngl|Group: { ref, value, claude, error } }.
+export function applyExcelRefs(items, excelCells) {
+  const files = (excelCells || []).filter(f => f && f.sheets && f.sheets.length);
+  if (!files.length) return items;
+  return items.map(it => {
+    const file = (has(it.refFile) && files.find(f => f.fileName === String(it.refFile).trim())) || files[0];
+    const out = { ...it };
+    const refCheck = {};
+    [['Dbl', 'refDbl', 'expectedDbl'], ['Sngl', 'refSngl', 'expectedSngl'], ['Group', 'refGroup', 'expectedGroup']].forEach(([k, refKey, expKey]) => {
+      if (!has(it[refKey])) return;
+      const r = resolveRef(it[refKey], file.sheets);
+      const claude = has(it[expKey]) ? num(it[expKey]) : null;
+      if (r.error) { refCheck[k] = { ref: it[refKey], error: r.error, claude }; return; }
+      refCheck[k] = { ref: it[refKey], value: round4(r.value), claude, file: file.fileName };
+      out[expKey] = String(round4(r.value));
+    });
+    if (Object.keys(refCheck).length) out.refCheck = refCheck;
+    return out;
+  });
+}
