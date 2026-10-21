@@ -4,7 +4,7 @@ import { collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getD
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { codeForEmail } from '../lib/people';
 import { readImportFile, assembleOffer, sourceTextFor } from '../lib/importRead';
-import { computeDraft, checkItem, checkFinal } from '../lib/importCheck';
+import { computeDraft, checkItem, checkFinal, applyExcelRefs } from '../lib/importCheck';
 
 // Import starých akcí — KROK 1: importní složky.
 // Ke každé staré akci (dělané mimo systém) se založí složka a do ní se
@@ -579,7 +579,7 @@ const str = (v) => (v === undefined || v === null ? '' : String(v));
 const newKey = () => `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 // Z výsledku Claude udělá upravitelný návrh
-function draftFromResult(r, clients) {
+function draftFromResult(r, clients, excelCells) {
   const h = r.header || {};
   const cn = str(h.clientName).trim().toLowerCase();
   const client = clients.find(c => str(c.name).trim().toLowerCase() === cn);
@@ -590,7 +590,10 @@ function draftFromResult(r, clients) {
       paxList: str(h.paxList), margin: str(h.margin), focCount: h.focCount === undefined ? '1' : str(h.focCount),
       focType: h.focType === 'sngl' ? 'sngl' : 'dbl',
     },
-    items: (r.items || []).map(it => ({ ...it, _key: newKey(), enabled: it.enabled !== false })),
+    items: applyExcelRefs((r.items || []).map(it => ({
+      ...it, _key: newKey(), enabled: it.enabled !== false,
+      variants: Array.isArray(it.variants) ? it.variants.map(str).filter(Boolean) : [],
+    })), excelCells),
     soldPrices: (r.soldPrices || []).map(soldRow),
     priceVariants: (r.priceVariants || []).filter(v => v && (v.prices || []).length).map((v, i) => ({
       id: str(v.id) || String.fromCharCode(65 + i), label: str(v.label), meaning: str(v.meaning), sourceFile: str(v.sourceFile),
@@ -598,8 +601,13 @@ function draftFromResult(r, clients) {
     })),
     soldVariant: str(r.soldVariant),
     soldVariantReason: str(r.soldVariantReason),
+    soldVariantConfirmed: false,
+    questions: questionsFrom(r),
   };
 }
+// Body „K zamyšlení" → otázky k ověření (state: '' nerozhodnuto | 'verify' ověřit | 'ignore' nepodstatné)
+const questionsFrom = (r) => (r.observations || []).filter(o => filled(o.topic) || filled(o.issue))
+  .map(o => ({ topic: str(o.topic), issue: str(o.issue), proposal: str(o.proposal), state: '' }));
 const soldRow = (p) => ({ pax: str(p.pax), finalDbl: str(p.finalDbl), finalSngl: str(p.finalSngl), currency: str(p.currency) || 'EUR', sourceFile: str(p.sourceFile) });
 
 function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors, box, btn }) {
@@ -665,9 +673,11 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
     try {
       setStep('Načítám původní texty (Excel, Word, e-maily)…');
       const sourceTexts = [];
+      const excelCells = [];
       for (const f of okFiles) {
-        const text = await sourceTextFor(f);
-        if (text && text.trim()) sourceTexts.push({ fileName: f.name, kind: f.kind, text });
+        const src = await sourceTextFor(f);
+        if (src && src.text && src.text.trim()) sourceTexts.push({ fileName: f.name, kind: f.kind, text: src.text });
+        if (src && src.cells) excelCells.push({ fileName: f.name, sheets: src.cells });
       }
       const waitMsg = `Claude sestavuje nabídku z ${okFiles.length} podkladů… (může trvat 2–5 minut)`;
       setStep(waitMsg);
@@ -678,7 +688,7 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
       });
       await setDoc(asmRef, {
         status: 'ok', result, error: '', fileIds: okFiles.map(f => f.id),
-        draft: draftFromResult(result, clients), editedAt: '', editedBy: '',
+        draft: draftFromResult(result, clients, excelCells), editedAt: '', editedBy: '',
         createdAt: new Date().toISOString(), createdBy: auth.currentUser?.email || '',
         inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0,
       });
@@ -708,14 +718,31 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
   const finalBad = finals.filter(f => f.missing || f.bad).length;
   const roundedList = finals.filter(f => !f.missing && !f.bad && (f.roundedDbl || f.roundedSngl));
   const roundedMax = roundedList.reduce((m, f) => Math.max(m, f.roundedDbl ? f.expDbl - f.gotDbl : 0, f.roundedSngl ? f.expSngl - f.gotSngl : 0), 0);
+  const flatSngl = (finals.find(f => f.flatSngl !== null && f.flatSngl !== undefined) || {}).flatSngl;
   const variants = (draft && draft.priceVariants) || [];
+  const variantNeedsConfirm = variants.length > 1 && !(draft && draft.soldVariantConfirmed);
+  // Karty, které patří jen do některých variant, se při výběru varianty samy (od)škrtnou.
+  const itemsForVariant = (items, id) => items.map(it => (it.variants && it.variants.length) ? { ...it, enabled: it.variants.includes(id) } : it);
   const chooseVariant = (id) => {
     const v = variants.find(x => x.id === id);
     if (!v) return;
-    if (!window.confirm(`Prodaná varianta: „${v.label || v.id}". Přepsat tabulku prodaných cen jejími cenami?\n\nKarty, které do této varianty nepatří (např. doprava), pak zaškrtněte / odškrtněte ve sloupci „V kalk.".`)) return;
-    commit({ ...draft, soldVariant: id, soldPrices: v.prices.map(p => ({ ...p })) });
+    const toggled = draft.items.filter(it => it.variants && it.variants.length && (it.variants.includes(id)) !== (it.enabled !== false));
+    const lines = toggled.map(it => `${it.variants.includes(id) ? '☑ zapnout' : '☐ vypnout'}: ${it.name || KIND_LABEL[it.kind]}`).join('\n');
+    if (!window.confirm(`Prodaná varianta: „${v.label || v.id}".\n\nTabulka prodaných cen se přepíše cenami této varianty.${toggled.length ? `\n\nKarty podle varianty:\n${lines}` : ''}`)) return;
+    commit({ ...draft, soldVariant: id, soldVariantConfirmed: true, soldPrices: v.prices.map(p => ({ ...p })), items: itemsForVariant(draft.items, id) });
   };
-  const allGood = draft && diffCount === 0 && finals.length > 0 && finalBad === 0;
+  const confirmVariant = () => commit({ ...draft, soldVariantConfirmed: true });
+  const fixes = draft ? draft.items.map((it, i) => checks[i].status === 'diff' && checks[i].fix ? [it._key, checks[i].fix] : null).filter(Boolean) : [];
+  const fixAll = () => {
+    if (!window.confirm(`Opravit ${fixes.length} ${fixes.length === 1 ? 'kartu' : fixes.length < 5 ? 'karty' : 'karet'} podle kalkulace? Ceny se nemění, jen převod (např. city tax) tak, aby karta dala stejnou částku jako Excel.`)) return;
+    const map = Object.fromEntries(fixes);
+    commit({ ...draft, items: draft.items.map(it => map[it._key] ? { ...it, ...map[it._key] } : it) });
+  };
+  const questions = draft ? (draft.questions || questionsFrom(r || {})) : [];
+  const setQuestion = (i, state) => commit({ ...draft, questions: questions.map((q, j) => j === i ? { ...q, state: q.state === state ? '' : state } : q) });
+  const qOpen = questions.filter(q => !q.state).length;
+  const qVerify = questions.filter(q => q.state === 'verify').length;
+  const allGood = draft && diffCount === 0 && finals.length > 0 && finalBad === 0 && !variantNeedsConfirm;
 
   const setHeader = (k, v) => setDraft(d => ({ ...d, header: { ...d.header, [k]: v } }));
   const setItem = (key, patch) => setDraft(d => ({ ...d, items: d.items.map(it => it._key === key ? { ...it, ...patch } : it) }));
@@ -762,7 +789,25 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
           <div style={{ ...warnBox, fontSize: 14, background: allGood ? '#EAF3DE' : '#FCEBEB', color: allGood ? '#27500A' : '#791F1F' }}>
             {allGood
               ? <b>✓ Vše sedí — karty i konečné ceny odpovídají prodané kalkulaci{roundedList.length ? ` (${roundedList.length} ${roundedList.length === 1 ? 'cena je' : roundedList.length < 5 ? 'ceny jsou' : 'cen je'} pro klienta zaokrouhleno nahoru, nejvýš o ${fmt2(roundedMax)})` : ' na cent'}.</b>
-              : <b>⚠ Ještě nesedí: {diffCount > 0 ? `${diffCount} ${diffCount === 1 ? 'karta' : diffCount < 5 ? 'karty' : 'karet'} s rozdílem` : ''}{diffCount > 0 && finalBad > 0 ? ' · ' : ''}{finalBad > 0 ? `${finalBad} ${finalBad === 1 ? 'konečná cena' : 'konečné ceny'} s rozdílem` : ''}{finals.length === 0 ? 'chybí prodané ceny k porovnání' : ''}</b>}
+              : <b>⚠ Ještě nesedí: {[
+                  diffCount > 0 ? `${diffCount} ${diffCount === 1 ? 'karta' : diffCount < 5 ? 'karty' : 'karet'} s rozdílem` : '',
+                  finalBad > 0 ? `${finalBad} ${finalBad === 1 ? 'konečná cena' : 'konečné ceny'} s rozdílem` : '',
+                  finals.length === 0 ? 'chybí prodané ceny k porovnání' : '',
+                  variantNeedsConfirm ? 'potvrďte prodanou variantu' : '',
+                ].filter(Boolean).join(' · ')}</b>}
+            {fixes.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <button type="button" onClick={fixAll} style={{ padding: '5px 12px', border: 'none', borderRadius: 6, background: colors.primary, color: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  🔧 Opravit vše podle kalkulace ({fixes.length})
+                </button>
+              </div>
+            )}
+            {flatSngl != null && (
+              <div style={{ fontSize: 12, marginTop: 4, fontWeight: 400 }}>SGL je prodána s paušálním příplatkem {fmt2(flatSngl)} EUR k ceně DBL — aplikace počítá SGL z nákladů, proto se SGL na cent nekontroluje. Prodané ceny SGL se uloží jako ceny pro klienta.</div>
+            )}
+            {(qOpen > 0 || qVerify > 0) && (
+              <div style={{ fontSize: 12, marginTop: 4, fontWeight: 400 }}>Otázky k ověření: {qVerify} k ověření{qOpen ? ` · ${qOpen} nerozhodnuto` : ''} (dole).</div>
+            )}
             {calc && calc.nonEur.length > 0 && (
               <div style={{ fontSize: 12, marginTop: 4 }}>Pozor: návrh obsahuje měny {calc.nonEur.join(', ')} — konečné ceny se počítají aktuálním kurzem, takže na cent sedět nemusí. Karty se kontrolují v jejich měně.</div>
             )}
@@ -836,7 +881,11 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
                 return (
                   <React.Fragment key={it._key}>
                     <tr style={{ background: ck.status === 'diff' ? '#FDF3F3' : undefined, opacity: it.enabled === false ? 0.6 : 1 }}>
-                      <td style={cell}><input type="checkbox" checked={it.enabled !== false} onChange={e => commit({ ...draft, items: draft.items.map(x => x._key === it._key ? { ...x, enabled: e.target.checked } : x) })} /></td>
+                      <td style={cell}><input type="checkbox" checked={it.enabled !== false} onChange={e => commit({ ...draft, items: draft.items.map(x => x._key === it._key ? { ...x, enabled: e.target.checked } : x) })} />
+                        {it.variants && it.variants.length > 0 && variants.length > 1 && it.variants.length < variants.length && (
+                          <span title="Patří jen do variant" style={{ display: 'block', fontSize: 10, color: '#854F0B' }}>jen {it.variants.join(', ')}</span>
+                        )}
+                      </td>
                       <td style={cell}>
                         <select style={inp(116)} value={it.kind} onChange={e => commit({ ...draft, items: draft.items.map(x => x._key === it._key ? { ...x, kind: e.target.value } : x) })}>
                           {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -884,6 +933,14 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
                       <tr><td colSpan={NUM_COLS.length + 9} style={{ ...cell, background: '#faf8f4', fontSize: 12 }}>
                         {filled(it.conversionNote) && <div><b>Jak převedeno:</b> {it.conversionNote}</div>}
                         {filled(it.notes) && <div><b>Poznámka:</b> {it.notes}</div>}
+                        {it.refCheck && Object.entries(it.refCheck).map(([k, rc]) => (
+                          <div key={k} style={{ color: rc.error ? '#791F1F' : undefined }}>
+                            <b>{k === 'Dbl' ? 'Na os. DBL' : k === 'Sngl' ? 'Na os. SGL' : 'Celkem'} z Excelu:</b> {rc.ref}
+                            {rc.error ? ` — ⚠ ${rc.error}${rc.claude !== null && rc.claude !== undefined ? `, použito číslo od Clauda ${rc.claude}` : ''}`
+                              : ` = ${rc.value}${rc.claude !== null && rc.claude !== undefined && Math.abs(rc.claude - rc.value) >= 0.005 ? ` (Claude uvedl ${rc.claude} — platí hodnota z Excelu)` : ''}`}
+                          </div>
+                        ))}
+                        {it.variants && it.variants.length > 0 && <div><b>Ve variantách:</b> {it.variants.join(', ')}</div>}
                         <div><b>Kontrolní částky z kalkulace:</b>{' '}
                           {[['expectedDbl', 'na os. DBL'], ['expectedSngl', 'na os. SGL'], ['expectedGroup', 'celkem']].filter(([k]) => filled(it[k])).map(([k, l]) => `${l} ${it[k]}`).join(' · ') || '—'}
                           {filled(it.sourceRef) && ` (${it.sourceRef})`}
@@ -899,18 +956,32 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
 
           {/* Varianty cen v podkladech */}
           {variants.length > 0 && (
-            <div style={{ ...warnBox, background: '#faf8f4', color: colors.text || '#222', border: `1px solid ${colors.border}` }}>
+            <div style={{ ...warnBox, background: variantNeedsConfirm ? '#FDF6E9' : '#faf8f4', color: colors.text || '#222', border: `1px solid ${variantNeedsConfirm ? '#E2B65C' : colors.border}` }}>
               <b style={{ color: colors.primary }}>Varianty cen v podkladech — která se prodala?</b>
               {filled(draft.soldVariantReason) && (
                 <div style={{ fontSize: 12, marginTop: 4, color: /^nejist/i.test(draft.soldVariantReason) ? '#854F0B' : colors.muted }}>
                   {/^nejist/i.test(draft.soldVariantReason) ? '⚠ ' : ''}Claude: {draft.soldVariantReason}
                 </div>
               )}
+              {variantNeedsConfirm && (
+                <div style={{ fontSize: 12, marginTop: 6, color: '#633806' }}>
+                  ⚠ Prodaná varianta zatím <b>není potvrzená</b> — vyberte správnou kliknutím na kolečko
+                  {draft.soldVariant && variants.some(v => v.id === draft.soldVariant) && (
+                    <>, nebo{' '}
+                      <button type="button" onClick={confirmVariant} style={{ padding: '2px 8px', border: '1px solid #E2B65C', borderRadius: 5, background: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        potvrďte navrženou „{(variants.find(v => v.id === draft.soldVariant) || {}).label || draft.soldVariant}"
+                      </button>
+                    </>
+                  )}.
+                </div>
+              )}
               {variants.map(v => (
                 <label key={v.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 8, cursor: 'pointer' }}>
                   <input type="radio" name={`sold-${folder.id}`} checked={draft.soldVariant === v.id} onChange={() => chooseVariant(v.id)} style={{ marginTop: 3 }} />
                   <span style={{ fontSize: 12 }}>
-                    <b>{v.label || `Varianta ${v.id}`}</b>{draft.soldVariant === v.id && <span style={{ color: '#3B6D11' }}> — prodaná</span>}
+                    <b>{v.label || `Varianta ${v.id}`}</b>{draft.soldVariant === v.id && (variantNeedsConfirm
+                      ? <span style={{ color: '#854F0B' }}> — návrh Clauda, nepotvrzeno</span>
+                      : <span style={{ color: '#3B6D11' }}> — prodaná ✓</span>)}
                     {filled(v.meaning) && <span style={{ display: 'block' }}>{v.meaning}</span>}
                     <span style={{ display: 'block', color: colors.muted }}>
                       {v.prices.map(p => `${p.pax} os.: ${p.finalDbl}${filled(p.finalSngl) ? ` / SGL ${p.finalSngl}` : ''}`).join(' · ')} {v.prices[0]?.currency || 'EUR'}
@@ -943,7 +1014,8 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
                     <td style={cell}><input style={inp(80)} value={p.finalSngl} onChange={e => setSold(i, { finalSngl: e.target.value })} onBlur={blurSave} /></td>
                     <td style={cell}>{f.missing ? '' : fmt2(f.gotSngl)}</td>
                     <td style={cell}>{bad ? <span style={{ color: '#791F1F' }}>⚠</span>
-                      : rounded ? <span style={{ color: '#854F0B' }} title="Prodaná cena je výpočet zaokrouhlený nahoru">≈ zaokrouhleno</span>
+                      : rounded ? <span style={{ color: '#854F0B' }} title="Prodaná cena je výpočet zaokrouhlený nahoru">≈ zaokrouhleno{f.flatSngl != null ? ` · SGL paušál` : ''}</span>
+                      : f.flatSngl != null ? <span style={{ color: '#3B6D11' }}>✓ · SGL paušál</span>
                       : <span style={{ color: '#3B6D11' }}>✓</span>}</td>
                   </tr>
                 );
@@ -951,15 +1023,26 @@ function AssemblyPanel({ folder, files, reads, unreadCount, readingBusy, colors,
             </table>
           </div>
 
-          {(r.observations || []).filter(o => filled(o.topic) || filled(o.issue)).length > 0 && (
+          {questions.length > 0 && (
             <div style={{ ...warnBox, background: '#EEF3FA', color: '#1F3A5F' }}>
-              <b>💡 K zamyšlení — v původní kalkulaci (nic se nemění samo, karty odpovídají prodané kalkulaci):</b>
-              {(r.observations || []).filter(o => filled(o.topic) || filled(o.issue)).map((o, i) => (
-                <div key={i} style={{ marginTop: 6 }}>
-                  <b>{o.topic}</b> — {o.issue}
-                  {filled(o.proposal) && <div style={{ marginLeft: 12, fontSize: 12 }}>→ návrh: {o.proposal}</div>}
-                </div>
-              ))}
+              <b>💡 K zamyšlení / otázky k ověření — v původní kalkulaci se nic nemění, karty odpovídají prodané kalkulaci.</b>
+              <div style={{ fontSize: 12, marginTop: 2 }}>U každého bodu zvolte: <b>Ověřit</b> = při uložení se přenese k nabídce jako otevřená otázka · <b>Nepodstatné</b> = zavřít.</div>
+              {questions.map((q, i) => {
+                const qb = (state, label, bg) => (
+                  <button type="button" onClick={() => setQuestion(i, state)}
+                    style={{ padding: '2px 8px', marginRight: 6, borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                      border: `1px solid ${q.state === state ? bg : colors.border}`, background: q.state === state ? bg : '#fff', color: q.state === state ? '#fff' : '#1F3A5F' }}>
+                    {q.state === state ? '✓ ' : ''}{label}
+                  </button>
+                );
+                return (
+                  <div key={i} style={{ marginTop: 8, opacity: q.state === 'ignore' ? 0.5 : 1 }}>
+                    <b>{q.topic}</b> — {q.issue}
+                    {filled(q.proposal) && <div style={{ marginLeft: 12, fontSize: 12 }}>→ návrh: {q.proposal}</div>}
+                    <div style={{ marginLeft: 12, marginTop: 3 }}>{qb('verify', 'Ověřit', '#B7791F')}{qb('ignore', 'Nepodstatné', '#6B7280')}</div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
