@@ -164,18 +164,48 @@ const nightsForOffer = (parsed) => {
   return '';
 };
 
+// Datum příjezdu mínus X dní → YYYY-MM-DD ('' když chybí příjezd nebo počet dní).
+const deadlineFromDays = (dateFrom, days) => {
+  const n = parseInt(days, 10);
+  if (!isFinite(n) || n <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(String(dateFrom || ''))) return '';
+  const d = new Date(dateFrom + 'T00:00:00');
+  if (isNaN(d)) return '';
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// Free cancel „X dní před příjezdem“ (30. 10. 2026): karta si pamatuje počet
+// dní (cancellationDaysBefore) a datum storna (cancellationDeadline) z něj
+// počítá. Při změně příjezdu se datum posune samo. Když někdo datum storna
+// přepíše ručně (nebo ho vyplní AI jako konkrétní datum), počet dní se smaže
+// a datum už se neposouvá. Všechno ostatní (kalendář, Dashboard, upozornění)
+// dál čte jen cancellationDeadline.
+const syncCancelDays = (prev, next) => {
+  const days = String(next.cancellationDaysBefore ?? '');
+  const daysChanged = days !== String(prev.cancellationDaysBefore ?? '');
+  const deadlineChanged = (next.cancellationDeadline || '') !== (prev.cancellationDeadline || '');
+  if (!daysChanged && deadlineChanged) {
+    return days ? { ...next, cancellationDaysBefore: '' } : next;
+  }
+  if (days && (daysChanged || (next.dateFrom || '') !== (prev.dateFrom || ''))) {
+    const d = deadlineFromDays(next.dateFrom, days);
+    if (d) return { ...next, cancellationDeadline: d };
+  }
+  return next;
+};
+
 // Termín bezplatného storna: buď konkrétní datum, nebo "X dní před příjezdem".
 const cancellationForOffer = (parsed) => {
   const exact = fillDate(parsed.cancellationDate);
   if (exact) return exact;
-  const days = parseInt(parsed.cancellationDays, 10);
-  const from = fillDate(parsed.dateFrom);
-  if (isFinite(days) && days > 0 && from) {
-    const d = new Date(from + 'T00:00:00');
-    d.setDate(d.getDate() - days);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }
-  return '';
+  return deadlineFromDays(fillDate(parsed.dateFrom), parsed.cancellationDays);
+};
+
+// Počet dní z e-mailu — jen když hotel neuvedl konkrétní datum.
+const cancellationDaysForOffer = (parsed) => {
+  if (fillDate(parsed.cancellationDate)) return '';
+  const n = parseInt(parsed.cancellationDays, 10);
+  return isFinite(n) && n > 0 ? String(n) : '';
 };
 
 // City tax: AI vrací částku a k ní typ (za osobu / za pokoj / procenta).
@@ -246,6 +276,8 @@ const buildFillRows = (parsed, item, sourceText) => {
     { key: 'cityTaxSngl',          label: 'City tax SNGL',    value: tax.sngl, hint: tax.noteSngl },
     { key: 'currency',             label: 'Měna',             value: CURRENCIES.includes(cur) ? cur : '' },
     { key: 'cancellationDeadline', label: 'Free cancel',      value: cancellationForOffer(parsed) },
+    { key: 'cancellationDaysBefore', label: 'Free cancel – dní před příjezdem', value: cancellationDaysForOffer(parsed),
+      hint: 'datum storna se posune, když se změní příjezd' },
     { key: 'focRatio',             label: 'FOC',              value: foc },
     { key: 'focRoomType',          label: 'FOC — typ pokoje', value: foc ? focRoomForOffer(parsed.hotelFocOccupancy) : '' },
     { key: '__email',              label: 'Kontaktní e-mail', value: primaryMail,
@@ -2315,7 +2347,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const updateItem = (id, field, value) => {
     setItems(prev => {
-      const newItems = prev.map(it => it.id === id ? { ...it, [field]: value } : it);
+      const newItems = prev.map(it => it.id === id ? syncCancelDays(it, { ...it, [field]: value }) : it);
       itemsRef.current = newItems;
       // Debounced auto-save for any field change (prevents data loss like the Munich nights bug)
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -2510,7 +2542,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
 
   const updateItemFields = (id, fields) => {
     setItems(prev => {
-      const newItems = prev.map(it => it.id === id ? { ...it, ...fields } : it);
+      const newItems = prev.map(it => it.id === id ? syncCancelDays(it, { ...it, ...fields }) : it);
       itemsRef.current = newItems;
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
@@ -4181,7 +4213,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
               const hasNotes = itemNotes.length > 0;
               const notesVisible = (hasNotes && !noteHiddenIds.has(it.id)) || noteOpenIds.has(it.id);
               const isEnabled = it.enabled !== false;
-              const rowBg = it.cancelled ? '#FEE2E2' : isGuideHotel ? '#FCE4EC' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
+              const rowBg = it.cancelled ? '#FEE2E2' : isGuideHotel ? '#C8E6C9' : isDriverHotel ? '#E1BEE7' : it.type === 'group' ? '#FCE4EC' : (it.type === 'per_pax' && it.subType === 'ticket') ? '#E3F2FD' : isHotel ? '#FFFDE7' : 'transparent';
               // Sbalit jde jen hotel, který není alternativa a buď je zrušený,
               // nebo není zaškrtnutý do výpočtu. Potvrzený nezaškrtnutý zůstává
               // rozbalený, aby nezapadlo varování o potvrzeném hotelu mimo výběr.
@@ -4436,6 +4468,16 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
                         <div style={grp}>
                           <span style={sLbl}>Free cancel:</span>
                           <DateDMY dateKey={`cxl-${it.id}`} value={it.cancellationDeadline || ''} colors={colors} onChange={v => updateItem(it.id, 'cancellationDeadline', v)} />
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                            title="Kolik dní před příjezdem končí storno zdarma. Datum vlevo se spočítá samo a posune se, když změníte příjezd. Když datum přepíšete ručně, počet dní se smaže.">
+                            <input type="text" inputMode="numeric" placeholder="dní" value={it.cancellationDaysBefore || ''}
+                              onChange={e => updateItem(it.id, 'cancellationDaysBefore', e.target.value.replace(/[^\d]/g, '').slice(0, 3))}
+                              style={{ width: 38, fontSize: 11, padding: '3px 4px', border: `1px solid ${colors.border}`, borderRadius: 4, textAlign: 'right' }} />
+                            <span style={{ fontSize: 10, color: colors.muted, whiteSpace: 'nowrap' }}>dní před příj.</span>
+                            {it.cancellationDaysBefore && !/^\d{4}-\d{2}-\d{2}$/.test(it.dateFrom || '') && (
+                              <span style={{ fontSize: 10, color: '#dc2626', fontWeight: 700, whiteSpace: 'nowrap' }}>⚠ chybí příjezd</span>
+                            )}
+                          </span>
                         </div>
                         <div style={grp}>
                           <span style={sLbl}>FOC:</span>
