@@ -6,7 +6,7 @@ import { RATE_CURRENCIES, ratesState, loadRatesDoc, refreshFromEcb, setManualRat
 
 const fmtD = (iso) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString('cs-CZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
 const fmtDay = (s) => { const t = String(s || '').slice(0, 10); if (t.length < 10) return t; const [y, m, d] = t.split('-'); return `${d}.${m}.${y}`; };
-const num = (n, d = 4) => (Number(n) || 0).toLocaleString('cs-CZ', { minimumFractionDigits: d, maximumFractionDigits: d });
+const num = (n, d = Math.abs(Number(n)) < 0.01 ? 6 : 4) => (Number(n) || 0).toLocaleString('cs-CZ', { minimumFractionDigits: d, maximumFractionDigits: d });
 const SOURCE = { default: 'výchozí z programu', ecb: 'ECB (středový)', manual: 'ručně' };
 
 export default function RatesSettings({ colors, canEdit }) {
