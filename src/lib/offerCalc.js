@@ -1,7 +1,9 @@
 // Shared calculation helpers for Offers (selling price calculator) and the printable client proposal.
 
-export const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, SEK: 0.090, CZK: 0.040, USD: 0.92 };
-export const CURRENCIES = ['EUR', 'GBP', 'CHF', 'PLN', 'NOK', 'DKK', 'SEK', 'CZK', 'USD'];
+export const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, SEK: 0.090, CZK: 0.040, USD: 0.92, HUF: 0.002726 };
+// Kurz k zobrazení: malé kurzy (HUF ≈ 0,0027 €) potřebují víc desetinných míst.
+export const fmtRate = (r) => (Number(r) || 0).toFixed(Math.abs(Number(r)) < 0.01 ? 6 : 4);
+export const CURRENCIES = ['EUR', 'GBP', 'CHF', 'PLN', 'NOK', 'DKK', 'SEK', 'CZK', 'USD', 'HUF'];
 
 // Allow city tax / prices to be entered as a plain number OR an Excel-style formula starting with "="
 // e.g. "=106*0.05" -> evaluates to 5.3
