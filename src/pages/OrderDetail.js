@@ -19,7 +19,7 @@ const SERVICE_TYPES = [
   { value: 'other', label: 'Other', icon: '📋' },
 ];
 
-const CURRENCIES = ['EUR', 'GBP', 'CHF', 'CZK', 'PLN', 'NOK', 'DKK', 'SEK', 'USD'];
+const CURRENCIES = ['EUR', 'GBP', 'CHF', 'CZK', 'PLN', 'NOK', 'DKK', 'SEK', 'USD', 'HUF'];
 
 const SERVICE_STATUS = [
   { value: 'enquired', label: 'Enquired', bg: '#F1EFE8', color: '#444441' },
@@ -39,7 +39,7 @@ const ORDER_STATUS = [
   { value: 'completed', label: 'Completed' },
 ];
 
-const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, SEK: 0.090, CZK: 0.040, USD: 0.92 };
+const DEFAULT_RATES = { GBP: 1.17, CHF: 1.07, PLN: 0.23, NOK: 0.087, DKK: 0.134, SEK: 0.090, CZK: 0.040, USD: 0.92, HUF: 0.002726 };
 
 const SERVICE_TO_PROVIDER_TYPE = {
   hotel: 'hotel',
@@ -1042,7 +1042,7 @@ export default function OrderDetail({ orderId, navigate, colors }) {
                 <input type="number" step="0.001" value={rate} onChange={e => setRates({ ...rates, [cur]: parseFloat(e.target.value) })}
                   style={{ width: 58, padding: '2px 5px', border: `1px solid ${colors.border}`, borderRadius: 4, fontSize: 12 }} />
               ) : (
-                <span style={{ fontSize: 12, color: colors.muted }}>{typeof rate === 'number' ? rate.toFixed(4) : rate}</span>
+                <span style={{ fontSize: 12, color: colors.muted }}>{typeof rate === 'number' ? (Math.abs(rate) < 0.01 ? rate.toFixed(6) : rate.toFixed(4)) : rate}</span>
               )}
             </div>
           ))}
