@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth, storage } from '../lib/firebase';
 import { doc, getDoc, getDocs, collection, updateDoc, addDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
-import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR } from '../lib/offerCalc';
+import { DEFAULT_RATES, CURRENCIES, evalAmount, getEffectiveCostDbl, getEffectiveCostSngl, toEUR, fmtRate } from '../lib/offerCalc';
 import { parseServiceText, parseServiceDocument } from '../lib/ai';
 import { ensureOfferNumber } from '../lib/offerNumber';
 import OfferVersions from '../components/OfferVersions';
@@ -4815,7 +4815,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
           </button>
           {/* Stav ukládání se ukazuje v liště nahoře, která nemizí. */}
           <div style={{ fontSize: 12, color: colors.muted }}>
-            Exchange rates (→ EUR): {Object.entries(rates).map(([c, r]) => `${c} ${r.toFixed(4)}`).join(' · ')}
+            Exchange rates (→ EUR): {Object.entries(rates).map(([c, r]) => `${c} ${fmtRate(r)}`).join(' · ')}
             {(() => {
               const st = ratesState(ratesDoc);
               const locked = Object.values(st.currencies).filter(x => x.locked).length;
@@ -5105,7 +5105,7 @@ export default function OfferDetail({ offerId, navigate, colors, userRole, userE
             data.push([]);
             const perPaxDbl = perPaxDblEUR;
             const perPaxSngl = perPaxSnglEUR;
-            const rateNote = [...new Set(activeItems.filter(it => it.currency && it.currency !== 'EUR').map(it => it.currency))].map(c => `1 ${c} = ${(rates[c]||1).toFixed(4)} EUR`).join(', ');
+            const rateNote = [...new Set(activeItems.filter(it => it.currency && it.currency !== 'EUR').map(it => it.currency))].map(c => `1 ${c} = ${fmtRate(rates[c]||1)} EUR`).join(', ');
             data.push([`TOTAL per pax (EUR)${rateNote ? ' · kurz: ' + rateNote : ''}`, '', '', '', '', '', perPaxDbl.toFixed(2), perPaxSngl.toFixed(2)]);
 
             // Group costs — grouped by currency, same clear structure as hotels above
