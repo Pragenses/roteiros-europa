@@ -320,7 +320,13 @@ function buildCardSuggestions(rows) {
   //    řetězci s několika hotely. Řádek bez názvu se nikdy nepřilepí k cizímu
   //    hotelu; spojí se jen se shodnou adresou.
   const sameRow = (a, b) => {
-    if (a.email === b.email && !isShared(a.email)) return true;  // duplicita
+    // Stejná adresa ve stejném městě = duplicita. Stejná adresa ve dvou
+    // různých městech (seznamech) se spojí jen při stejném názvu hotelu —
+    // jinak jde o dva hotely se společnou rezervační adresou.
+    if (a.email === b.email && !isShared(a.email)) {
+      if (sameCity(a.nCity, b.nCity)) return true;
+      return a.hasName && b.hasName && sameName(a.nName, b.nName);
+    }
     // Dva bezejmenné řádky se shodnou adresou i městem jsou tentýž záznam
     // zdvojený v databázi — spojit se musí, jinak zůstanou v seznamu dvakrát.
     if (!a.hasName && !b.hasName) return a.email === b.email && a.nCity === b.nCity;
@@ -390,7 +396,8 @@ function buildCardSuggestions(rows) {
     }
     for (const r of g.rows) {
       const e = String(r.email).toLowerCase();
-      if (!isShared(e)) put(`e|${e}`, g, 'email');
+      // Klíč i s městem: stejná adresa v jiném městě není k rozhodnutí.
+      if (!isShared(e)) put(`e|${e}|${normCity(r.city)}`, g, 'email');
     }
   }
 
@@ -407,7 +414,7 @@ function buildCardSuggestions(rows) {
       name: names[0] || c.groups[0].name,
       city: c.groups.find(g => g.city)?.city || '',
       why: c.why === 'email'
-        ? `Stejná adresa ${k.slice(2)}, ale jiný název — jeden hotel, nebo adresa sdílená víc hotely?`
+        ? `Stejná adresa ${k.slice(2).split('|')[0]}, ale jiný název — jeden hotel, nebo adresa sdílená víc hotely?`
         : 'Stejný název i město, ale jiná emailová doména',
       groups: c.groups,
       rows: c.groups.flatMap(g => g.rows),
@@ -2512,14 +2519,27 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   const handleImport = async () => {
     setImporting(true);
-    const existingEmails = new Set(hotels.map(h => h.email?.toLowerCase()));
-    let added = 0, skipped = 0;
-    for (const h of parsed) {
-      if (existingEmails.has(h.email.toLowerCase())) { skipped++; continue; }
-      await addDoc(collection(db, 'hotels'), { city: h.city, name: h.name, email: h.email });
-      added++;
+    // Přeskočí se jen adresa, která už je ve STEJNÉM městě (seznamu).
+    // Stejná adresa v jiném městě se přidá — např. centrální rezervace
+    // řetězce pro hotely ve více městech.
+    const key = (email, city) => `${String(email || '').trim().toLowerCase()}|${normCity(city)}`;
+    const existing = new Set(hotels.map(h => key(h.email, h.city)));
+    const elsewhere = new Set(hotels.map(h => String(h.email || '').trim().toLowerCase()));
+    let added = 0, skipped = 0, otherList = 0;
+    try {
+      for (const h of parsed) {
+        const k = key(h.email, h.city);
+        if (existing.has(k)) { skipped++; continue; }
+        const email = String(h.email).trim().toLowerCase();
+        await addDoc(collection(db, 'hotels'), { city: h.city, name: h.name, email });
+        existing.add(k);   // stejná adresa dvakrát v jednom vloženém textu → jen jednou
+        if (elsewhere.has(email)) otherList++;
+        added++;
+      }
+    } catch (e) {
+      alert('Import se zastavil: ' + e.message + `\n\nDo té doby přidáno: ${added}`);
     }
-    setImportDone({ added, skipped });
+    setImportDone({ added, skipped, otherList });
     setImporting(false);
     setImportText(''); setParsed([]);
     fetchHotels();
@@ -2775,10 +2795,12 @@ export default function Hotels({ navigate, colors, navParams }) {
 
   // Podklad pro záložku Kontrola adres — vadné adresy, chybějící názvy a duplicity.
   const cleanupRows = React.useMemo(() => {
+    // Duplicita = stejná adresa ve STEJNÉM městě. Stejná adresa ve dvou
+    // různých městech (seznamech) je v pořádku.
     const counts = new Map();
+    const dupKey = (h) => `${String(h.email || '').toLowerCase()}|${normCity(h.city)}`;
     hotels.forEach(h => {
-      const e = String(h.email || '').toLowerCase();
-      if (e) counts.set(e, (counts.get(e) || 0) + 1);
+      if (h.email) counts.set(dupKey(h), (counts.get(dupKey(h)) || 0) + 1);
     });
     const out = [];
     for (const h of hotels) {
@@ -2794,8 +2816,8 @@ export default function Hotels({ navigate, colors, navParams }) {
         out.push({ row: h, kind: 'note', problem: sp.name ? `V názvu je poznámka — hotel: "${sp.name}", poznámka: "${sp.note}"` : `Celý název je poznámka: "${sp.note}"` });
         continue;
       }
-      const n = counts.get(e) || 0;
-      if (n > 1 && n < SHARED_EMAIL_MIN) out.push({ row: h, kind: 'dup', problem: `Stejná adresa je na ${n} řádcích` });
+      const n = counts.get(dupKey(h)) || 0;
+      if (n > 1 && n < SHARED_EMAIL_MIN) out.push({ row: h, kind: 'dup', problem: `Stejná adresa je ve stejném městě na ${n} řádcích` });
     }
     const order = { bad: 0, name: 1, note: 2, dup: 3 };
     return out.sort((a, b) => order[a.kind] - order[b.kind] || (a.row.city || '').localeCompare(b.row.city || ''));
@@ -2892,7 +2914,7 @@ export default function Hotels({ navigate, colors, navParams }) {
             )}
             {importDone && (
               <div style={{ ...cardS, marginTop: 12, background: '#e8f5e9' }}>
-                <p style={{ margin: 0, color: C.success }}>✓ Přidáno: <strong>{importDone.added}</strong> · Přeskočeno: <strong>{importDone.skipped}</strong></p>
+                <p style={{ margin: 0, color: C.success }}>✓ Přidáno: <strong>{importDone.added}</strong>{importDone.otherList ? <> (z toho už v jiném seznamu: <strong>{importDone.otherList}</strong>)</> : null} · Přeskočeno (už je v tomto seznamu): <strong>{importDone.skipped}</strong></p>
                 <button onClick={() => { setImportDone(null); setTab('db'); }} style={{ marginTop: 10, ...btn(C.primary) }}>→ Databáze</button>
               </div>
             )}
